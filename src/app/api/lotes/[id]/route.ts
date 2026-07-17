@@ -1,0 +1,45 @@
+import { z } from "zod";
+import { requireApiUser } from "@/lib/auth/require-api-user";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { fail, failWithDetails, ok } from "@/lib/http/api-response";
+
+const ParamsSchema = z.object({
+  id: z.string().uuid()
+});
+
+export async function DELETE(_: Request, { params }: { params: Promise<{ id: string }> }) {
+  const auth = await requireApiUser(["administrador"]);
+  if (!auth.ok) return auth.response;
+
+  const parsed = ParamsSchema.safeParse(await params);
+  if (!parsed.success) return fail("VALIDATION_ERROR", "Lote inválido.", 400);
+
+  const supabase = createSupabaseAdminClient();
+  const { data, error } = await supabase.rpc("delete_batch_permanently", {
+    p_batch_id: parsed.data.id,
+    p_requested_by: auth.profile.id
+  });
+
+  if (error) {
+    console.error("[DELETE_BATCH_FAILED]", {
+      batchId: parsed.data.id,
+      errorCode: error.code,
+      errorMessage: error.message,
+      errorDetails: error.details,
+      errorHint: error.hint
+    });
+    return failWithDetails(
+      "DATABASE_ERROR",
+      "Falha ao excluir o lote.",
+      {
+        code: error.code,
+        message: error.message,
+        details: error.details,
+        hint: error.hint
+      },
+      500
+    );
+  }
+
+  return ok(data, "Lote e seus registros foram excluídos permanentemente.");
+}
