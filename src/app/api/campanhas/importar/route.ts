@@ -92,6 +92,9 @@ export async function POST(request: Request) {
       createdCampaign = true;
     }
 
+    if (!campaign) throw new Error("Campanha não disponível após a criação.");
+    const campaignRecord = campaign;
+
     if (batchId.success && batchId.data) {
       const { data, error } = await supabase
         .from("campaign_batches")
@@ -101,7 +104,7 @@ export async function POST(request: Request) {
         .maybeSingle();
       if (error) throw error;
       if (!data) return fail("NOT_FOUND", "Lote não encontrado.", 404);
-      if (data.campaign_id !== campaign.id) {
+      if (data.campaign_id !== campaignRecord.id) {
         return fail("CONFLICT", "O lote não pertence à campanha informada.", 409);
       }
       batch = data;
@@ -109,7 +112,7 @@ export async function POST(request: Request) {
       const { data, error } = await supabase
         .from("campaign_batches")
         .insert({
-          campaign_id: campaign.id,
+          campaign_id: campaignRecord.id,
           name: `${payload.data.name} - Lote 1`,
           description: payload.data.description.trim(),
           status: "aguardando",
@@ -127,6 +130,9 @@ export async function POST(request: Request) {
       batch = data;
       createdBatch = true;
     }
+
+    if (!batch) throw new Error("Lote não disponível após a criação.");
+    const batchRecord = batch;
 
     const uniqueMembers = new Map<string, ImportedMember>();
     for (const item of imports) {
@@ -163,8 +169,8 @@ export async function POST(request: Request) {
       const memberId = memberIdByHash.get(item.cpf_hash);
       if (!memberId) throw new Error("Associado importado não foi localizado.");
       return {
-        campaign_id: campaign.id,
-        batch_id: batch.id,
+        campaign_id: campaignRecord.id,
+        batch_id: batchRecord.id,
         member_id: memberId,
         processing_status: "pending",
         payment_status: null,
@@ -191,18 +197,19 @@ export async function POST(request: Request) {
         error_records: 0,
         total_pending_amount_cents: 0
       })
-      .eq("id", batch.id);
+      .eq("id", batchRecord.id);
     if (batchUpdateError) throw batchUpdateError;
 
-    await supabase
+    const { error: campaignUpdateError } = await supabase
       .from("campaigns")
       .update({ status: "aguardando" })
-      .eq("id", campaign.id);
+      .eq("id", campaignRecord.id);
+    if (campaignUpdateError) throw campaignUpdateError;
 
     return ok(
       {
-        campaignId: campaign.id,
-        batchId: batch.id,
+        campaignId: campaignRecord.id,
+        batchId: batchRecord.id,
         summary: {
           total_lines: imports.length + issues.length,
           valid_records: imports.length,
