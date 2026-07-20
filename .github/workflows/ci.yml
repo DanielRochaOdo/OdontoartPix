@@ -9,7 +9,7 @@ on:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -46,3 +46,13 @@ jobs:
 
       - name: Run tests
         run: npm run test
+
+      - name: Build production bundle
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-anon-key
+          SUPABASE_SERVICE_ROLE_KEY: ci-service-role-key
+          MENSALIDADES_API_BASE_URL: https://example.com
+          MENSALIDADES_API_TOKEN: ci-token
+          CRON_SECRET: ci-cron-secret
+        run: npm run build
