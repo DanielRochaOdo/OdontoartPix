@@ -136,3 +136,76 @@ export async function getMembers() {
   }
   return data ?? [];
 }
+
+export async function getMemberDetail(campaignBatchMemberId: string) {
+  const supabase = createSupabaseAdminClient();
+  const { data: link, error: linkError } = await supabase
+    .from("campaign_batch_members")
+    .select(
+      "id,campaign_id,batch_id,member_id,processing_status,payment_status,total_pending_amount_cents,installments_count,last_checked_at,processing_attempts,last_error,member:members(id,cpf,name,external_user_code),batch:campaign_batches(id,name),campaign:campaigns(id,name)"
+    )
+    .eq("id", campaignBatchMemberId)
+    .is("deleted_at", null)
+    .maybeSingle();
+
+  if (linkError) {
+    throw new DataAccessError(
+      "Não foi possível carregar o associado.",
+      "getMemberDetail.link",
+      linkError
+    );
+  }
+  if (!link) return null;
+
+  const [installmentsResult, totalsResult, logsResult] = await Promise.all([
+    supabase
+      .from("member_installments")
+      .select(
+        "id,cod_usuario,cod_parcela,due_date_text,installment_type,boleto_code,pix_code,card_payment_link,situation,base_amount_cents,fine_amount_cents,interest_amount_cents,additional_amount_cents,discount_amount_cents,final_amount_cents,plan_type,observation,created_at"
+      )
+      .eq("campaign_batch_member_id", campaignBatchMemberId)
+      .order("due_date_text", { ascending: true }),
+    supabase
+      .from("member_plan_totals")
+      .select("id,plan_type,installments_count,total_amount_cents")
+      .eq("campaign_batch_member_id", campaignBatchMemberId)
+      .order("plan_type", { ascending: true }),
+    supabase
+      .from("consultation_logs")
+      .select(
+        "id,request_status,http_status,duration_ms,attempt_number,error_code,error_message,consulted_at"
+      )
+      .eq("campaign_batch_member_id", campaignBatchMemberId)
+      .order("consulted_at", { ascending: false })
+      .limit(20)
+  ]);
+
+  if (installmentsResult.error) {
+    throw new DataAccessError(
+      "Não foi possível carregar as parcelas.",
+      "getMemberDetail.installments",
+      installmentsResult.error
+    );
+  }
+  if (totalsResult.error) {
+    throw new DataAccessError(
+      "Não foi possível carregar os totais por plano.",
+      "getMemberDetail.planTotals",
+      totalsResult.error
+    );
+  }
+  if (logsResult.error) {
+    throw new DataAccessError(
+      "Não foi possível carregar o histórico de consultas.",
+      "getMemberDetail.logs",
+      logsResult.error
+    );
+  }
+
+  return {
+    link,
+    installments: installmentsResult.data ?? [],
+    planTotals: totalsResult.data ?? [],
+    logs: logsResult.data ?? []
+  };
+}
