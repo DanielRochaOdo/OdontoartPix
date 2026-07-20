@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 type Props = {
@@ -25,39 +25,55 @@ export function DestructiveDeleteDialog({
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [value, setValue] = useState("");
-  const [busy, startTransition] = useTransition();
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const canSubmit = useMemo(() => value === confirmLabel && !busy, [value, confirmLabel, busy]);
 
   async function submit() {
-    startTransition(async () => {
-      const response = await fetch(endpoint, { method: "DELETE" });
+    if (!canSubmit) return;
+
+    setBusy(true);
+    setError(null);
+
+    try {
+      const response = await fetch(endpoint, {
+        method: "DELETE",
+        headers: { Accept: "application/json" }
+      });
+      const payload = await response.json().catch(() => null);
+
       if (!response.ok) {
-        try {
-          const payload = await response.json();
-          setError(
-            payload?.error?.details?.message ??
-              payload?.error?.message ??
-              payload?.message ??
-              "Não foi possível excluir."
-          );
-        } catch {
-          setError("Não foi possível excluir.");
-        }
+        setError(
+          payload?.error?.message ??
+            payload?.message ??
+            "Não foi possível excluir."
+        );
         return;
       }
+
       setOpen(false);
       setValue("");
-      setError(null);
-      router.refresh();
-      if (redirectTo) router.replace(redirectTo);
+
+      if (redirectTo) {
+        router.replace(redirectTo);
+      } else {
+        router.refresh();
+      }
+
       alert(successMessage);
-    });
+    } catch {
+      setError("Falha de comunicação ao excluir. Verifique a conexão e tente novamente.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
     <>
-      <button onClick={() => setOpen(true)} className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-700">
+      <button
+        onClick={() => setOpen(true)}
+        className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-700"
+      >
         {triggerLabel}
       </button>
 
@@ -68,22 +84,33 @@ export function DestructiveDeleteDialog({
             <ul className="mt-4 space-y-2 text-sm text-slate-600">
               {summaryLines.map((line) => <li key={line}>- {line}</li>)}
             </ul>
-            <p className="mt-4 text-sm text-slate-500">Digite <span className="font-semibold">{confirmLabel}</span> para confirmar.</p>
+            <p className="mt-4 text-sm text-slate-500">
+              Digite <span className="font-semibold">{confirmLabel}</span> para confirmar.
+            </p>
             <input
               value={value}
               onChange={(event) => {
                 setValue(event.target.value);
                 if (error) setError(null);
               }}
-              className="mt-3 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none"
+              disabled={busy}
+              className="mt-3 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none disabled:opacity-60"
             />
             {error ? <p className="mt-3 text-sm text-red-600">{error}</p> : null}
             <div className="mt-6 flex justify-end gap-3">
-              <button onClick={() => setOpen(false)} className="rounded-lg border px-4 py-2 text-sm">
+              <button
+                onClick={() => setOpen(false)}
+                disabled={busy}
+                className="rounded-lg border px-4 py-2 text-sm disabled:opacity-50"
+              >
                 Cancelar
               </button>
-              <button onClick={submit} disabled={!canSubmit} className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
-                Excluir permanentemente
+              <button
+                onClick={submit}
+                disabled={!canSubmit}
+                className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+              >
+                {busy ? "Excluindo..." : "Excluir permanentemente"}
               </button>
             </div>
           </div>

@@ -5,17 +5,24 @@ export async function createSupabaseServerClient() {
   const cookieStore = await cookies();
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!url || !anon) throw new Error("Supabase não configurado.");
+
+  if (!url || !anon) {
+    throw new Error("Supabase não configurado.");
+  }
+
   return createServerClient(url, anon, {
     cookies: {
-      get(name) {
-        return cookieStore.get(name)?.value;
+      getAll() {
+        return cookieStore.getAll();
       },
-      set(name, value, options) {
-        cookieStore.set({ name, value, ...options });
-      },
-      remove(name, options) {
-        cookieStore.set({ name, value: "", ...options, maxAge: 0 });
+      setAll(cookiesToSet) {
+        try {
+          cookiesToSet.forEach(({ name, value, options }) => {
+            cookieStore.set(name, value, options);
+          });
+        } catch {
+          // Server Components não podem gravar cookies. A renovação é feita pelo middleware.
+        }
       }
     }
   });

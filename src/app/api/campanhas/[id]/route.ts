@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { requireApiUser } from "@/lib/auth/require-api-user";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { fail, failWithDetails, ok } from "@/lib/http/api-response";
+import { mapDeletionError } from "@/lib/deletions/error-mapper";
+import { fail, ok } from "@/lib/http/api-response";
 
 const ParamsSchema = z.object({
   id: z.string().uuid()
@@ -28,17 +29,9 @@ export async function DELETE(_: Request, { params }: { params: Promise<{ id: str
       errorDetails: error.details,
       errorHint: error.hint
     });
-    return failWithDetails(
-      "DATABASE_ERROR",
-      "Falha ao excluir a campanha.",
-      {
-        code: error.code,
-        message: error.message,
-        details: error.details,
-        hint: error.hint
-      },
-      500
-    );
+
+    const mapped = mapDeletionError(error, "campanha");
+    return fail(mapped.code, mapped.message, mapped.status);
   }
 
   return ok(data, "Campanha e todos os seus registros foram excluídos permanentemente.");
