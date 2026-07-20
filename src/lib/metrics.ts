@@ -59,9 +59,28 @@ export const DashboardMetricsSchema = z.object({
   totalPendingAmountCents: NumberSchema
 });
 
+export const CampaignListItemSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+  description: z.string().nullable(),
+  created_at: z.string(),
+  total_batches: NumberSchema,
+  total: NumberSchema,
+  pending: NumberSchema,
+  processing: NumberSchema,
+  completed: NumberSchema,
+  errored: NumberSchema,
+  paid: NumberSchema,
+  unpaid: NumberSchema,
+  total_pending_amount_cents: NumberSchema,
+  progress_percentage: NumberSchema,
+  calculated_status: CalculatedStatusSchema
+});
+
 export type CampaignMetrics = z.infer<typeof CampaignMetricsSchema>;
 export type BatchMetrics = z.infer<typeof BatchMetricsSchema>;
 export type DashboardMetrics = z.infer<typeof DashboardMetricsSchema>;
+export type CampaignListItem = z.infer<typeof CampaignListItemSchema>;
 
 export async function getCampaignMetrics(campaignId: string) {
   const supabase = createSupabaseAdminClient();
@@ -132,6 +151,29 @@ export async function getDashboardMetrics() {
     throw new DataAccessError(
       "O banco retornou indicadores inválidos.",
       "getDashboardMetrics.parse",
+      parsed.error
+    );
+  }
+  return parsed.data;
+}
+
+export async function listCampaignsWithMetrics() {
+  const supabase = createSupabaseAdminClient();
+  const { data, error } = await supabase.rpc("list_campaigns_with_metrics");
+
+  if (error) {
+    throw new DataAccessError(
+      "Não foi possível carregar a lista consolidada de campanhas.",
+      "listCampaignsWithMetrics",
+      error
+    );
+  }
+
+  const parsed = z.array(CampaignListItemSchema).safeParse(data ?? []);
+  if (!parsed.success) {
+    throw new DataAccessError(
+      "O banco retornou uma lista de campanhas inválida.",
+      "listCampaignsWithMetrics.parse",
       parsed.error
     );
   }
