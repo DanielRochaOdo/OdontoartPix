@@ -11,8 +11,12 @@ export type ApiErrorCode =
   | "RATE_LIMITED"
   | "INTERNAL_ERROR";
 
-export function ok<T>(data: T, message = "Operação realizada com sucesso.") {
-  return NextResponse.json({ success: true, data, message });
+export function ok<T>(
+  data: T,
+  message = "Operação realizada com sucesso.",
+  status = 200
+) {
+  return NextResponse.json({ success: true, data, message }, { status });
 }
 
 export function fail(code: ApiErrorCode, message: string, status = 400) {
@@ -25,5 +29,8 @@ export function failWithDetails(
   details: unknown,
   status = 400
 ) {
-  return NextResponse.json({ success: false, error: { code, message, details } }, { status });
+  return NextResponse.json(
+    { success: false, error: { code, message, details } },
+    { status }
+  );
 }
