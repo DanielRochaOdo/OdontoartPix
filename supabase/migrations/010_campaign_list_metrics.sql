@@ -1,4 +1,11 @@
-create or replace function public.list_campaigns_with_metrics()
+-- The remote database may already contain an older RPC with the same name
+-- and a different RETURNS TABLE contract. PostgreSQL cannot change a function
+-- return type through CREATE OR REPLACE, so the incompatible signature must be
+-- removed explicitly before the canonical RPC is created.
+
+drop function if exists public.list_campaigns_with_metrics();
+
+create function public.list_campaigns_with_metrics()
 returns table (
   id uuid,
   name text,
@@ -88,4 +95,5 @@ as $$
   order by c.created_at desc;
 $$;
 
+revoke all on function public.list_campaigns_with_metrics() from public, anon, authenticated;
 grant execute on function public.list_campaigns_with_metrics() to service_role;
