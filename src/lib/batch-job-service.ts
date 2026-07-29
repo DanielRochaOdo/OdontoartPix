@@ -5,6 +5,7 @@ export type ProcessingJobStatus =
   | "running"
   | "completed"
   | "failed"
+  | "paused"
   | "cancelled";
 
 export type EnqueuedJob = {
@@ -20,7 +21,29 @@ export type EnqueuedJob = {
   created: boolean;
 };
 
-const PENDING_STATUSES = ["pending", "pendente", "aguardando"];
+const PENDING_STATUSES = ["pending", "pendente", "aguardando", "retrying"];
+
+async function reopenUnpaidMembersForManualProcessing(batchId: string) {
+  const supabase = createSupabaseAdminClient();
+  const { error } = await supabase
+    .from("campaign_batch_members")
+    .update({
+      processing_status: "pending",
+      payment_status: null,
+      last_error: null,
+      next_retry_at: null,
+      processing_owner: null,
+      processing_started_at: null,
+      processing_heartbeat_at: null,
+      updated_at: new Date().toISOString()
+    })
+    .eq("batch_id", batchId)
+    .is("deleted_at", null)
+    .eq("processing_status", "completed")
+    .eq("payment_status", "unpaid");
+
+  if (error) throw error;
+}
 
 export async function enqueueBatchJob(input: {
   campaignId: string;
@@ -30,9 +53,6 @@ export async function enqueueBatchJob(input: {
 }): Promise<EnqueuedJob | null> {
   const supabase = createSupabaseAdminClient();
   const includeErrors = input.includeErrors ?? false;
-  const eligibleStatuses = includeErrors
-    ? [...PENDING_STATUSES, "error"]
-    : PENDING_STATUSES;
 
   const { data: activeJob, error: activeJobError } = await supabase
     .from("processing_jobs")
@@ -40,7 +60,7 @@ export async function enqueueBatchJob(input: {
       "id,campaign_id,batch_id,status,total_items,processed_items,success_items,error_items,include_errors"
     )
     .eq("batch_id", input.batchId)
-    .in("status", ["queued", "running"])
+    .in("status", ["queued", "running", "paused"])
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -54,12 +74,16 @@ export async function enqueueBatchJob(input: {
     };
   }
 
+  if (!includeErrors) {
+    await reopenUnpaidMembersForManualProcessing(input.batchId);
+  }
+
   const { count, error: countError } = await supabase
     .from("campaign_batch_members")
     .select("id", { count: "exact", head: true })
     .eq("batch_id", input.batchId)
     .is("deleted_at", null)
-    .in("processing_status", eligibleStatuses);
+    .in("processing_status", includeErrors ? [...PENDING_STATUSES, "error"] : PENDING_STATUSES);
 
   if (countError) throw countError;
   const totalItems = count ?? 0;

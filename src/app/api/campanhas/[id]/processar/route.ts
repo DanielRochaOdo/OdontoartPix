@@ -2,6 +2,10 @@ import { z } from "zod";
 import { requireApiUser } from "@/lib/auth/require-api-user";
 import { enqueueCampaignJobs } from "@/lib/batch-job-service";
 import { fail, ok } from "@/lib/http/api-response";
+import { triggerQueuedProcessing } from "@/lib/processing-trigger";
+
+export const runtime = "nodejs";
+export const maxDuration = 900;
 
 const ParamsSchema = z.object({ id: z.string().uuid() });
 
@@ -30,15 +34,25 @@ export async function POST(
     if (result.jobs.length === 0) {
       return fail(
         "CONFLICT",
-        "Não existem CPFs pendentes elegíveis para processamento.",
+        "Não existem faturas elegíveis para processamento nesta campanha.",
         422
       );
     }
+
+    void triggerQueuedProcessing().catch((error) => {
+      console.error("[CAMPAIGN_KICKOFF_FAILED]", {
+        campaignId: parsed.data.id,
+        message: error instanceof Error
+          ? error.message
+          : "Falha ao iniciar o processamento automatico da campanha."
+      });
+    });
 
     return ok(
       {
         campaignId: parsed.data.id,
         jobsCreated: result.jobs.filter((job) => job.created).length,
+        kickoffScheduled: true,
         jobs: result.jobs.map((job) => ({
           jobId: job.id,
           batchId: job.batch_id,
@@ -47,7 +61,7 @@ export async function POST(
           created: job.created
         }))
       },
-      "O processamento foi colocado na fila.",
+      "O processamento foi colocado na fila e o kickoff foi agendado imediatamente.",
       202
     );
   } catch (error) {

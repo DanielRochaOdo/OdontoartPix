@@ -3,6 +3,7 @@ import {
   MonthlyResponseError,
   type MonthlyAnalysis
 } from "@/lib/analysis";
+import { getProcessingConfig } from "@/lib/processing-config";
 
 export type ErpErrorCode =
   | "ERP_TIMEOUT"
@@ -19,7 +20,8 @@ export class ErpError extends Error {
     readonly code: ErpErrorCode,
     message: string,
     readonly retryable: boolean,
-    readonly httpStatus?: number
+    readonly httpStatus?: number,
+    readonly retryAfterMs?: number
   ) {
     super(message);
     this.name = "ErpError";
@@ -32,13 +34,28 @@ export type MonthlyConsultationResult = {
   analysis: MonthlyAnalysis;
 };
 
-function configuredTimeoutMs() {
-  const parsed = Number(process.env.MENSALIDADES_API_TIMEOUT_MS ?? "15000");
-  if (!Number.isFinite(parsed) || parsed < 1000) return 15000;
-  return Math.min(parsed, 60000);
+export function buildMensalidadesRequestUrl(baseUrl: string, token: string, associatedCode: string) {
+  const normalizedBaseUrl = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
+  const url = new URL("api/Mensalidades", normalizedBaseUrl);
+  url.searchParams.set("token", token);
+  url.searchParams.set("CodigoAssociadoEmpresa", associatedCode.trim());
+  return url;
 }
 
-function errorForStatus(status: number) {
+function parseRetryAfterMs(value: string | null) {
+  if (!value) return null;
+
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.round(seconds * 1000);
+  }
+
+  const parsedDate = Date.parse(value);
+  if (Number.isNaN(parsedDate)) return null;
+  return Math.max(0, parsedDate - Date.now());
+}
+
+function errorForStatus(status: number, retryAfterMs?: number | null) {
   if (status === 401 || status === 403) {
     return new ErpError(
       "ERP_UNAUTHORIZED",
@@ -52,7 +69,8 @@ function errorForStatus(status: number) {
       "ERP_RATE_LIMITED",
       "O ERP limitou temporariamente as consultas.",
       true,
-      status
+      status,
+      retryAfterMs ?? undefined
     );
   }
   if (status >= 500) {
@@ -60,7 +78,8 @@ function errorForStatus(status: number) {
       "ERP_SERVER_ERROR",
       "O ERP apresentou uma falha interna.",
       true,
-      status
+      status,
+      retryAfterMs ?? undefined
     );
   }
   return new ErpError(
@@ -71,8 +90,19 @@ function errorForStatus(status: number) {
   );
 }
 
-export async function consultMonthlyByCpf(
-  cpf: string
+async function readResponseBody(response: Response, controller: AbortController) {
+  const { httpReadTimeoutMs } = getProcessingConfig();
+  const timeout = setTimeout(() => controller.abort("read-timeout"), httpReadTimeoutMs);
+  try {
+    return await response.text();
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export async function consultMonthlyByAssociatedCode(
+  associatedCode: string,
+  targetInstallmentId?: string
 ): Promise<MonthlyConsultationResult> {
   const baseUrl = process.env.MENSALIDADES_API_BASE_URL;
   const token = process.env.MENSALIDADES_API_TOKEN;
@@ -84,13 +114,12 @@ export async function consultMonthlyByCpf(
     );
   }
 
-  const url = new URL("/api/mensalidade/BuscarDadosMensalidades", baseUrl);
-  url.searchParams.set("token", token);
-  url.searchParams.set("CpfUsuario", cpf);
+  const url = buildMensalidadesRequestUrl(baseUrl, token, associatedCode);
 
+  const { httpConnectTimeoutMs } = getProcessingConfig();
   const controller = new AbortController();
-  const startedAt = Date.now();
-  const timeout = setTimeout(() => controller.abort(), configuredTimeoutMs());
+  const startedAt = performance.now();
+  const connectTimeout = setTimeout(() => controller.abort("connect-timeout"), httpConnectTimeoutMs);
 
   try {
     const response = await fetch(url.toString(), {
@@ -99,10 +128,14 @@ export async function consultMonthlyByCpf(
       headers: { Accept: "application/json" },
       cache: "no-store"
     });
+    clearTimeout(connectTimeout);
 
-    if (!response.ok) throw errorForStatus(response.status);
+    if (!response.ok) {
+      const retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after"));
+      throw errorForStatus(response.status, retryAfterMs);
+    }
 
-    const text = await response.text();
+    const text = await readResponseBody(response, controller);
     let payload: unknown;
     try {
       payload = text ? JSON.parse(text) : null;
@@ -118,8 +151,8 @@ export async function consultMonthlyByCpf(
     try {
       return {
         httpStatus: response.status,
-        durationMs: Date.now() - startedAt,
-        analysis: analyzeMonthlyResponse(payload)
+        durationMs: performance.now() - startedAt,
+        analysis: analyzeMonthlyResponse(payload, targetInstallmentId)
       };
     } catch (error) {
       if (error instanceof MonthlyResponseError) {
@@ -133,7 +166,9 @@ export async function consultMonthlyByCpf(
       throw error;
     }
   } catch (error) {
+    clearTimeout(connectTimeout);
     if (error instanceof ErpError) throw error;
+
     if (error instanceof Error && error.name === "AbortError") {
       throw new ErpError(
         "ERP_TIMEOUT",
@@ -141,12 +176,15 @@ export async function consultMonthlyByCpf(
         true
       );
     }
+
     throw new ErpError(
       "ERP_NETWORK_ERROR",
       "Não foi possível estabelecer comunicação com o ERP.",
       true
     );
-  } finally {
-    clearTimeout(timeout);
   }
+}
+
+export function __test__parseRetryAfterMs(value: string | null) {
+  return parseRetryAfterMs(value);
 }

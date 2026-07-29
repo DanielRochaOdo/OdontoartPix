@@ -2,6 +2,7 @@ import Link from "next/link";
 import { DestructiveDeleteDialog } from "@/components/destructive-delete-dialog";
 import { ProcessResourceButton } from "@/components/process-resource-button";
 import { ProcessingProgressPanel } from "@/components/processing-progress-panel";
+import { RenameBatchForm } from "@/components/rename-batch-form";
 import { getBatchById, getMemberPreviewByBatch } from "@/lib/data";
 import { DataAccessError } from "@/lib/errors/data-access-error";
 import { getBatchMetrics } from "@/lib/metrics";
@@ -60,7 +61,7 @@ export default async function BatchDetailPage({
 
       <header className="mt-4 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <p className="text-sm font-medium uppercase tracking-[0.2em] text-sky-700">Lote</p>
+          <p className="text-sm font-medium uppercase tracking-[0.2em] text-emerald-700">Lote</p>
           <h1 className="mt-2 text-3xl font-semibold">{batch?.name ?? "Lote não encontrado"}</h1>
           <p className="mt-2 text-sm text-slate-600">
             {batch?.description ?? "Sem descrição."}
@@ -97,9 +98,13 @@ export default async function BatchDetailPage({
         </div>
       ) : (
         <>
+          <div className="mt-6">
+            <RenameBatchForm batchId={batch.id} initialName={batch.name} />
+          </div>
           <ProcessingProgressPanel
             endpoint={`/api/lotes/${batch.id}/progresso`}
             initialMetrics={metrics}
+            errorHref={`/associados?status=error&batch=${batch.id}`}
           />
 
           <section className="mt-8 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">

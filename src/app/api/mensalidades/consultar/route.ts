@@ -1,11 +1,11 @@
 import { z } from "zod";
-import { isValidCpf, stripCpf } from "@/lib/cpf";
 import { requireApiUser } from "@/lib/auth/require-api-user";
 import { fail, ok } from "@/lib/http/api-response";
-import { consultMonthlyByCpf, ErpError } from "@/lib/mensalidades-api";
+import { consultMonthlyByAssociatedCode, ErpError } from "@/lib/mensalidades-api";
 
 const BodySchema = z.object({
-  cpf: z.string().min(11).max(14)
+  associatedCode: z.string().trim().min(1),
+  targetInstallmentId: z.string().trim().min(1)
 });
 
 export async function POST(request: Request) {
@@ -14,13 +14,15 @@ export async function POST(request: Request) {
 
   const body = await request.json().catch(() => null);
   const parsed = BodySchema.safeParse(body);
-  if (!parsed.success) return fail("VALIDATION_ERROR", "Payload inválido.", 400);
-
-  const cpf = stripCpf(parsed.data.cpf);
-  if (!isValidCpf(cpf)) return fail("VALIDATION_ERROR", "CPF inválido.", 400);
+  if (!parsed.success) {
+    return fail("VALIDATION_ERROR", "Payload invalido.", 400);
+  }
 
   try {
-    const result = await consultMonthlyByCpf(cpf);
+    const result = await consultMonthlyByAssociatedCode(
+      parsed.data.associatedCode,
+      parsed.data.targetInstallmentId
+    );
     return ok(
       {
         httpStatus: result.httpStatus,

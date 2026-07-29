@@ -36,7 +36,6 @@ export async function GET(request: Request) {
   }
 
   try {
-    console.info("[CRON_PROCESSING_STARTED]", { startedAt: new Date().toISOString() });
     const result = await processNextJobBlock();
     return NextResponse.json({ success: true, data: result });
   } catch (error) {

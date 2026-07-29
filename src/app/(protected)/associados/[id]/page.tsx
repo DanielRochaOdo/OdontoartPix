@@ -71,7 +71,7 @@ export default async function MemberDetailPage({
         ) : null}
       </nav>
 
-      <p className="mt-4 text-sm font-medium uppercase tracking-[0.2em] text-sky-700">
+      <p className="mt-4 text-sm font-medium uppercase tracking-[0.2em] text-emerald-700">
         Associado
       </p>
       <h1 className="mt-2 text-3xl font-semibold">

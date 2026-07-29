@@ -11,3 +11,50 @@
 body {
   @apply bg-white text-slate-950 antialiased;
 }
+
+input[type="text"],
+input:not([type]),
+input[type="search"],
+textarea {
+  text-transform: uppercase;
+}
+
+.dark body {
+  @apply bg-slate-950 text-slate-100;
+}
+
+.dark .bg-slate-50 { background-color: #0f172a; }
+.dark .bg-slate-100 { background-color: #1e293b; }
+.dark .bg-white { background-color: #111827; }
+.dark .text-slate-950,
+.dark .text-slate-900 { color: #f8fafc; }
+.dark .text-slate-700,
+.dark .text-slate-600 { color: #cbd5e1; }
+.dark .text-slate-500 { color: #94a3b8; }
+.dark .border-slate-200 { border-color: #334155; }
+.dark .border-dashed { border-color: #475569; }
+.dark .hover\:bg-slate-50:hover { background-color: #1e293b; }
+.dark .hover\:bg-slate-100:hover { background-color: #334155; }
+.dark .bg-emerald-50 { background-color: #064e3b; }
+.dark .border-emerald-200 { border-color: #047857; }
+.dark .text-emerald-800 { color: #a7f3d0; }
+
+.dark input,
+.dark textarea,
+.dark select {
+  background-color: #1e293b;
+  border-color: #475569;
+  color: #f8fafc;
+  color-scheme: dark;
+}
+
+.dark input::placeholder,
+.dark textarea::placeholder {
+  color: #94a3b8;
+  opacity: 1;
+}
+
+.dark select option {
+  background-color: #1e293b;
+  color: #f8fafc;
+}
