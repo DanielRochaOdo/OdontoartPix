@@ -11,6 +11,7 @@ type Props = {
   successMessage: string;
   redirectTo?: string;
   triggerLabel: string;
+  iconOnly?: boolean;
 };
 
 export function DestructiveDeleteDialog({
@@ -20,7 +21,8 @@ export function DestructiveDeleteDialog({
   endpoint,
   successMessage,
   redirectTo,
-  triggerLabel
+  triggerLabel,
+  iconOnly = false
 }: Props) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -72,9 +74,22 @@ export function DestructiveDeleteDialog({
     <>
       <button
         onClick={() => setOpen(true)}
-        className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-700"
+        aria-label={triggerLabel}
+        title={triggerLabel}
+        className={
+          iconOnly
+            ? "inline-flex h-10 w-10 items-center justify-center rounded-lg border border-red-200 bg-red-50 text-red-700"
+            : "rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-700"
+        }
       >
-        {triggerLabel}
+        {iconOnly ? (
+          <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M3 6h18" />
+            <path d="M8 6V4h8v2" />
+            <path d="M19 6l-1 14H6L5 6" />
+            <path d="M10 11v6M14 11v6" />
+          </svg>
+        ) : triggerLabel}
       </button>
 
       {open ? (

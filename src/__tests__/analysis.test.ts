@@ -72,6 +72,31 @@ import {
     expect(result.paymentStatus).toBe("paid");
   });
 
+  it("ignora parcelas do tipo Parcela Virtual em toda a leitura", () => {
+    const result = analyzeMonthlyResponse({
+      parcelas: [
+        {
+          cod_usuario: "1",
+          cod_parcela: "virtual-1",
+          tipo_parcela: " Parcela Virtual ",
+          ValorFinal: "valor invalido",
+          Tipo_plano: "Orto"
+        },
+        {
+          cod_usuario: "1",
+          cod_parcela: "10",
+          tipo_parcela: "Plano",
+          ValorFinal: 50,
+          Tipo_plano: "Orto"
+        }
+      ]
+    });
+
+    expect(result.installmentsCount).toBe(1);
+    expect(result.totalPendingAmountCents).toBe(5000);
+    expect(result.installments[0]?.installmentCode).toBe("10");
+  });
+
   it("agrupa parcelas por Tipo_plano", () => {
     const result = analyzeMonthlyResponse({
       parcelas: [
@@ -94,6 +119,47 @@ import {
     expect(() => analyzeMonthlyResponse({ parcelas: null })).toThrow(
       MonthlyResponseError
     );
+  });
+
+  it("aceita o novo contrato com dados.Data vazio como associado pago", () => {
+    const result = analyzeMonthlyResponse({
+      codigo: 1,
+      mensagem: null,
+      dados: {
+        RequestInfo: null,
+        CurrentPage: 1,
+        TotalPages: 0,
+        TotalCount: 0,
+        PageSize: 0,
+        Data: []
+      },
+      erros: null
+    }, "55");
+
+    expect(result.paymentStatus).toBe("paid");
+    expect(result.installmentsCount).toBe(0);
+    expect(result.totalPendingAmountCents).toBe(0);
+  });
+
+  it("no novo contrato considera unpaid quando a parcela alvo é localizada por Id", () => {
+    const result = analyzeMonthlyResponse({
+      codigo: 1,
+      mensagem: null,
+      dados: {
+        RequestInfo: null,
+        CurrentPage: 1,
+        TotalPages: 1,
+        TotalCount: 1,
+        PageSize: 100,
+        Data: [{ Id: "55", ValorFinal: 87.42 }]
+      },
+      erros: null
+    }, "55");
+
+    expect(result.paymentStatus).toBe("unpaid");
+    expect(result.installmentsCount).toBe(1);
+    expect(result.totalPendingAmountCents).toBe(8742);
+    expect(result.installments[0]?.installmentCode).toBe("55");
   });
 
   it("rejeita parcela financeira com ValorFinal inválido", () => {

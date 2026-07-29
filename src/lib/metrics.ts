@@ -16,6 +16,12 @@ export const CalculatedStatusSchema = z.enum([
 
 const NumberSchema = z.coerce.number().finite();
 
+export function getProcessingBlockSize() {
+  const configured = Number(process.env.PROCESSING_BLOCK_SIZE ?? 1000);
+  if (!Number.isInteger(configured)) return 1000;
+  return Math.min(Math.max(configured, 1), 1000);
+}
+
 export const CampaignMetricsSchema = z.object({
   campaignId: z.string().uuid(),
   totalBatches: NumberSchema,
@@ -32,6 +38,7 @@ export const CampaignMetricsSchema = z.object({
   queuedJobs: NumberSchema,
   runningJobs: NumberSchema,
   activeJobs: NumberSchema,
+  processingBlockSize: NumberSchema.default(1000),
   latestJobStatus: z.string().nullable().optional(),
   latestHeartbeatAt: z.string().nullable().optional(),
   leaseExpiresAt: z.string().nullable().optional(),
@@ -56,7 +63,9 @@ export const DashboardMetricsSchema = z.object({
   unpaid: NumberSchema,
   errored: NumberSchema,
   utilizationPercentage: NumberSchema,
-  totalPendingAmountCents: NumberSchema
+  totalPendingAmountCents: NumberSchema,
+  totalPaidAmountCents: NumberSchema,
+  totalBatchAmountCents: NumberSchema
 });
 
 export const CampaignListItemSchema = z.object({
@@ -82,6 +91,11 @@ export type BatchMetrics = z.infer<typeof BatchMetricsSchema>;
 export type DashboardMetrics = z.infer<typeof DashboardMetricsSchema>;
 export type CampaignListItem = z.infer<typeof CampaignListItemSchema>;
 
+type DashboardMetricsFilters = {
+  campaignIds?: string[];
+  batchIds?: string[];
+};
+
 export async function getCampaignMetrics(campaignId: string) {
   const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase.rpc("get_campaign_metrics", {
@@ -105,7 +119,7 @@ export async function getCampaignMetrics(campaignId: string) {
       parsed.error
     );
   }
-  return parsed.data;
+  return { ...parsed.data, processingBlockSize: getProcessingBlockSize() };
 }
 
 export async function getBatchMetrics(batchId: string) {
@@ -131,12 +145,20 @@ export async function getBatchMetrics(batchId: string) {
       parsed.error
     );
   }
-  return parsed.data;
+  return { ...parsed.data, processingBlockSize: getProcessingBlockSize() };
 }
 
-export async function getDashboardMetrics() {
+export async function getDashboardMetrics(filters: DashboardMetricsFilters = {}) {
   const supabase = createSupabaseAdminClient();
-  const { data, error } = await supabase.rpc("get_dashboard_metrics");
+  const normalize = (values?: string[]) => {
+    const sanitized = (values ?? []).map((value) => value.trim()).filter(Boolean);
+    return sanitized.length > 0 ? sanitized : null;
+  };
+
+  const { data, error } = await supabase.rpc("get_dashboard_metrics", {
+    p_campaign_ids: normalize(filters.campaignIds),
+    p_batch_ids: normalize(filters.batchIds)
+  });
 
   if (error) {
     throw new DataAccessError(

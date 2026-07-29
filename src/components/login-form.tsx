@@ -79,7 +79,7 @@ export function LoginForm({ initialError = null, clearExistingSession = false }:
           type="email"
           value={email}
           onChange={(event) => setEmail(event.target.value)}
-          className="w-full rounded-xl border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none"
+          className="w-full rounded-xl border border-emerald-900 bg-emerald-950 px-4 py-3 text-white outline-none"
           required
           autoComplete="email"
         />
@@ -90,7 +90,7 @@ export function LoginForm({ initialError = null, clearExistingSession = false }:
           type="password"
           value={password}
           onChange={(event) => setPassword(event.target.value)}
-          className="w-full rounded-xl border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none"
+          className="w-full rounded-xl border border-emerald-900 bg-emerald-950 px-4 py-3 text-white outline-none"
           required
           autoComplete="current-password"
         />
@@ -103,7 +103,7 @@ export function LoginForm({ initialError = null, clearExistingSession = false }:
       <button
         type="submit"
         disabled={loading}
-        className="w-full rounded-xl bg-sky-500 px-4 py-3 font-medium text-slate-950 disabled:opacity-60"
+        className="w-full rounded-xl bg-emerald-500 px-4 py-3 font-medium text-slate-950 disabled:opacity-60"
       >
         {loading ? "Entrando..." : "Entrar"}
       </button>

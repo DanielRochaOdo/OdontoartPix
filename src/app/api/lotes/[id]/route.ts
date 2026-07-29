@@ -8,6 +8,47 @@ const ParamsSchema = z.object({
   id: z.string().uuid()
 });
 
+const RenameSchema = z.object({
+  name: z.string().trim().min(1).max(120)
+});
+
+export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const auth = await requireApiUser(["administrador", "operador"]);
+  if (!auth.ok) return auth.response;
+
+  const parsedParams = ParamsSchema.safeParse(await params);
+  if (!parsedParams.success) return fail("VALIDATION_ERROR", "Lote invÃ¡lido.", 400);
+
+  const body = await request.json().catch(() => null);
+  const parsedBody = RenameSchema.safeParse(body);
+  if (!parsedBody.success) {
+    return fail("VALIDATION_ERROR", "Informe um nome vÃ¡lido para o lote.", 400);
+  }
+
+  const supabase = createSupabaseAdminClient();
+  const { data, error } = await supabase
+    .from("campaign_batches")
+    .update({ name: parsedBody.data.name, updated_at: new Date().toISOString() })
+    .eq("id", parsedParams.data.id)
+    .is("deleted_at", null)
+    .select("id,campaign_id,name")
+    .maybeSingle();
+
+  if (error) {
+    console.error("[RENAME_BATCH_FAILED]", {
+      batchId: parsedParams.data.id,
+      code: error.code,
+      message: error.message,
+      details: error.details,
+      hint: error.hint
+    });
+    return fail("DATABASE_ERROR", "NÃ£o foi possÃ­vel renomear o lote.", 500);
+  }
+  if (!data) return fail("NOT_FOUND", "Lote nÃ£o encontrado.", 404);
+
+  return ok(data, "Lote renomeado com sucesso.");
+}
+
 export async function DELETE(_: Request, { params }: { params: Promise<{ id: string }> }) {
   const auth = await requireApiUser(["administrador"]);
   if (!auth.ok) return auth.response;

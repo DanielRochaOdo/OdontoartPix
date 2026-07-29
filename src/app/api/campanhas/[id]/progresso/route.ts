@@ -2,6 +2,7 @@ import { z } from "zod";
 import { requireApiUser } from "@/lib/auth/require-api-user";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { fail, ok } from "@/lib/http/api-response";
+import { getProcessingBlockSize } from "@/lib/metrics";
 
 const ParamsSchema = z.object({ id: z.string().uuid() });
 
@@ -41,5 +42,8 @@ export async function GET(
     return fail("NOT_FOUND", "Campanha não encontrada.", 404);
   }
 
-  return ok(data, "Progresso da campanha carregado.");
+  return ok(
+    { ...(data as Record<string, unknown>), processingBlockSize: getProcessingBlockSize() },
+    "Progresso da campanha carregado."
+  );
 }

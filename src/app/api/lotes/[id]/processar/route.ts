@@ -3,6 +3,10 @@ import { requireApiUser } from "@/lib/auth/require-api-user";
 import { enqueueBatchJob } from "@/lib/batch-job-service";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { fail, ok } from "@/lib/http/api-response";
+import { triggerQueuedProcessing } from "@/lib/processing-trigger";
+
+export const runtime = "nodejs";
+export const maxDuration = 900;
 
 const ParamsSchema = z.object({ id: z.string().uuid() });
 
@@ -38,21 +42,32 @@ export async function POST(
     if (!job) {
       return fail(
         "CONFLICT",
-        "Não existem CPFs pendentes elegíveis para processamento.",
+        "Não existem faturas elegíveis para processamento neste lote.",
         422
       );
     }
+
+    void triggerQueuedProcessing().catch((error) => {
+      console.error("[BATCH_KICKOFF_FAILED]", {
+        batchId: batch.id,
+        campaignId: batch.campaign_id,
+        message: error instanceof Error
+          ? error.message
+          : "Falha ao iniciar o processamento automatico do lote."
+      });
+    });
 
     return ok(
       {
         jobId: job.id,
         batchId: job.batch_id,
         campaignId: job.campaign_id,
+        kickoffScheduled: true,
         status: job.status,
         totalItems: job.total_items,
         created: job.created
       },
-      "O processamento do lote foi colocado na fila.",
+      "O processamento do lote foi colocado na fila e o kickoff foi agendado imediatamente.",
       202
     );
   } catch (error) {

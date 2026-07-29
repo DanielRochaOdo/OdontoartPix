@@ -25,10 +25,35 @@ const MonthlyParcelSchema = z
   })
   .passthrough();
 
-const MonthlyResponseSchema = z
+const MonthlyLegacyResponseSchema = z
   .object({
     mensagem: z.string().nullish(),
     parcelas: z.array(MonthlyParcelSchema)
+  })
+  .passthrough();
+
+const MonthlyApiDataItemSchema = z
+  .object({
+    Id: NullableStringOrNumberSchema,
+    ValorFinal: NullableStringOrNumberSchema
+  })
+  .passthrough();
+
+const MonthlyPaginatedResponseSchema = z
+  .object({
+    codigo: z.number().nullish(),
+    mensagem: z.string().nullish(),
+    dados: z
+      .object({
+        RequestInfo: z.unknown().nullish(),
+        CurrentPage: z.number().nullish(),
+        TotalPages: z.number().nullish(),
+        TotalCount: z.number().nullish(),
+        PageSize: z.number().nullish(),
+        Data: z.array(MonthlyApiDataItemSchema)
+      })
+      .passthrough(),
+    erros: z.unknown().nullish()
   })
   .passthrough();
 
@@ -74,6 +99,18 @@ export type MonthlyAnalysis = {
   warnings: string[];
 };
 
+type NormalizedLegacyPayload = {
+  source: "legacy";
+  message?: string;
+  parcels: z.infer<typeof MonthlyParcelSchema>[];
+};
+
+type NormalizedPaginatedPayload = {
+  source: "paginated";
+  message?: string;
+  items: z.infer<typeof MonthlyApiDataItemSchema>[];
+};
+
 function optionalText(value: unknown) {
   if (value == null) return undefined;
   const normalized = String(value).trim();
@@ -88,19 +125,41 @@ function monetaryValue(value: unknown, field: string, warnings: string[]) {
   return result.cents;
 }
 
-export function analyzeMonthlyResponse(input: unknown): MonthlyAnalysis {
-  const parsed = MonthlyResponseSchema.safeParse(input);
-  if (!parsed.success) {
-    throw new MonthlyResponseError(
-      "A resposta do ERP não possui o contrato esperado com parcelas em formato de array."
-    );
+function normalizeMonthlyPayload(input: unknown): NormalizedLegacyPayload | NormalizedPaginatedPayload {
+  const legacy = MonthlyLegacyResponseSchema.safeParse(input);
+  if (legacy.success) {
+    return {
+      source: "legacy",
+      message: legacy.data.mensagem?.trim(),
+      parcels: legacy.data.parcelas
+    };
   }
 
+  const paginated = MonthlyPaginatedResponseSchema.safeParse(input);
+  if (paginated.success) {
+    return {
+      source: "paginated",
+      message: paginated.data.mensagem?.trim(),
+      items: paginated.data.dados.Data
+    };
+  }
+
+  throw new MonthlyResponseError(
+    "A resposta do ERP não possui o contrato esperado."
+  );
+}
+
+function analyzeLegacyPayload(payload: NormalizedLegacyPayload): MonthlyAnalysis {
   const warnings: string[] = [];
   const seen = new Set<string>();
   const installments: MonthlyInstallment[] = [];
 
-  for (const item of parsed.data.parcelas) {
+  for (const item of payload.parcels) {
+    const installmentType = optionalText(item.tipo_parcela);
+    if (installmentType?.toLocaleLowerCase("pt-BR") === "parcela virtual") {
+      continue;
+    }
+
     const installmentCode = optionalText(item.cod_parcela);
     if (!installmentCode) continue;
 
@@ -123,7 +182,7 @@ export function analyzeMonthlyResponse(input: unknown): MonthlyAnalysis {
       userCode,
       installmentCode,
       dueDate: optionalText(item.vencimento),
-      installmentType: optionalText(item.tipo_parcela),
+      installmentType,
       boletoCode: optionalText(item.cod_boleto),
       pixCode: optionalText(item.cod_pix),
       cardPaymentLink: optionalText(item.link_cartão),
@@ -131,16 +190,8 @@ export function analyzeMonthlyResponse(input: unknown): MonthlyAnalysis {
       baseAmountCents: monetaryValue(item.Valor, "Valor", warnings),
       fineAmountCents: monetaryValue(item.Multa, "Multa", warnings),
       interestAmountCents: monetaryValue(item.Juros, "Juros", warnings),
-      additionalAmountCents: monetaryValue(
-        item.AcrescimoAvulso,
-        "AcrescimoAvulso",
-        warnings
-      ),
-      discountAmountCents: monetaryValue(
-        item.DescontoAvulso,
-        "DescontoAvulso",
-        warnings
-      ),
+      additionalAmountCents: monetaryValue(item.AcrescimoAvulso, "AcrescimoAvulso", warnings),
+      discountAmountCents: monetaryValue(item.DescontoAvulso, "DescontoAvulso", warnings),
       finalAmountCents: finalAmount.cents,
       planType: optionalText(item.Tipo_plano) ?? "Não informado",
       observation: optionalText(item.Observacao)
@@ -150,7 +201,7 @@ export function analyzeMonthlyResponse(input: unknown): MonthlyAnalysis {
   if (installments.length === 0) {
     return {
       paymentStatus: "paid",
-      message: parsed.data.mensagem?.trim() || "Associado sem mensalidades em aberto.",
+      message: payload.message || "Associado sem mensalidades em aberto.",
       installmentsCount: 0,
       totalPendingAmountCents: 0,
       totalsByPlan: [],
@@ -159,11 +210,7 @@ export function analyzeMonthlyResponse(input: unknown): MonthlyAnalysis {
     };
   }
 
-  const grouped = new Map<
-    string,
-    { installmentsCount: number; totalAmountCents: number }
-  >();
-
+  const grouped = new Map<string, { installmentsCount: number; totalAmountCents: number }>();
   for (const installment of installments) {
     const current = grouped.get(installment.planType) ?? {
       installmentsCount: 0,
@@ -174,22 +221,82 @@ export function analyzeMonthlyResponse(input: unknown): MonthlyAnalysis {
     grouped.set(installment.planType, current);
   }
 
-  const totalsByPlan = [...grouped.entries()].map(([planType, total]) => ({
-    planType,
-    ...total
-  }));
-  const totalPendingAmountCents = installments.reduce(
-    (sum, installment) => sum + installment.finalAmountCents,
-    0
-  );
-
   return {
     paymentStatus: "unpaid",
-    message: parsed.data.mensagem?.trim() || "Associado possui mensalidades em aberto.",
+    message: payload.message || "Associado possui mensalidades em aberto.",
     installmentsCount: installments.length,
-    totalPendingAmountCents,
-    totalsByPlan,
+    totalPendingAmountCents: installments.reduce((sum, installment) => sum + installment.finalAmountCents, 0),
+    totalsByPlan: [...grouped.entries()].map(([planType, total]) => ({ planType, ...total })),
     installments,
     warnings
   };
+}
+
+function analyzePaginatedPayload(
+  payload: NormalizedPaginatedPayload,
+  targetInstallmentId?: string
+): MonthlyAnalysis {
+  if (!targetInstallmentId) {
+    throw new MonthlyResponseError(
+      "A análise da API de mensalidades exige a parcela de destino."
+    );
+  }
+
+  const matched = payload.items.find((item) => optionalText(item.Id) === targetInstallmentId);
+  if (!matched) {
+    return {
+      paymentStatus: "paid",
+      message: payload.message || "Parcela não localizada para o associado informado.",
+      installmentsCount: 0,
+      totalPendingAmountCents: 0,
+      totalsByPlan: [],
+      installments: [],
+      warnings: []
+    };
+  }
+
+  const finalAmount = toCents(matched.ValorFinal);
+  if (finalAmount.warning) {
+    throw new MonthlyResponseError(
+      `A parcela ${targetInstallmentId} possui ValorFinal inválido.`
+    );
+  }
+
+  return {
+    paymentStatus: "unpaid",
+    message: payload.message || "Parcela localizada como pendente.",
+    installmentsCount: 1,
+    totalPendingAmountCents: finalAmount.cents,
+    totalsByPlan: [
+      {
+        planType: "Não informado",
+        installmentsCount: 1,
+        totalAmountCents: finalAmount.cents
+      }
+    ],
+    installments: [
+      {
+        installmentCode: targetInstallmentId,
+        baseAmountCents: finalAmount.cents,
+        fineAmountCents: 0,
+        interestAmountCents: 0,
+        additionalAmountCents: 0,
+        discountAmountCents: 0,
+        finalAmountCents: finalAmount.cents,
+        planType: "Não informado"
+      }
+    ],
+    warnings: []
+  };
+}
+
+export function analyzeMonthlyResponse(
+  input: unknown,
+  targetInstallmentId?: string
+): MonthlyAnalysis {
+  const normalized = normalizeMonthlyPayload(input);
+  if (normalized.source === "paginated") {
+    return analyzePaginatedPayload(normalized, targetInstallmentId);
+  }
+  return analyzeLegacyPayload(normalized);
 }

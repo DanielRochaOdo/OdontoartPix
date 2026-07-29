@@ -1,6 +1,35 @@
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { DataAccessError } from "@/lib/errors/data-access-error";
 
+type MembersListItem = {
+  id: string;
+  campaign_id: string;
+  batch_id: string;
+  target_installment_id: string | null;
+  processing_status: string;
+  payment_status: string | null;
+  total_pending_amount_cents: number;
+  installments_count: number;
+  last_checked_at: string | null;
+  processing_attempts: number;
+  last_error: string | null;
+  member: {
+    id: string;
+    cpf: string | null;
+    cpf_hash: string | null;
+    name: string | null;
+    external_user_code: string | null;
+  } | {
+    id: string;
+    cpf: string | null;
+    cpf_hash: string | null;
+    name: string | null;
+    external_user_code: string | null;
+  }[] | null;
+  batch: { id: string; name: string } | { id: string; name: string }[] | null;
+  campaign: { id: string; name: string } | { id: string; name: string }[] | null;
+};
+
 export async function getCampaigns() {
   const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase
@@ -10,7 +39,7 @@ export async function getCampaigns() {
     .order("created_at", { ascending: false })
     .limit(50);
   if (error) {
-    throw new DataAccessError("Não foi possível carregar as campanhas.", "getCampaigns", error);
+    throw new DataAccessError("Nao foi possivel carregar as campanhas.", "getCampaigns", error);
   }
   return data ?? [];
 }
@@ -26,7 +55,7 @@ export async function getBatches() {
     .order("created_at", { ascending: false })
     .limit(50);
   if (error) {
-    throw new DataAccessError("Não foi possível carregar os lotes.", "getBatches", error);
+    throw new DataAccessError("Nao foi possivel carregar os lotes.", "getBatches", error);
   }
   return data ?? [];
 }
@@ -40,7 +69,7 @@ export async function getCampaignById(id: string) {
     .is("deleted_at", null)
     .maybeSingle();
   if (error) {
-    throw new DataAccessError("Não foi possível carregar a campanha.", "getCampaignById", error);
+    throw new DataAccessError("Nao foi possivel carregar a campanha.", "getCampaignById", error);
   }
   return data;
 }
@@ -57,7 +86,7 @@ export async function getBatchesByCampaign(campaignId: string) {
     .order("created_at", { ascending: true });
   if (error) {
     throw new DataAccessError(
-      "Não foi possível carregar os lotes da campanha.",
+      "Nao foi possivel carregar os lotes da campanha.",
       "getBatchesByCampaign",
       error
     );
@@ -78,7 +107,7 @@ export async function getMemberPreviewByCampaign(campaignId: string, limit = 6) 
     .limit(limit);
   if (error) {
     throw new DataAccessError(
-      "Não foi possível carregar a prévia dos associados.",
+      "Nao foi possivel carregar a previa dos associados.",
       "getMemberPreviewByCampaign",
       error
     );
@@ -95,7 +124,7 @@ export async function getBatchById(id: string) {
     .is("deleted_at", null)
     .maybeSingle();
   if (error) {
-    throw new DataAccessError("Não foi possível carregar o lote.", "getBatchById", error);
+    throw new DataAccessError("Nao foi possivel carregar o lote.", "getBatchById", error);
   }
   return data;
 }
@@ -113,7 +142,7 @@ export async function getMemberPreviewByBatch(batchId: string, limit = 20) {
     .limit(limit);
   if (error) {
     throw new DataAccessError(
-      "Não foi possível carregar os associados do lote.",
+      "Nao foi possivel carregar os associados do lote.",
       "getMemberPreviewByBatch",
       error
     );
@@ -123,18 +152,31 @@ export async function getMemberPreviewByBatch(batchId: string, limit = 20) {
 
 export async function getMembers() {
   const supabase = createSupabaseAdminClient();
-  const { data, error } = await supabase
-    .from("campaign_batch_members")
-    .select(
-      "id,campaign_id,batch_id,processing_status,payment_status,total_pending_amount_cents,installments_count,last_checked_at,processing_attempts,last_error,member:members(id,cpf,cpf_hash,name,external_user_code)"
-    )
-    .is("deleted_at", null)
-    .order("created_at", { ascending: false })
-    .limit(50);
-  if (error) {
-    throw new DataAccessError("Não foi possível carregar os associados.", "getMembers", error);
+  const pageSize = 1000;
+  const rows: MembersListItem[] = [];
+
+  for (let from = 0; from < 5000; from += pageSize) {
+    const to = from + pageSize - 1;
+    const { data, error } = await supabase
+      .from("campaign_batch_members")
+      .select(
+        "id,campaign_id,batch_id,target_installment_id,processing_status,payment_status,total_pending_amount_cents,installments_count,last_checked_at,processing_attempts,last_error,member:members(id,cpf,cpf_hash,name,external_user_code),batch:campaign_batches(id,name),campaign:campaigns(id,name)"
+      )
+      .is("deleted_at", null)
+      .order("created_at", { ascending: false })
+      .range(from, to);
+
+    if (error) {
+      throw new DataAccessError("Nao foi possivel carregar os associados.", "getMembers", error);
+    }
+
+    const chunk = (data ?? []) as MembersListItem[];
+    rows.push(...chunk);
+
+    if (chunk.length < pageSize) break;
   }
-  return data ?? [];
+
+  return rows;
 }
 
 export async function getMemberDetail(campaignBatchMemberId: string) {
@@ -142,7 +184,7 @@ export async function getMemberDetail(campaignBatchMemberId: string) {
   const { data: link, error: linkError } = await supabase
     .from("campaign_batch_members")
     .select(
-      "id,campaign_id,batch_id,member_id,processing_status,payment_status,total_pending_amount_cents,installments_count,last_checked_at,processing_attempts,last_error,member:members(id,cpf,name,external_user_code),batch:campaign_batches(id,name),campaign:campaigns(id,name)"
+      "id,campaign_id,batch_id,member_id,target_installment_id,installment_amount_cents,processing_status,payment_status,total_pending_amount_cents,installments_count,last_checked_at,processing_attempts,last_error,member:members(id,cpf,name,external_user_code),batch:campaign_batches(id,name),campaign:campaigns(id,name)"
     )
     .eq("id", campaignBatchMemberId)
     .is("deleted_at", null)
@@ -150,7 +192,7 @@ export async function getMemberDetail(campaignBatchMemberId: string) {
 
   if (linkError) {
     throw new DataAccessError(
-      "Não foi possível carregar o associado.",
+      "Nao foi possivel carregar o associado.",
       "getMemberDetail.link",
       linkError
     );
@@ -182,21 +224,21 @@ export async function getMemberDetail(campaignBatchMemberId: string) {
 
   if (installmentsResult.error) {
     throw new DataAccessError(
-      "Não foi possível carregar as parcelas.",
+      "Nao foi possivel carregar as parcelas.",
       "getMemberDetail.installments",
       installmentsResult.error
     );
   }
   if (totalsResult.error) {
     throw new DataAccessError(
-      "Não foi possível carregar os totais por plano.",
+      "Nao foi possivel carregar os totais por plano.",
       "getMemberDetail.planTotals",
       totalsResult.error
     );
   }
   if (logsResult.error) {
     throw new DataAccessError(
-      "Não foi possível carregar o histórico de consultas.",
+      "Nao foi possivel carregar o historico de consultas.",
       "getMemberDetail.logs",
       logsResult.error
     );

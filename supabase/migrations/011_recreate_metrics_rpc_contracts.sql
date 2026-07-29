@@ -1,6 +1,12 @@
 -- Corrective migration for environments that already registered older metric
 -- migrations or still expose RPCs with legacy response contracts.
 
+-- PostgreSQL does not allow CREATE OR REPLACE FUNCTION to change a function's
+-- return type. These RPCs had legacy return contracts in some environments.
+drop function if exists public.get_campaign_metrics(uuid);
+drop function if exists public.get_batch_metrics(uuid);
+drop function if exists public.get_dashboard_metrics();
+
 create or replace function public.get_campaign_metrics(p_campaign_id uuid)
 returns jsonb
 language sql
