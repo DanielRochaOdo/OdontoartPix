@@ -31,20 +31,16 @@ export async function POST(
       return fail("CONFLICT", "Não existem registros com erro para reprocessar.", 422);
     }
 
-    void triggerQueuedProcessing().catch((error) => {
-      console.error("[CAMPAIGN_ERROR_REPROCESS_KICKOFF_FAILED]", {
-        campaignId: parsed.data.id,
-        message: error instanceof Error
-          ? error.message
-          : "Falha ao iniciar o reprocessamento automatico dos erros."
-      });
+    const kickoff = await triggerQueuedProcessing({
+      maxRuns: 1,
+      budgetMs: 50000
     });
 
     return ok(
       {
         campaignId: parsed.data.id,
         jobsCreated: result.jobs.filter((job) => job.created).length,
-        kickoffScheduled: true,
+        kickoff,
         totalItems: result.jobs.reduce((total, job) => total + job.total_items, 0),
         jobs: result.jobs.map((job) => ({
           jobId: job.id,
@@ -53,7 +49,7 @@ export async function POST(
           created: job.created
         }))
       },
-      "Os registros com erro foram colocados novamente na fila e o kickoff foi agendado imediatamente.",
+      "Os registros com erro foram colocados novamente na fila e o primeiro bloco foi iniciado imediatamente.",
       202
     );
   } catch (error) {
