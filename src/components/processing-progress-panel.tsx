@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
 import { formatCurrencyBR } from "@/lib/money";
 
 type Metrics = {
@@ -74,9 +75,11 @@ export function ProcessingProgressPanel({
   collapsible = false,
   storageKey
 }: Props) {
+  const router = useRouter();
   const [metrics, setMetrics] = useState(initialMetrics);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(true);
+  const missingResourceRefreshTriggered = useRef(false);
 
   useEffect(() => {
     if (!collapsible || !storageKey) return;
@@ -97,6 +100,15 @@ export function ProcessingProgressPanel({
           headers: { Accept: "application/json" },
           cache: "no-store"
         });
+
+        if (response.status === 404) {
+          if (!missingResourceRefreshTriggered.current) {
+            missingResourceRefreshTriggered.current = true;
+            router.refresh();
+          }
+          throw new Error("O recurso monitorado nao foi localizado na base atual. A pagina sera atualizada.");
+        }
+
         const payload = (await response.json().catch(() => null)) as ProgressResponse | null;
         if (!response.ok || !payload?.success || !payload.data) {
           throw new Error(payload?.error?.message ?? "Falha ao atualizar o progresso.");
@@ -117,7 +129,7 @@ export function ProcessingProgressPanel({
       active = false;
       window.clearInterval(timer);
     };
-  }, [endpoint]);
+  }, [endpoint, router]);
 
   const cards = [
     { label: "Total", value: metrics.total },

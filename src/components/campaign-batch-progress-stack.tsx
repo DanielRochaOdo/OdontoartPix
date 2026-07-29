@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { DestructiveDeleteDialog } from "@/components/destructive-delete-dialog";
 import { ProcessResourceButton } from "@/components/process-resource-button";
 import { RenameBatchForm } from "@/components/rename-batch-form";
@@ -112,9 +113,11 @@ function BatchPanel({
   campaignName: string;
   initialMetrics: Metrics | null;
 }) {
+  const router = useRouter();
   const [metrics, setMetrics] = useState<Metrics>(() => getSafeMetrics(batch, initialMetrics));
   const [expanded, setExpanded] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const missingBatchRefreshTriggered = useRef(false);
   const storageKey = `campaign-batch-panel:${batch.id}`;
 
   useEffect(() => {
@@ -134,6 +137,15 @@ function BatchPanel({
           headers: { Accept: "application/json" },
           cache: "no-store"
         });
+
+        if (response.status === 404) {
+          if (!missingBatchRefreshTriggered.current) {
+            missingBatchRefreshTriggered.current = true;
+            router.refresh();
+          }
+          throw new Error("O lote nao foi localizado na base atual. A pagina sera atualizada.");
+        }
+
         const payload = (await response.json().catch(() => null)) as ProgressResponse | null;
 
         if (!response.ok || !payload?.success || !payload.data) {
@@ -158,7 +170,7 @@ function BatchPanel({
       active = false;
       window.clearInterval(timer);
     };
-  }, [batch.id]);
+  }, [batch.id, router]);
 
   function toggleExpanded() {
     setExpanded((current) => {
