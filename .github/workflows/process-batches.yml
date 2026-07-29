@@ -1,0 +1,41 @@
+name: Process Batches
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 * * * *"
+
+concurrency:
+  group: process-batches-scheduler
+  cancel-in-progress: false
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Validate scheduler secrets
+        env:
+          PROCESS_BATCHES_URL: ${{ secrets.PROCESS_BATCHES_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$PROCESS_BATCHES_URL" ]; then
+            echo "GitHub secret PROCESS_BATCHES_URL is required."
+            exit 1
+          fi
+
+          if [ -z "$CRON_SECRET" ]; then
+            echo "GitHub secret CRON_SECRET is required."
+            exit 1
+          fi
+
+      - name: Trigger processing endpoint
+        env:
+          PROCESS_BATCHES_URL: ${{ secrets.PROCESS_BATCHES_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          curl --fail-with-body --show-error --silent \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            -H "Accept: application/json" \
+            "$PROCESS_BATCHES_URL"

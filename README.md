@@ -7,9 +7,10 @@ Sistema web para importacao de campanhas, consulta de mensalidades e consolidaca
 1. A importacao valida o arquivo e grava campanha, lote, associados e vinculos com status `pending`.
 2. A importacao nao consulta o ERP.
 3. O botao **Processar campanha** ou **Processar lote** cria jobs com status `queued`.
-4. O cron `/api/cron/process-batches` reserva um job com lease e processa um bloco limitado a cada hora.
-5. Cada resposta do ERP e persistida em `campaign_batch_members`, `member_installments`, `member_plan_totals` e `consultation_logs`.
-6. Dashboard, lista, campanha e lote leem metricas canonicas calculadas no PostgreSQL.
+4. O clique em **Processar campanha** ou **Processar lote** faz o kickoff imediato do worker.
+5. Um scheduler externo chama `/api/cron/process-batches` para retomada automatica de jobs que permanecerem em `queued`.
+6. Cada resposta do ERP e persistida em `campaign_batch_members`, `member_installments`, `member_plan_totals` e `consultation_logs`.
+7. Dashboard, lista, campanha e lote leem metricas canonicas calculadas no PostgreSQL.
 
 ## Contrato da API de mensalidades
 
@@ -57,16 +58,24 @@ PROCESSING_PRODUCTIVE_DELAY_MS
 
 Aplique as migrations em ordem. As migrations `009_processing_pipeline_and_metrics.sql` e `010_campaign_list_metrics.sql` adicionam o scheduler duravel, persistencia normalizada e as metricas canonicas.
 
-## Cron
+## Scheduler externo
 
-O `vercel.json` agenda:
+O workflow `.github/workflows/process-batches.yml` agenda:
 
 ```text
 GET /api/cron/process-batches
 Authorization: Bearer <CRON_SECRET>
 ```
 
+Configuracao necessaria no GitHub Actions:
+
+```text
+PROCESS_BATCHES_URL=https://<seu-dominio>/api/cron/process-batches
+CRON_SECRET=<mesmo valor configurado na aplicacao>
+```
+
 Cada execucao processa somente um bloco. O job volta para `queued` quando ainda existem itens pendentes.
+O scheduler roda de hora em hora, no minuto 17, e tambem pode ser disparado manualmente em **Actions > Process Batches**.
 
 ## Operacao
 
