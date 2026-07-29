@@ -97,14 +97,14 @@ Cada chamada do workflow executa o endpoint de processamento em loop ate a fila 
 Defaults iniciais do worker:
 
 - ate 10 workers paralelos;
-- ate 30 itens claimados por lote;
-- ate 10 chamadas simultaneas por worker;
+- ate 60 itens claimados por lote;
+- ate 15 chamadas simultaneas por worker;
 - timeout de 15s para conexao e 15s para leitura;
 - ate 3 tentativas totais por item;
 - reclaim apos 120s sem heartbeat;
-- orcamento de 40s por ciclo;
+- orcamento de 55s por ciclo;
 - lease global de 15 minutos;
-- atraso de 25ms entre lotes produtivos.
+- atraso de 10ms entre lotes produtivos.
 
 ## Validacao
 
