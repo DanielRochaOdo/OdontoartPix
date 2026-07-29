@@ -22,6 +22,10 @@ on:
   schedule:
     - cron: "17 * * * *"
 
+permissions:
+  actions: write
+  contents: read
+
 concurrency:
   group: process-batches-scheduler
   cancel-in-progress: false
@@ -29,7 +33,7 @@ concurrency:
 jobs:
   trigger:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 60
 
     steps:
       - name: Validate scheduler secrets
@@ -48,6 +52,7 @@ jobs:
           fi
 
       - name: Trigger processing endpoint
+        id: trigger_processing
         env:
           PROCESS_BATCHES_URL: ${{ secrets.PROCESS_BATCHES_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
@@ -55,14 +60,15 @@ jobs:
           python - <<'PY'
           import json
           import os
-          import sys
           import time
           import urllib.request
           import urllib.error
 
           url = os.environ["PROCESS_BATCHES_URL"]
           token = os.environ["CRON_SECRET"]
-          max_calls = 120
+          max_calls = 240
+          final_status = "idle"
+          final_calls = 0
 
           def call_endpoint():
             req = urllib.request.Request(
@@ -81,17 +87,71 @@ jobs:
           for index in range(1, max_calls + 1):
             payload = call_endpoint()
             print(json.dumps({"call": index, "payload": payload}, ensure_ascii=False))
+            final_calls = index
 
             if not payload.get("success"):
               raise SystemExit("Processing endpoint returned success=false.")
 
             data = payload.get("data") or {}
             status = data.get("lastStatus") or data.get("status") or "idle"
+            final_status = status
 
             if status in ("idle", "failed", "paused"):
               break
 
-            time.sleep(0.5)
-          else:
-            raise SystemExit("Processing workflow reached the maximum number of endpoint calls before going idle.")
+            time.sleep(0.25)
+
+          needs_continuation = "true" if final_status == "queued" else "false"
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+            output.write(f"final_status={final_status}\n")
+            output.write(f"final_calls={final_calls}\n")
+            output.write(f"needs_continuation={needs_continuation}\n")
+          PY
+
+      - name: Dispatch continuation
+        if: steps.trigger_processing.outputs.needs_continuation == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          WORKFLOW_ID: process-batches.yml
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_SOURCE: ${{ github.event.inputs.source || 'scheduler' }}
+          INPUT_CAMPAIGN_ID: ${{ github.event.inputs.campaign_id || '' }}
+          INPUT_BATCH_ID: ${{ github.event.inputs.batch_id || '' }}
+          INPUT_REQUESTED_BY: ${{ github.event.inputs.requested_by || '' }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          repository = os.environ["REPOSITORY"]
+          workflow_id = os.environ["WORKFLOW_ID"]
+          ref_name = os.environ["REF_NAME"]
+          token = os.environ["GH_TOKEN"]
+
+          body = json.dumps({
+            "ref": ref_name,
+            "inputs": {
+              "source": os.environ.get("INPUT_SOURCE", "scheduler"),
+              "campaign_id": os.environ.get("INPUT_CAMPAIGN_ID", ""),
+              "batch_id": os.environ.get("INPUT_BATCH_ID", ""),
+              "requested_by": os.environ.get("INPUT_REQUESTED_BY", "")
+            }
+          }).encode("utf-8")
+
+          req = urllib.request.Request(
+            f"https://api.github.com/repos/{repository}/actions/workflows/{workflow_id}/dispatches",
+            data=body,
+            headers={
+              "Accept": "application/vnd.github+json",
+              "Authorization": f"Bearer {token}",
+              "Content-Type": "application/json",
+              "User-Agent": "odontoartpix-process-batches-workflow"
+            },
+            method="POST"
+          )
+
+          with urllib.request.urlopen(req, timeout=30) as response:
+            print(f"Continuation dispatched with status {response.status}")
           PY
