@@ -25,15 +25,15 @@ describe("processing-config", () => {
     const config = getProcessingConfig();
 
     expect(config.workerCount).toBe(10);
-    expect(config.claimBatchSize).toBe(30);
-    expect(config.perWorkerConcurrency).toBe(10);
+    expect(config.claimBatchSize).toBe(60);
+    expect(config.perWorkerConcurrency).toBe(15);
     expect(config.httpConnectTimeoutMs).toBe(15000);
     expect(config.httpReadTimeoutMs).toBe(15000);
     expect(config.maxAttemptsPerItem).toBe(3);
     expect(config.staleHeartbeatMs).toBe(120000);
-    expect(config.workerCycleBudgetMs).toBe(40000);
+    expect(config.workerCycleBudgetMs).toBe(55000);
     expect(config.globalLockLeaseSeconds).toBe(900);
-    expect(config.productiveDelayMs).toBe(25);
+    expect(config.productiveDelayMs).toBe(10);
     expect(config.maxPageSize).toBe(200);
   });
 
