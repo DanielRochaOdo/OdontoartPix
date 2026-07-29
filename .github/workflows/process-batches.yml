@@ -62,7 +62,7 @@ jobs:
 
           url = os.environ["PROCESS_BATCHES_URL"]
           token = os.environ["CRON_SECRET"]
-          max_calls = 90
+          max_calls = 120
 
           def call_endpoint():
             req = urllib.request.Request(
@@ -91,7 +91,7 @@ jobs:
             if status in ("idle", "failed", "paused"):
               break
 
-            time.sleep(2)
+            time.sleep(0.5)
           else:
             raise SystemExit("Processing workflow reached the maximum number of endpoint calls before going idle.")
           PY

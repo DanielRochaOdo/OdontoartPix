@@ -60,7 +60,7 @@ export async function POST(
 
     const kickoff = await triggerQueuedProcessing({
       maxRuns: 1,
-      budgetMs: 12000
+      budgetMs: 20000
     });
 
     return ok(
