@@ -32,7 +32,7 @@ export async function POST(
     }
 
     const kickoff = await triggerQueuedProcessing({
-      maxRuns: 1,
+      maxRuns: 10000,
       budgetMs: 50000
     });
 
@@ -49,7 +49,7 @@ export async function POST(
           created: job.created
         }))
       },
-      "Os registros com erro foram colocados novamente na fila e o primeiro bloco foi iniciado imediatamente.",
+      "Os registros com erro foram colocados novamente na fila e seguirao executando enquanto houver tempo util na funcao.",
       202
     );
   } catch (error) {
