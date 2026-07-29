@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { requireApiUser } from "@/lib/auth/require-api-user";
 import { enqueueCampaignJobs } from "@/lib/batch-job-service";
+import { dispatchDurableProcessingWorkflow } from "@/lib/durable-processing-dispatch";
 import { fail, ok } from "@/lib/http/api-response";
 import { triggerQueuedProcessing } from "@/lib/processing-trigger";
 
@@ -31,6 +32,12 @@ export async function POST(
       return fail("CONFLICT", "Não existem registros com erro para reprocessar.", 422);
     }
 
+    await dispatchDurableProcessingWorkflow({
+      source: "campaign-errors",
+      campaignId: parsed.data.id,
+      requestedBy: auth.profile.id
+    });
+
     const hasRunningJob = result.jobs.some((job) => !job.created && job.status === "running");
     if (hasRunningJob) {
       return ok(
@@ -52,8 +59,8 @@ export async function POST(
     }
 
     const kickoff = await triggerQueuedProcessing({
-      maxRuns: 10000,
-      budgetMs: 45000
+      maxRuns: 1,
+      budgetMs: 12000
     });
 
     return ok(
@@ -69,7 +76,7 @@ export async function POST(
           created: job.created
         }))
       },
-      "Os registros com erro foram colocados novamente na fila e seguirao executando enquanto houver tempo util na funcao.",
+      "Os registros com erro foram colocados novamente na fila, iniciados localmente e entregues ao worker duravel ate o fim.",
       202
     );
   } catch (error) {
