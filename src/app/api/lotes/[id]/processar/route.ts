@@ -6,7 +6,7 @@ import { fail, ok } from "@/lib/http/api-response";
 import { triggerQueuedProcessing } from "@/lib/processing-trigger";
 
 export const runtime = "nodejs";
-export const maxDuration = 900;
+export const maxDuration = 60;
 
 const ParamsSchema = z.object({ id: z.string().uuid() });
 
