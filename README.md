@@ -7,8 +7,8 @@ Sistema web para importacao de campanhas, consulta de mensalidades e consolidaca
 1. A importacao valida o arquivo e grava campanha, lote, associados e vinculos com status `pending`.
 2. A importacao nao consulta o ERP.
 3. O botao **Processar campanha** ou **Processar lote** cria jobs com status `queued`.
-4. O clique em **Processar campanha** ou **Processar lote** faz o kickoff imediato do worker.
-5. Um scheduler externo chama `/api/cron/process-batches` para retomada automatica de jobs que permanecerem em `queued`.
+4. O clique em **Processar campanha** ou **Processar lote** faz um kickoff local curto e dispara um worker duravel no GitHub Actions.
+5. O worker duravel chama `/api/cron/process-batches` repetidamente ate a fila entrar em `idle`, `failed` ou `paused`.
 6. Cada resposta do ERP e persistida em `campaign_batch_members`, `member_installments`, `member_plan_totals` e `consultation_logs`.
 7. Dashboard, lista, campanha e lote leem metricas canonicas calculadas no PostgreSQL.
 
@@ -52,6 +52,11 @@ PROCESSING_STALE_HEARTBEAT_MS
 PROCESSING_LEASE_SECONDS
 PROCESSING_WORKER_CYCLE_BUDGET_MS
 PROCESSING_PRODUCTIVE_DELAY_MS
+GITHUB_ACTIONS_TOKEN
+GITHUB_ACTIONS_REPO_OWNER
+GITHUB_ACTIONS_REPO_NAME
+GITHUB_ACTIONS_WORKFLOW_ID
+GITHUB_ACTIONS_REF
 ```
 
 ## Banco
@@ -74,8 +79,18 @@ PROCESS_BATCHES_URL=https://<seu-dominio>/api/cron/process-batches
 CRON_SECRET=<mesmo valor configurado na aplicacao>
 ```
 
-Cada execucao processa somente um bloco. O job volta para `queued` quando ainda existem itens pendentes.
-O scheduler roda de hora em hora, no minuto 17, e tambem pode ser disparado manualmente em **Actions > Process Batches**.
+Configuracao necessaria na aplicacao para disparar o worker duravel ao clicar em processar:
+
+```text
+GITHUB_ACTIONS_TOKEN=<token com permissao para Actions: write no repositorio>
+GITHUB_ACTIONS_REPO_OWNER=<ex.: DanielRochaOdo>
+GITHUB_ACTIONS_REPO_NAME=<ex.: OdontoartPix>
+GITHUB_ACTIONS_WORKFLOW_ID=process-batches.yml
+GITHUB_ACTIONS_REF=main
+```
+
+O workflow pode ser disparado manualmente, por agendamento ou diretamente pela aplicacao.
+Cada chamada do workflow executa o endpoint de processamento em loop ate a fila entrar em `idle`, `failed` ou `paused`.
 
 ## Operacao
 

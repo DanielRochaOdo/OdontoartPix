@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { processNextJobBlock } from "@/lib/batch-processing";
+import { triggerQueuedProcessing } from "@/lib/processing-trigger";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -36,7 +36,10 @@ export async function GET(request: Request) {
   }
 
   try {
-    const result = await processNextJobBlock();
+    const result = await triggerQueuedProcessing({
+      maxRuns: 10000,
+      budgetMs: 50000
+    });
     return NextResponse.json({ success: true, data: result });
   } catch (error) {
     console.error("[CRON_PROCESSING_FAILED]", {

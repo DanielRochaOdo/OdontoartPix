@@ -2,6 +2,23 @@ name: Process Batches
 
 on:
   workflow_dispatch:
+    inputs:
+      source:
+        description: Trigger source
+        required: false
+        default: scheduler
+      campaign_id:
+        description: Campaign identifier
+        required: false
+        default: ""
+      batch_id:
+        description: Batch identifier
+        required: false
+        default: ""
+      requested_by:
+        description: Requested by profile id
+        required: false
+        default: ""
   schedule:
     - cron: "17 * * * *"
 
@@ -35,7 +52,46 @@ jobs:
           PROCESS_BATCHES_URL: ${{ secrets.PROCESS_BATCHES_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
-          curl --fail-with-body --show-error --silent \
-            -H "Authorization: Bearer $CRON_SECRET" \
-            -H "Accept: application/json" \
-            "$PROCESS_BATCHES_URL"
+          python - <<'PY'
+          import json
+          import os
+          import sys
+          import time
+          import urllib.request
+          import urllib.error
+
+          url = os.environ["PROCESS_BATCHES_URL"]
+          token = os.environ["CRON_SECRET"]
+          max_calls = 90
+
+          def call_endpoint():
+            req = urllib.request.Request(
+              url,
+              headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+                "User-Agent": "odontoartpix-process-batches-workflow",
+              },
+              method="GET",
+            )
+            with urllib.request.urlopen(req, timeout=70) as response:
+              payload = json.loads(response.read().decode("utf-8"))
+              return payload
+
+          for index in range(1, max_calls + 1):
+            payload = call_endpoint()
+            print(json.dumps({"call": index, "payload": payload}, ensure_ascii=False))
+
+            if not payload.get("success"):
+              raise SystemExit("Processing endpoint returned success=false.")
+
+            data = payload.get("data") or {}
+            status = data.get("lastStatus") or data.get("status") or "idle"
+
+            if status in ("idle", "failed", "paused"):
+              break
+
+            time.sleep(2)
+          else:
+            raise SystemExit("Processing workflow reached the maximum number of endpoint calls before going idle.")
+          PY
