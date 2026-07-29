@@ -47,9 +47,25 @@ export async function POST(
       );
     }
 
+    if (!job.created && job.status === "running") {
+      return ok(
+        {
+          jobId: job.id,
+          batchId: job.batch_id,
+          campaignId: job.campaign_id,
+          kickoff: null,
+          status: job.status,
+          totalItems: job.total_items,
+          created: false
+        },
+        "O lote ja esta em execucao.",
+        202
+      );
+    }
+
     const kickoff = await triggerQueuedProcessing({
       maxRuns: 10000,
-      budgetMs: 50000
+      budgetMs: 45000
     });
 
     return ok(
