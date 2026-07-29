@@ -39,20 +39,16 @@ export async function POST(
       );
     }
 
-    void triggerQueuedProcessing().catch((error) => {
-      console.error("[CAMPAIGN_KICKOFF_FAILED]", {
-        campaignId: parsed.data.id,
-        message: error instanceof Error
-          ? error.message
-          : "Falha ao iniciar o processamento automatico da campanha."
-      });
+    const kickoff = await triggerQueuedProcessing({
+      maxRuns: 1,
+      budgetMs: 50000
     });
 
     return ok(
       {
         campaignId: parsed.data.id,
         jobsCreated: result.jobs.filter((job) => job.created).length,
-        kickoffScheduled: true,
+        kickoff,
         jobs: result.jobs.map((job) => ({
           jobId: job.id,
           batchId: job.batch_id,
@@ -61,7 +57,7 @@ export async function POST(
           created: job.created
         }))
       },
-      "O processamento foi colocado na fila e o kickoff foi agendado imediatamente.",
+      "O processamento foi colocado na fila e o primeiro bloco foi iniciado imediatamente.",
       202
     );
   } catch (error) {
