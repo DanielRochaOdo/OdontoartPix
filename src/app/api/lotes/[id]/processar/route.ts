@@ -48,7 +48,7 @@ export async function POST(
     }
 
     const kickoff = await triggerQueuedProcessing({
-      maxRuns: 1,
+      maxRuns: 10000,
       budgetMs: 50000
     });
 
@@ -62,7 +62,7 @@ export async function POST(
         totalItems: job.total_items,
         created: job.created
       },
-      "O processamento do lote foi colocado na fila e o primeiro bloco foi iniciado imediatamente.",
+      "O processamento do lote foi colocado na fila e seguira executando enquanto houver tempo util na funcao.",
       202
     );
   } catch (error) {
