@@ -4,7 +4,7 @@ on:
   pull_request:
   push:
     branches:
-      - fix/full-processing-conformance
+      - main
 
 jobs:
   validate:
