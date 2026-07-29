@@ -31,9 +31,29 @@ export async function POST(
       return fail("CONFLICT", "Não existem registros com erro para reprocessar.", 422);
     }
 
+    const hasRunningJob = result.jobs.some((job) => !job.created && job.status === "running");
+    if (hasRunningJob) {
+      return ok(
+        {
+          campaignId: parsed.data.id,
+          jobsCreated: result.jobs.filter((job) => job.created).length,
+          kickoff: null,
+          totalItems: result.jobs.reduce((total, job) => total + job.total_items, 0),
+          jobs: result.jobs.map((job) => ({
+            jobId: job.id,
+            batchId: job.batch_id,
+            totalItems: job.total_items,
+            created: job.created
+          }))
+        },
+        "A campanha ja possui reprocessamento em execucao.",
+        202
+      );
+    }
+
     const kickoff = await triggerQueuedProcessing({
       maxRuns: 10000,
-      budgetMs: 50000
+      budgetMs: 45000
     });
 
     return ok(

@@ -39,9 +39,29 @@ export async function POST(
       );
     }
 
+    const hasRunningJob = result.jobs.some((job) => !job.created && job.status === "running");
+    if (hasRunningJob) {
+      return ok(
+        {
+          campaignId: parsed.data.id,
+          jobsCreated: result.jobs.filter((job) => job.created).length,
+          kickoff: null,
+          jobs: result.jobs.map((job) => ({
+            jobId: job.id,
+            batchId: job.batch_id,
+            status: job.status,
+            totalItems: job.total_items,
+            created: job.created
+          }))
+        },
+        "A campanha ja possui processamento em execucao.",
+        202
+      );
+    }
+
     const kickoff = await triggerQueuedProcessing({
       maxRuns: 10000,
-      budgetMs: 50000
+      budgetMs: 45000
     });
 
     return ok(
