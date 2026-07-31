@@ -23,6 +23,21 @@ describe("batch-processing", () => {
     expect(result).toEqual([0, 2, 4, 6, 8, 10]);
   });
 
+  it("executa o callback de conclusao para cada item", async () => {
+    const settled: number[] = [];
+
+    await mapWithConcurrency(
+      [10, 20, 30],
+      2,
+      async (item) => item,
+      (index) => {
+        settled.push(index);
+      }
+    );
+
+    expect(settled.sort()).toEqual([0, 1, 2]);
+  });
+
   it("rejeita concorrencia invalida", async () => {
     await expect(mapWithConcurrency([1], 0, async (item) => item)).rejects.toThrow(
       "A concorrência deve ser um número inteiro maior que zero."
