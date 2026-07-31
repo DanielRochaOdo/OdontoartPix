@@ -13,7 +13,20 @@ export type ImportRow = {
 export type ImportIssue = {
   line: number;
   associatedCode?: string;
+  targetInstallmentId?: string;
+  installmentAmountCents?: number | null;
+  cpf?: string;
+  name?: string;
   reason: string;
+};
+
+export type ImportInspectionRow = {
+  line: number;
+  associatedCode?: string;
+  targetInstallmentId?: string;
+  installmentAmountCents?: number | null;
+  cpf?: string;
+  name?: string;
 };
 
 function normalizeHeader(value: unknown) {
@@ -111,6 +124,7 @@ export async function parseMemberFile(file: File) {
 
   const imports: ImportRow[] = [];
   const issues: ImportIssue[] = [];
+  const inspectedRows: ImportInspectionRow[] = [];
   const seen = new Set<string>();
 
   for (const [index, row] of rows.entries()) {
@@ -144,16 +158,48 @@ export async function parseMemberFile(file: File) {
       readColumn(row, ["nome", "nome completo", "name", "associado"]) ?? ""
     ).trim() || undefined;
 
+    inspectedRows.push({
+      line,
+      associatedCode: associatedCode || undefined,
+      targetInstallmentId: targetInstallmentId || undefined,
+      installmentAmountCents: installmentAmount.valid ? installmentAmount.cents : null,
+      cpf,
+      name
+    });
+
     if (!associatedCode) {
-      issues.push({ line, reason: "CodigoAssociadoEmpresa ausente." });
+      issues.push({
+        line,
+        targetInstallmentId: targetInstallmentId || undefined,
+        installmentAmountCents: installmentAmount.valid ? installmentAmount.cents : null,
+        cpf,
+        name,
+        reason: "CodigoAssociadoEmpresa ausente."
+      });
       continue;
     }
+
     if (!targetInstallmentId) {
-      issues.push({ line, associatedCode, reason: "Parcela ausente." });
+      issues.push({
+        line,
+        associatedCode,
+        installmentAmountCents: installmentAmount.valid ? installmentAmount.cents : null,
+        cpf,
+        name,
+        reason: "Parcela ausente."
+      });
       continue;
     }
+
     if (!installmentAmount.valid) {
-      issues.push({ line, associatedCode, reason: "Valor da Parcela ausente ou inválido." });
+      issues.push({
+        line,
+        associatedCode,
+        targetInstallmentId,
+        cpf,
+        name,
+        reason: "Valor da Parcela ausente ou invalido."
+      });
       continue;
     }
 
@@ -161,6 +207,10 @@ export async function parseMemberFile(file: File) {
       issues.push({
         line,
         associatedCode,
+        targetInstallmentId,
+        installmentAmountCents: installmentAmount.cents,
+        cpf,
+        name,
         reason: "Parcela duplicada no arquivo."
       });
       continue;
@@ -177,5 +227,5 @@ export async function parseMemberFile(file: File) {
     });
   }
 
-  return { imports, issues };
+  return { imports, issues, inspectedRows };
 }

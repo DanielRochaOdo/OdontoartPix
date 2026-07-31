@@ -4,6 +4,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { hashAssociatedCode } from "@/lib/hash";
 import { requireApiUser } from "@/lib/auth/require-api-user";
 import { fail, ok } from "@/lib/http/api-response";
+import { logIgnoredImportEvents } from "@/lib/event-logs";
 
 export const runtime = "nodejs";
 
@@ -40,21 +41,21 @@ export async function POST(request: Request) {
   const file = form.get("file");
 
   if (!payload.success) {
-    return fail("VALIDATION_ERROR", "Informe um nome válido para a campanha.", 400);
+    return fail("VALIDATION_ERROR", "Informe um nome valido para a campanha.", 400);
   }
   if (!(file instanceof File)) {
-    return fail("VALIDATION_ERROR", "Arquivo obrigatório.", 400);
+    return fail("VALIDATION_ERROR", "Arquivo obrigatorio.", 400);
   }
 
   if ((!campaignId.success || !campaignId.data) && !payload.data.name) {
-    return fail("VALIDATION_ERROR", "Informe um nome válido para a campanha.", 400);
+    return fail("VALIDATION_ERROR", "Informe um nome valido para a campanha.", 400);
   }
 
-  const { imports, issues } = await parseMemberFile(file);
+  const { imports, issues, inspectedRows } = await parseMemberFile(file);
   if (imports.length === 0) {
     return fail(
       "VALIDATION_ERROR",
-      "O arquivo não possui nenhum CodigoAssociadoEmpresa válido para importação.",
+      "O arquivo nao possui nenhum CodigoAssociadoEmpresa valido para importacao.",
       400
     );
   }
@@ -85,7 +86,7 @@ export async function POST(request: Request) {
         .is("deleted_at", null)
         .maybeSingle();
       if (error) throw error;
-      if (!data) return fail("NOT_FOUND", "Campanha não encontrada.", 404);
+      if (!data) return fail("NOT_FOUND", "Campanha nao encontrada.", 404);
       campaign = data;
     } else {
       failedOperation = "campaign_batches.insert";
@@ -99,12 +100,12 @@ export async function POST(request: Request) {
         })
         .select("id,name")
         .single();
-      if (error || !data) throw error ?? new Error("Campanha não criada.");
+      if (error || !data) throw error ?? new Error("Campanha nao criada.");
       campaign = data;
       createdCampaign = true;
     }
 
-    if (!campaign) throw new Error("Campanha não disponível após a criação.");
+    if (!campaign) throw new Error("Campanha nao disponivel apos a criacao.");
     const campaignRecord = campaign;
 
     if (batchId.success && batchId.data) {
@@ -115,9 +116,9 @@ export async function POST(request: Request) {
         .is("deleted_at", null)
         .maybeSingle();
       if (error) throw error;
-      if (!data) return fail("NOT_FOUND", "Lote não encontrado.", 404);
+      if (!data) return fail("NOT_FOUND", "Lote nao encontrado.", 404);
       if (data.campaign_id !== campaignRecord.id) {
-        return fail("CONFLICT", "O lote não pertence à campanha informada.", 409);
+        return fail("CONFLICT", "O lote nao pertence a campanha informada.", 409);
       }
       batch = data;
     } else {
@@ -138,13 +139,14 @@ export async function POST(request: Request) {
         })
         .select("id,campaign_id,name")
         .single();
-      if (error || !data) throw error ?? new Error("Lote não criado.");
+      if (error || !data) throw error ?? new Error("Lote nao criado.");
       batch = data;
       createdBatch = true;
     }
 
-    if (!batch) throw new Error("Lote não disponível após a criação.");
+    if (!batch) throw new Error("Lote nao disponivel apos a criacao.");
     const batchRecord = batch;
+    const inspectedRowsByLine = new Map(inspectedRows.map((row) => [row.line, row]));
 
     const uniqueMembers = new Map<string, ImportedMember>();
     for (const item of imports) {
@@ -218,8 +220,10 @@ export async function POST(request: Request) {
         const installmentId = String(link.target_installment_id ?? "").trim();
         if (!installmentId || existingCampaignByInstallmentId.has(installmentId)) continue;
         const campaignRelation = Array.isArray(link.campaign) ? link.campaign[0] : link.campaign;
-        const campaignName = campaignRelation?.name ? String(campaignRelation.name) : "Campanha não identificada";
-        existingCampaignByInstallmentId.set(installmentId, campaignName);
+        const blockingCampaignName = campaignRelation?.name
+          ? String(campaignRelation.name)
+          : "Campanha nao identificada";
+        existingCampaignByInstallmentId.set(installmentId, blockingCampaignName);
       }
     }
 
@@ -229,7 +233,11 @@ export async function POST(request: Request) {
         duplicateInstallmentIssues.push({
           line: item.line,
           associatedCode: item.associatedCode,
-          reason: `Parcela já vinculada à campanha "${blockingCampaignName}".`
+          targetInstallmentId: item.targetInstallmentId,
+          installmentAmountCents: item.installmentAmountCents,
+          cpf: item.cpf,
+          name: item.name,
+          reason: `Parcela ja vinculada a campanha "${blockingCampaignName}".`
         });
         return false;
       }
@@ -237,10 +245,11 @@ export async function POST(request: Request) {
       const memberId = existingByAssociatedCode.get(item.associatedCode);
       return Boolean(memberId);
     });
+
     const skippedDuplicateRecords = imports.length - rowsToImport.length;
     const linksPayload = rowsToImport.map((item) => {
       const memberId = existingByAssociatedCode.get(item.associatedCode);
-      if (!memberId) throw new Error("Associado importado não foi localizado.");
+      if (!memberId) throw new Error("Associado importado nao foi localizado.");
       return {
         campaign_id: campaignRecord.id,
         batch_id: batchRecord.id,
@@ -255,6 +264,28 @@ export async function POST(request: Request) {
         last_error: null,
         deleted_at: null
       };
+    });
+
+    const eventIssues = duplicateInstallmentIssues.map((issue) => {
+      const inspected = inspectedRowsByLine.get(issue.line);
+      return {
+        line: issue.line,
+        associatedCode: issue.associatedCode ?? inspected?.associatedCode,
+        targetInstallmentId: issue.targetInstallmentId ?? inspected?.targetInstallmentId,
+        installmentAmountCents: issue.installmentAmountCents ?? inspected?.installmentAmountCents ?? null,
+        cpf: issue.cpf ?? inspected?.cpf,
+        name: issue.name ?? inspected?.name,
+        reason: issue.reason
+      };
+    });
+
+    await logIgnoredImportEvents({
+      campaignId: campaignRecord.id,
+      campaignName: campaignRecord.name ?? payload.data.name,
+      batchId: batchRecord.id,
+      batchName: batchRecord.name ?? payload.data.batchName ?? null,
+      createdBy: auth.profile.id,
+      issues: eventIssues
     });
 
     if (linksPayload.length === 0) {
@@ -273,7 +304,7 @@ export async function POST(request: Request) {
             issues: duplicateInstallmentIssues
           }
         },
-        "Todas as parcelas informadas já estão vinculadas a outras campanhas."
+        "Todas as parcelas informadas ja estao vinculadas a outras campanhas."
       );
     }
 
@@ -323,7 +354,7 @@ export async function POST(request: Request) {
           jobsCreated: 0
         }
       },
-      "A base foi importada e está aguardando o processamento."
+      "A base foi importada e esta aguardando o processamento."
     );
   } catch (error) {
     const databaseError = error as {
@@ -361,10 +392,10 @@ export async function POST(request: Request) {
 
     const errorMessage =
       databaseError.message?.includes("members_external_user_code")
-        ? "O banco ainda não possui a estrutura nova para CodigoAssociadoEmpresa."
+        ? "O banco ainda nao possui a estrutura nova para CodigoAssociadoEmpresa."
         : databaseError.message?.includes("null value in column")
-          ? "O banco ainda está com colunas obrigatórias do fluxo antigo. Aplique as migrations pendentes."
-          : "Não foi possível concluir a importação.";
+          ? "O banco ainda esta com colunas obrigatorias do fluxo antigo. Aplique as migrations pendentes."
+          : "Nao foi possivel concluir a importacao.";
 
     return fail("DATABASE_ERROR", errorMessage, 500);
   }

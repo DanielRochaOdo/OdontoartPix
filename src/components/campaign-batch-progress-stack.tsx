@@ -344,6 +344,12 @@ function BatchPanel({
                     label="Processar lote"
                     iconOnly
                   />
+                  <ProcessResourceButton
+                    endpoint={`/api/lotes/${batch.id}/pausar`}
+                    label="Interromper processamento"
+                    iconOnly
+                    variant="red"
+                  />
                   <DestructiveDeleteDialog
                     title="Excluir lote permanentemente?"
                     confirmLabel="EXCLUIR LOTE"

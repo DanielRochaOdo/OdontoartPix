@@ -91,7 +91,7 @@ function errorForStatus(status: number, retryAfterMs?: number | null) {
 }
 
 async function readResponseBody(response: Response, controller: AbortController) {
-  const { httpReadTimeoutMs } = getProcessingConfig();
+  const { httpReadTimeoutMs } = await getProcessingConfig();
   const timeout = setTimeout(() => controller.abort("read-timeout"), httpReadTimeoutMs);
   try {
     return await response.text();
@@ -116,7 +116,7 @@ export async function consultMonthlyByAssociatedCode(
 
   const url = buildMensalidadesRequestUrl(baseUrl, token, associatedCode);
 
-  const { httpConnectTimeoutMs } = getProcessingConfig();
+  const { httpConnectTimeoutMs } = await getProcessingConfig();
   const controller = new AbortController();
   const startedAt = performance.now();
   const connectTimeout = setTimeout(() => controller.abort("connect-timeout"), httpConnectTimeoutMs);

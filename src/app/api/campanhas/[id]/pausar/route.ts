@@ -13,7 +13,7 @@ export async function POST(
   if (!auth.ok) return auth.response;
 
   const parsed = ParamsSchema.safeParse(await params);
-  if (!parsed.success) return fail("VALIDATION_ERROR", "Lote inválido.", 400);
+  if (!parsed.success) return fail("VALIDATION_ERROR", "Campanha inválida.", 400);
 
   const body = await request.json().catch(() => null);
   const reason =
@@ -21,26 +21,27 @@ export async function POST(
       ? (body as { reason: string }).reason.trim().slice(0, 500)
       : "Processamento interrompido manualmente.";
 
-  const supabase = createSupabaseAdminClient();
+  const campaignId = parsed.data.id;
   const stoppedAt = new Date().toISOString();
+  const supabase = createSupabaseAdminClient();
 
   const { data: jobs, error: jobsError } = await supabase
     .from("processing_jobs")
     .delete()
-    .eq("batch_id", parsed.data.id)
+    .eq("campaign_id", campaignId)
     .in("status", ["queued", "running", "paused"])
     .select("id,batch_id,status");
 
   if (jobsError) {
-    console.error("[BATCH_INTERRUPT_FAILED]", {
-      batchId: parsed.data.id,
+    console.error("[CAMPAIGN_INTERRUPT_FAILED]", {
+      campaignId,
       message: jobsError.message
     });
-    return fail("DATABASE_ERROR", "Não foi possível interromper o lote.", 500);
+    return fail("DATABASE_ERROR", "Não foi possível interromper a campanha.", 500);
   }
 
   if (!jobs || jobs.length === 0) {
-    return fail("NOT_FOUND", "Nenhum job ativo ou pausado foi encontrado para o lote.", 404);
+    return fail("NOT_FOUND", "Nenhum job ativo ou pausado foi encontrado para a campanha.", 404);
   }
 
   const { error: membersError } = await supabase
@@ -54,25 +55,26 @@ export async function POST(
       last_error: reason,
       updated_at: stoppedAt
     })
-    .eq("batch_id", parsed.data.id)
+    .eq("campaign_id", campaignId)
     .eq("processing_status", "processing");
 
   if (membersError) {
-    console.error("[BATCH_INTERRUPT_MEMBERS_FAILED]", {
-      batchId: parsed.data.id,
+    console.error("[CAMPAIGN_INTERRUPT_MEMBERS_FAILED]", {
+      campaignId,
       message: membersError.message
     });
     return fail(
       "DATABASE_ERROR",
-      "Os jobs do lote foram removidos, mas não foi possível liberar os itens em processamento.",
+      "Os jobs da campanha foram removidos, mas não foi possível liberar os itens em processamento.",
       500
     );
   }
 
   return ok(
     {
-      batchId: parsed.data.id,
+      campaignId,
       jobsDeleted: jobs.length,
+      batchIds: [...new Set(jobs.map((job) => job.batch_id))],
       jobIds: jobs.map((job) => job.id)
     },
     "Processamento interrompido e jobs removidos."

@@ -1,9 +1,11 @@
 import { z } from "zod";
 import { requireApiUser } from "@/lib/auth/require-api-user";
 import { enqueueCampaignJobs } from "@/lib/batch-job-service";
-import { dispatchDurableProcessingWorkflow } from "@/lib/durable-processing-dispatch";
 import { fail, ok } from "@/lib/http/api-response";
-import { triggerQueuedProcessing } from "@/lib/processing-trigger";
+import {
+  dispatchDurableProcessingWorkflowSafely,
+  runImmediateProcessingKickoff
+} from "@/lib/processing-kickoff";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -32,12 +34,6 @@ export async function POST(
       return fail("CONFLICT", "Não existem registros com erro para reprocessar.", 422);
     }
 
-    await dispatchDurableProcessingWorkflow({
-      source: "campaign-errors",
-      campaignId: parsed.data.id,
-      requestedBy: auth.profile.id
-    });
-
     const hasRunningJob = result.jobs.some((job) => !job.created && job.status === "running");
     if (hasRunningJob) {
       return ok(
@@ -58,16 +54,21 @@ export async function POST(
       );
     }
 
-    const kickoff = await triggerQueuedProcessing({
-      maxRuns: 1,
-      budgetMs: 20000
+    const durableDispatchPromise = dispatchDurableProcessingWorkflowSafely({
+      source: "campaign-errors",
+      campaignId: parsed.data.id,
+      requestedBy: auth.profile.id
     });
+
+    const kickoff = await runImmediateProcessingKickoff();
+    const durableDispatch = await durableDispatchPromise;
 
     return ok(
       {
         campaignId: parsed.data.id,
         jobsCreated: result.jobs.filter((job) => job.created).length,
         kickoff,
+        durableDispatch,
         totalItems: result.jobs.reduce((total, job) => total + job.total_items, 0),
         jobs: result.jobs.map((job) => ({
           jobId: job.id,
@@ -76,7 +77,9 @@ export async function POST(
           created: job.created
         }))
       },
-      "Os registros com erro foram colocados novamente na fila, iniciados localmente e entregues ao worker duravel ate o fim.",
+      durableDispatch.ok
+        ? "Os registros com erro foram colocados novamente na fila, iniciados localmente e entregues ao worker duravel ate o fim."
+        : "Os registros com erro foram colocados novamente na fila e iniciados localmente. O worker duravel falhou ao ser acionado e foi registrado para diagnostico.",
       202
     );
   } catch (error) {

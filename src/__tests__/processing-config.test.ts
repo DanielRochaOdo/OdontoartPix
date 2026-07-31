@@ -21,14 +21,14 @@ describe("processing-config", () => {
     resetProcessingConfigForTests();
   });
 
-  it("usa os defaults operacionais do documento", () => {
-    const config = getProcessingConfig();
+  it("usa os defaults operacionais do documento", async () => {
+    const config = await getProcessingConfig();
 
     expect(config.workerCount).toBe(10);
     expect(config.claimBatchSize).toBe(60);
     expect(config.perWorkerConcurrency).toBe(15);
-    expect(config.httpConnectTimeoutMs).toBe(15000);
-    expect(config.httpReadTimeoutMs).toBe(15000);
+    expect(config.httpConnectTimeoutMs).toBe(5000);
+    expect(config.httpReadTimeoutMs).toBe(5000);
     expect(config.maxAttemptsPerItem).toBe(3);
     expect(config.staleHeartbeatMs).toBe(120000);
     expect(config.workerCycleBudgetMs).toBe(55000);
@@ -37,13 +37,13 @@ describe("processing-config", () => {
     expect(config.maxPageSize).toBe(200);
   });
 
-  it("permite override por ambiente dentro dos limites", () => {
+  it("permite override por ambiente dentro dos limites", async () => {
     process.env.PROCESSING_BLOCK_SIZE = "45";
     process.env.PROCESSING_CONCURRENCY = "7";
     process.env.MENSALIDADES_API_CONNECT_TIMEOUT_MS = "20000";
     resetProcessingConfigForTests();
 
-    const config = getProcessingConfig();
+    const config = await getProcessingConfig();
 
     expect(config.claimBatchSize).toBe(45);
     expect(config.perWorkerConcurrency).toBe(7);

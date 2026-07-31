@@ -93,7 +93,7 @@ describe("parseMemberFile", () => {
     expect(result.imports).toEqual([]);
     expect(result.issues).toEqual([
       expect.objectContaining({
-        reason: "Valor da Parcela ausente ou inválido."
+        reason: "Valor da Parcela ausente ou invalido."
       })
     ]);
   });

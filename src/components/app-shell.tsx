@@ -73,10 +73,48 @@ function MembersIcon({ className = "h-5 w-5" }: { className?: string }) {
   );
 }
 
+function EventsIcon({ className = "h-5 w-5" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden="true">
+      <path
+        d="M6 5.5h12A1.5 1.5 0 0 1 19.5 7v10a1.5 1.5 0 0 1-1.5 1.5H6A1.5 1.5 0 0 1 4.5 17V7A1.5 1.5 0 0 1 6 5.5Z"
+        className="stroke-current"
+        strokeWidth="1.8"
+      />
+      <path
+        d="M8 9h8M8 12h8M8 15h5"
+        className="stroke-current"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function SettingsIcon({ className = "h-5 w-5" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden="true">
+      <path
+        d="M12 8.8A3.2 3.2 0 1 0 12 15.2 3.2 3.2 0 0 0 12 8.8Z"
+        className="stroke-current"
+        strokeWidth="1.8"
+      />
+      <path
+        d="M19 12a7 7 0 0 0-.1-1.2l2-1.5-2-3.5-2.4 1a6.8 6.8 0 0 0-2-.9L14 3h-4l-.5 2.9a6.8 6.8 0 0 0-2 .9l-2.4-1-2 3.5 2 1.5A7 7 0 0 0 5 12c0 .4 0 .8.1 1.2l-2 1.5 2 3.5 2.4-1a6.8 6.8 0 0 0 2 .9L10 21h4l.5-2.9a6.8 6.8 0 0 0 2-.9l2.4 1 2-3.5-2-1.5c.1-.4.1-.8.1-1.2Z"
+        className="stroke-current"
+        strokeWidth="1.8"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: DashboardIcon },
   { href: "/campanhas", label: "Campanhas", icon: CampaignsIcon },
-  { href: "/associados", label: "Associados", icon: MembersIcon }
+  { href: "/associados", label: "Associados", icon: MembersIcon },
+  { href: "/eventos", label: "Eventos", icon: EventsIcon },
+  { href: "/configuracoes", label: "Configuracoes", icon: SettingsIcon }
 ];
 
 export function AppShell({

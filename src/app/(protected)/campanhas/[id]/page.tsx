@@ -12,6 +12,7 @@ import { CampaignBatchProgressStack } from "@/components/campaign-batch-progress
 import { CampaignDescriptionInfo } from "@/components/campaign-description-info";
 import { CampaignProcessDialog } from "@/components/campaign-process-dialog";
 import { AddBatchDialog } from "@/components/add-batch-dialog";
+import { ProcessResourceButton } from "@/components/process-resource-button";
 
 export const dynamic = "force-dynamic";
 
@@ -88,6 +89,11 @@ export default async function CampaignDetailPage({
               campaignId={campaign.id}
               campaignName={campaign.name}
               metrics={metrics}
+            />
+            <ProcessResourceButton
+              endpoint={`/api/campanhas/${campaign.id}/pausar`}
+              label="Interromper processamento"
+              variant="red"
             />
             <AddBatchDialog campaignId={campaign.id} campaignName={campaign.name} />
             <DestructiveDeleteDialog

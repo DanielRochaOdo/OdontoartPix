@@ -95,6 +95,17 @@ type BatchOutcome = {
   results: ConsultationResult[];
 };
 
+const NON_RETRYABLE_BATCH_ERROR_CODES: ReadonlySet<ErpErrorCode> = new Set([
+  "ERP_TIMEOUT",
+  "ERP_NETWORK_ERROR"
+]);
+
+export function shouldRetryConsultationInBatch(error: unknown) {
+  if (!(error instanceof ErpError)) return true;
+  if (NON_RETRYABLE_BATCH_ERROR_CODES.has(error.code)) return false;
+  return error.retryable;
+}
+
 function isTransientInfrastructureError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error ?? "");
   const normalized = message.toLowerCase();
@@ -217,8 +228,7 @@ function remainingBudgetMs(deadline: number) {
   return Math.max(0, deadline - Date.now());
 }
 
-function canStartAnotherAttempt(deadline: number) {
-  const config = getProcessingConfig();
+function canStartAnotherAttempt(deadline: number, config: Awaited<ReturnType<typeof getProcessingConfig>>) {
   const minimumSafeWindow = config.httpConnectTimeoutMs + config.httpReadTimeoutMs;
   return remainingBudgetMs(deadline) > minimumSafeWindow;
 }
@@ -272,7 +282,7 @@ async function readJob(jobId: string) {
 
 async function heartbeatJob(jobId: string, workerId: string) {
   const supabase = createSupabaseAdminClient();
-  const config = getProcessingConfig();
+  const config = await getProcessingConfig();
   const { error } = await withInfrastructureRetry(async () =>
     supabase
       .from("processing_jobs")
@@ -319,7 +329,7 @@ async function persistMemberRetry(result: ConsultationResult, nextRetryAt: strin
 
 async function persistResult(result: ConsultationResult, deadline: number) {
   const supabase = createSupabaseAdminClient();
-  const config = getProcessingConfig();
+  const config = await getProcessingConfig();
   const attemptsUsed = result.claimed.processing_attempts;
   const attemptsRemaining = attemptsUsed < config.maxAttemptsPerItem;
   const forceRetry = result.errorCode === "WORKER_BUDGET_EXHAUSTED";
@@ -342,7 +352,7 @@ async function persistResult(result: ConsultationResult, deadline: number) {
     return "retrying" as const;
   }
 
-  if (!result.retryable && !attemptsRemaining && !canStartAnotherAttempt(deadline)) {
+  if (!result.retryable && !attemptsRemaining && !canStartAnotherAttempt(deadline, config)) {
     const nextRetryAt = new Date(Date.now() + computeRetryDelayMs(attemptsUsed)).toISOString();
     await persistMemberRetry(
       {
@@ -413,8 +423,12 @@ function prepareMember(
   return { claimed, associatedCode, targetInstallmentId };
 }
 
-async function consultPreparedMember(member: PreparedMember, deadline: number): Promise<ConsultationResult> {
-  if (!canStartAnotherAttempt(deadline)) {
+async function consultPreparedMember(
+  member: PreparedMember,
+  deadline: number,
+  config: Awaited<ReturnType<typeof getProcessingConfig>>
+): Promise<ConsultationResult> {
+  if (!canStartAnotherAttempt(deadline, config)) {
     return {
       claimed: member.claimed,
       ok: false,
@@ -444,7 +458,7 @@ async function consultPreparedMember(member: PreparedMember, deadline: number): 
     return {
       claimed: member.claimed,
       ok: false,
-      retryable: error instanceof ErpError ? error.retryable : true,
+      retryable: shouldRetryConsultationInBatch(error),
       httpStatus: error instanceof ErpError ? error.httpStatus ?? null : null,
       durationMs: performance.now() - startedAt,
       errorCode: error instanceof ErpError ? error.code : "ERP_NETWORK_ERROR",
@@ -460,7 +474,7 @@ async function processClaimedMembers(
   claimed: ClaimedMember[],
   deadline: number
 ): Promise<BatchOutcome> {
-  const config = getProcessingConfig();
+  const config = await getProcessingConfig();
   const supabase = createSupabaseAdminClient();
   const memberIds = [...new Set(claimed.map((item) => item.member_id))];
   const storedMembers: StoredMember[] = [];
@@ -488,7 +502,7 @@ async function processClaimedMembers(
   const consultationResults = await mapWithConcurrency(
     validMembers,
     config.perWorkerConcurrency,
-    (member) => consultPreparedMember(member, deadline)
+    (member) => consultPreparedMember(member, deadline, config)
   );
   const erpDurationMs = performance.now() - erpStartedAt;
 
@@ -522,7 +536,7 @@ async function processClaimedMembers(
 
 async function claimMembers(job: ProcessingJob, workerId: string) {
   const supabase = createSupabaseAdminClient();
-  const config = getProcessingConfig();
+  const config = await getProcessingConfig();
   const { data, error } = await withInfrastructureRetry(async () => supabase.rpc("claim_batch_members", {
     p_batch_id: job.batch_id,
     p_worker_id: workerId,
@@ -554,7 +568,7 @@ async function releaseJob(jobId: string, workerId: string, values: Record<string
 export async function processNextJobBlock(): Promise<ProcessingBlockResult> {
   const supabase = createSupabaseAdminClient();
   const workerId = randomUUID();
-  const config = getProcessingConfig();
+  const config = await getProcessingConfig();
   const startedAt = Date.now();
   const deadline = startedAt + config.workerCycleBudgetMs;
 
@@ -585,7 +599,7 @@ export async function processNextJobBlock(): Promise<ProcessingBlockResult> {
   let jobStatus: ProcessingBlockResult["status"] = "queued";
 
   try {
-    while (canStartAnotherAttempt(deadline)) {
+    while (canStartAnotherAttempt(deadline, config)) {
       const refreshedJob = await readJob(job.id);
       if (!refreshedJob) break;
       if (refreshedJob.status === "paused" || refreshedJob.stop_requested_at) {
@@ -604,7 +618,7 @@ export async function processNextJobBlock(): Promise<ProcessingBlockResult> {
       totalRetried += batchOutcome.retried;
       allResults = allResults.concat(batchOutcome.results);
 
-      if (!canStartAnotherAttempt(deadline)) break;
+      if (!canStartAnotherAttempt(deadline, config)) break;
       await sleep(config.productiveDelayMs);
     }
 
