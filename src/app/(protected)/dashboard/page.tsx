@@ -123,8 +123,8 @@ export default async function DashboardPage({
           {errorMessage}
         </div>
       ) : (
-        <section className="mt-6 grid gap-6 xl:grid-cols-[560px_minmax(640px,1fr)] xl:items-start">
-          <div className="grid max-w-[560px] gap-4 sm:grid-cols-2 xl:grid-cols-2">
+        <section className="mt-6 grid gap-6 xl:grid-cols-[560px_minmax(680px,1fr)] xl:items-stretch">
+          <div className="grid max-w-[560px] content-start gap-4 sm:grid-cols-2 xl:grid-cols-2">
             {cards.map((card) => (
               card.label === "Erros" ? (
                 <Link

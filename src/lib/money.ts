@@ -44,3 +44,11 @@ export function formatCurrencyBR(cents: number) {
     currency: "BRL"
   }).format(cents / 100);
 }
+
+export function calculateAverageTicketCents(totalPaidAmountCents: number, paidCount: number) {
+  if (!Number.isFinite(totalPaidAmountCents) || !Number.isFinite(paidCount) || paidCount <= 0) {
+    return 0;
+  }
+
+  return Math.round(totalPaidAmountCents / paidCount);
+}
