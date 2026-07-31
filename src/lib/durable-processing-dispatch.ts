@@ -1,5 +1,5 @@
 type DispatchContext = {
-  source: "campaign" | "batch" | "campaign-errors";
+  source: "campaign" | "batch" | "campaign-errors" | "dashboard-general-sync";
   campaignId?: string;
   batchId?: string;
   requestedBy?: string;
@@ -47,5 +47,35 @@ export async function dispatchDurableProcessingWorkflow(context: DispatchContext
     throw new Error(
       `Failed to dispatch durable processing workflow: ${response.status} ${body}`.slice(0, 1000)
     );
+  }
+}
+
+export type DurableDispatchResult = {
+  ok: boolean;
+  error: string | null;
+};
+
+export async function dispatchDurableProcessingWorkflowSafely(
+  context: DispatchContext
+): Promise<DurableDispatchResult> {
+  try {
+    await dispatchDurableProcessingWorkflow(context);
+    return {
+      ok: true,
+      error: null
+    };
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Erro desconhecido ao despachar o worker duravel.";
+    console.error("[DURABLE_PROCESSING_DISPATCH_FAILED]", {
+      context,
+      message
+    });
+    return {
+      ok: false,
+      error: message.slice(0, 1000)
+    };
   }
 }

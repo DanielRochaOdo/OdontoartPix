@@ -63,6 +63,7 @@ jobs:
           import time
           import urllib.request
           import urllib.error
+          import socket
 
           url = os.environ["PROCESS_BATCHES_URL"]
           token = os.environ["CRON_SECRET"]
@@ -80,9 +81,30 @@ jobs:
               },
               method="GET",
             )
-            with urllib.request.urlopen(req, timeout=70) as response:
-              payload = json.loads(response.read().decode("utf-8"))
-              return payload
+            try:
+              with urllib.request.urlopen(req, timeout=55) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+                return payload
+            except urllib.error.HTTPError as error:
+              if error.code in (502, 503, 504):
+                return {
+                  "success": True,
+                  "data": {
+                    "status": "queued",
+                    "lastStatus": "queued",
+                    "note": f"gateway-http-{error.code}"
+                  }
+                }
+              raise
+            except socket.timeout:
+              return {
+                "success": True,
+                "data": {
+                  "status": "queued",
+                  "lastStatus": "queued",
+                  "note": "socket-timeout"
+                }
+              }
 
           for index in range(1, max_calls + 1):
             payload = call_endpoint()

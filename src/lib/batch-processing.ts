@@ -162,7 +162,8 @@ export function computeRetryDelayMs(attemptNumber: number, retryAfterMs?: number
 export async function mapWithConcurrency<T, R>(
   items: T[],
   concurrency: number,
-  mapper: (item: T, index: number) => Promise<R>
+  mapper: (item: T, index: number) => Promise<R>,
+  onItemSettled?: (index: number) => Promise<void> | void
 ): Promise<R[]> {
   if (!Number.isInteger(concurrency) || concurrency <= 0) {
     throw new Error("A concorrência deve ser um número inteiro maior que zero.");
@@ -177,6 +178,7 @@ export async function mapWithConcurrency<T, R>(
       cursor += 1;
       if (index >= items.length) return;
       results[index] = await mapper(items[index], index);
+      await onItemSettled?.(index);
     }
   }
 
@@ -240,7 +242,9 @@ async function sleep(ms: number) {
 
 async function countEligible(batchId: string, includeErrors: boolean) {
   const supabase = createSupabaseAdminClient();
-  const eligibleStatuses = ["pending", "pendente", "aguardando", "retrying"];
+  const eligibleStatuses = includeErrors
+    ? ["pending", "pendente", "aguardando", "retrying", "error"]
+    : ["pending", "pendente", "aguardando", "retrying"];
   const { count, error } = await withInfrastructureRetry(async () =>
     supabase
       .from("campaign_batch_members")
@@ -314,7 +318,7 @@ async function heartbeatClaimedMembers(memberIds: string[], workerId: string) {
   if (error) throw error;
 }
 
-async function persistMemberRetry(result: ConsultationResult, nextRetryAt: string) {
+async function persistMemberRetry(result: ConsultationResult, nextRetryAt: string, deadline: number) {
   const supabase = createSupabaseAdminClient();
   const { error } = await withInfrastructureRetry(async () => supabase.rpc("persist_member_processing_retry", {
     p_campaign_batch_member_id: result.claimed.id,
@@ -322,9 +326,14 @@ async function persistMemberRetry(result: ConsultationResult, nextRetryAt: strin
     p_error_message: result.errorMessage ?? "Falha transitória durante a consulta.",
     p_http_status: result.httpStatus,
     p_duration_ms: Math.round(result.durationMs),
-    p_next_retry_at: nextRetryAt
-  }));
+    p_next_retry_at: nextRetryAt,
+    p_recalculate: false
+  }).abortSignal(databaseOperationSignal(deadline)));
   if (error) throw error;
+}
+
+function databaseOperationSignal(deadline: number) {
+  return AbortSignal.timeout(Math.max(1, remainingBudgetMs(deadline)));
 }
 
 async function persistResult(result: ConsultationResult, deadline: number) {
@@ -339,8 +348,9 @@ async function persistResult(result: ConsultationResult, deadline: number) {
       p_campaign_batch_member_id: result.claimed.id,
       p_http_status: result.httpStatus,
       p_duration_ms: Math.round(result.durationMs),
-      p_analysis: result.analysis
-    }));
+      p_analysis: result.analysis,
+      p_recalculate: false
+    }).abortSignal(databaseOperationSignal(deadline)));
     if (error) throw error;
     return "success" as const;
   }
@@ -348,7 +358,7 @@ async function persistResult(result: ConsultationResult, deadline: number) {
   if (forceRetry || (result.retryable && attemptsRemaining)) {
     const retryDelayMs = computeRetryDelayMs(attemptsUsed, result.retryAfterMs);
     const nextRetryAt = new Date(Date.now() + retryDelayMs).toISOString();
-    await persistMemberRetry(result, nextRetryAt);
+    await persistMemberRetry(result, nextRetryAt, deadline);
     return "retrying" as const;
   }
 
@@ -361,7 +371,8 @@ async function persistResult(result: ConsultationResult, deadline: number) {
         errorCode: result.errorCode ?? "WORKER_BUDGET_EXHAUSTED",
         errorMessage: result.errorMessage ?? "Ciclo do worker encerrado antes da tentativa final."
       },
-      nextRetryAt
+      nextRetryAt,
+      deadline
     );
     return "retrying" as const;
   }
@@ -371,8 +382,9 @@ async function persistResult(result: ConsultationResult, deadline: number) {
     p_error_code: result.errorCode ?? "ERP_NETWORK_ERROR",
     p_error_message: result.errorMessage ?? "Falha desconhecida durante a consulta.",
     p_http_status: result.httpStatus,
-    p_duration_ms: Math.round(result.durationMs)
-  }));
+    p_duration_ms: Math.round(result.durationMs),
+    p_recalculate: false
+  }).abortSignal(databaseOperationSignal(deadline)));
   if (error) throw error;
   return "error" as const;
 }
@@ -495,6 +507,14 @@ async function processClaimedMembers(
   const prepared = claimed.map((item) => prepareMember(item, membersById));
   const validMembers = prepared.filter((item): item is PreparedMember => "associatedCode" in item);
   const invalidResults = prepared.filter((item): item is ConsultationResult => !("associatedCode" in item));
+  const heartbeatIntervalMs = 10_000;
+  let lastHeartbeatAt = Date.now();
+
+  const refreshHeartbeatIfDue = async () => {
+    if (Date.now() - lastHeartbeatAt < heartbeatIntervalMs) return;
+    await heartbeatJob(job.id, workerId);
+    lastHeartbeatAt = Date.now();
+  };
 
   await heartbeatClaimedMembers(claimed.map((item) => item.id), workerId);
 
@@ -502,7 +522,8 @@ async function processClaimedMembers(
   const consultationResults = await mapWithConcurrency(
     validMembers,
     config.perWorkerConcurrency,
-    (member) => consultPreparedMember(member, deadline, config)
+    (member) => consultPreparedMember(member, deadline, config),
+    refreshHeartbeatIfDue
   );
   const erpDurationMs = performance.now() - erpStartedAt;
 
@@ -512,11 +533,48 @@ async function processClaimedMembers(
   let failed = 0;
   let retried = 0;
 
-  for (const result of results) {
-    const persistedState = await persistResult(result, deadline);
-    if (persistedState === "success") succeeded += 1;
-    if (persistedState === "retrying") retried += 1;
-    if (persistedState === "error") failed += 1;
+  const persistenceResults = await mapWithConcurrency(
+    results,
+    config.perWorkerConcurrency,
+    async (result) => {
+      try {
+        return {
+          state: await persistResult(result, deadline),
+          error: null
+        } as const;
+      } catch (error) {
+        return { state: null, error } as const;
+      }
+    },
+    refreshHeartbeatIfDue
+  );
+
+  for (const [index, persisted] of persistenceResults.entries()) {
+    if (persisted.error) {
+      console.error("[PROCESSING_BLOCK_PERSISTENCE_FAILED]", {
+        jobId: job.id,
+        batchId: job.batch_id,
+        memberId: results[index]?.claimed.member_id ?? null,
+        memberBatchId: results[index]?.claimed.id ?? null,
+        message: persisted.error instanceof Error ? persisted.error.message : String(persisted.error)
+      });
+      throw persisted.error;
+    }
+    if (persisted.state === "success") succeeded += 1;
+    if (persisted.state === "retrying") retried += 1;
+    if (persisted.state === "error") failed += 1;
+  }
+
+  const { error: recalculateError } = await withInfrastructureRetry(async () =>
+    supabase.rpc("recalculate_batch_totals", { p_batch_id: job.batch_id })
+  );
+  if (recalculateError) {
+    console.error("[PROCESSING_BLOCK_RECALCULATION_FAILED]", {
+      jobId: job.id,
+      batchId: job.batch_id,
+      message: recalculateError.message
+    });
+    throw recalculateError;
   }
 
   await heartbeatJob(job.id, workerId);
@@ -601,7 +659,10 @@ export async function processNextJobBlock(): Promise<ProcessingBlockResult> {
   try {
     while (canStartAnotherAttempt(deadline, config)) {
       const refreshedJob = await readJob(job.id);
-      if (!refreshedJob) break;
+      if (!refreshedJob) {
+        jobStatus = "paused";
+        break;
+      }
       if (refreshedJob.status === "paused" || refreshedJob.stop_requested_at) {
         jobStatus = "paused";
         break;
@@ -618,6 +679,12 @@ export async function processNextJobBlock(): Promise<ProcessingBlockResult> {
       totalRetried += batchOutcome.retried;
       allResults = allResults.concat(batchOutcome.results);
 
+      const postBatchJob = await readJob(job.id);
+      if (!postBatchJob || postBatchJob.status === "paused" || postBatchJob.stop_requested_at) {
+        jobStatus = "paused";
+        break;
+      }
+
       if (!canStartAnotherAttempt(deadline, config)) break;
       await sleep(config.productiveDelayMs);
     }
@@ -633,7 +700,9 @@ export async function processNextJobBlock(): Promise<ProcessingBlockResult> {
 
     await releaseJob(job.id, workerId, {
       status: finalStatus,
-      processed_items: job.processed_items + totalClaimed,
+      // Retries are attempts, not finalized records. Only terminal outcomes
+      // may advance the user-facing processed counter.
+      processed_items: job.success_items + totalSucceeded + job.error_items + totalFailed,
       success_items: job.success_items + totalSucceeded,
       error_items: job.error_items + totalFailed,
       finished_at: finalStatus === "completed" || finalStatus === "paused" ? new Date().toISOString() : null,
@@ -641,6 +710,16 @@ export async function processNextJobBlock(): Promise<ProcessingBlockResult> {
       last_heartbeat_at: new Date().toISOString(),
       last_progress_at: new Date().toISOString(),
       last_error: null
+    });
+
+    console.info("[PROCESSING_JOB_BLOCK_COMPLETED]", {
+      workerId,
+      jobId: job.id,
+      batchId: job.batch_id,
+      attempted: totalClaimed,
+      finalized: totalSucceeded + totalFailed,
+      retried: totalRetried,
+      status: finalStatus
     });
 
     return {
