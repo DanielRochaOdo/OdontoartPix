@@ -3,6 +3,8 @@
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
+const STORAGE_KEY = "campaign-import-report";
+
 export function AddBatchForm({ campaignId, campaignName }: { campaignId: string; campaignName: string }) {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -40,17 +42,30 @@ export function AddBatchForm({ campaignId, campaignName }: { campaignId: string;
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok || !payload?.success) {
-        setMessage(payload?.error?.message ?? "Não foi possível adicionar o lote.");
+        setMessage(payload?.error?.message ?? "Nao foi possivel adicionar o lote.");
         return;
       }
+
+      try {
+        window.sessionStorage.setItem(
+          STORAGE_KEY,
+          JSON.stringify({
+            campaignId: payload.data?.campaignId ?? campaignId,
+            batchId: payload.data?.batchId,
+            message: payload.message,
+            summary: payload.data?.summary
+          })
+        );
+      } catch {}
+
       const skipped = payload.data?.summary?.skipped_duplicate_records ?? 0;
-      setMessage(`Lote adicionado com sucesso.${skipped ? ` ${skipped} CPF(s) já estavam em outro lote e foram ignorados.` : ""}`);
+      setMessage(`Lote adicionado com sucesso.${skipped ? ` ${skipped} CPF(s) ja estavam em outro lote e foram ignorados.` : ""}`);
       form.reset();
       setBatchName("");
       setFileName("");
       router.refresh();
     } catch {
-      setMessage("Falha de comunicação ao adicionar o lote.");
+      setMessage("Falha de comunicacao ao adicionar o lote.");
     } finally {
       setBusy(false);
     }

@@ -1,9 +1,11 @@
 import { z } from "zod";
 import { requireApiUser } from "@/lib/auth/require-api-user";
 import { enqueueCampaignJobs } from "@/lib/batch-job-service";
-import { dispatchDurableProcessingWorkflow } from "@/lib/durable-processing-dispatch";
 import { fail, ok } from "@/lib/http/api-response";
-import { triggerQueuedProcessing } from "@/lib/processing-trigger";
+import {
+  dispatchDurableProcessingWorkflowSafely,
+  runImmediateProcessingKickoff
+} from "@/lib/processing-kickoff";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -40,12 +42,6 @@ export async function POST(
       );
     }
 
-    await dispatchDurableProcessingWorkflow({
-      source: "campaign",
-      campaignId: parsed.data.id,
-      requestedBy: auth.profile.id
-    });
-
     const hasRunningJob = result.jobs.some((job) => !job.created && job.status === "running");
     if (hasRunningJob) {
       return ok(
@@ -66,16 +62,21 @@ export async function POST(
       );
     }
 
-    const kickoff = await triggerQueuedProcessing({
-      maxRuns: 1,
-      budgetMs: 20000
+    const durableDispatchPromise = dispatchDurableProcessingWorkflowSafely({
+      source: "campaign",
+      campaignId: parsed.data.id,
+      requestedBy: auth.profile.id
     });
+
+    const kickoff = await runImmediateProcessingKickoff();
+    const durableDispatch = await durableDispatchPromise;
 
     return ok(
       {
         campaignId: parsed.data.id,
         jobsCreated: result.jobs.filter((job) => job.created).length,
         kickoff,
+        durableDispatch,
         jobs: result.jobs.map((job) => ({
           jobId: job.id,
           batchId: job.batch_id,
@@ -84,7 +85,9 @@ export async function POST(
           created: job.created
         }))
       },
-      "O processamento foi colocado na fila, iniciado localmente e entregue ao worker duravel ate o fim.",
+      durableDispatch.ok
+        ? "O processamento foi colocado na fila, iniciado localmente e entregue ao worker duravel ate o fim."
+        : "O processamento foi colocado na fila e iniciado localmente. O worker duravel falhou ao ser acionado e foi registrado para diagnostico.",
       202
     );
   } catch (error) {

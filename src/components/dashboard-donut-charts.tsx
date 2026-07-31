@@ -1,13 +1,18 @@
 "use client";
 
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
-import { formatCurrencyBR } from "@/lib/money";
+import { calculateAverageTicketCents, formatCurrencyBR } from "@/lib/money";
 
 type ChartValue = {
   label: string;
   value: number;
   color: string;
 };
+
+const chartCardClassName =
+  "flex h-full min-h-[244px] flex-col rounded-2xl border border-slate-200 bg-white p-4 shadow-sm";
+const lowerChartCardClassName =
+  "flex h-full min-h-[216px] flex-col rounded-2xl border border-slate-200 bg-white p-4 shadow-sm";
 
 function DonutChart({
   title,
@@ -44,17 +49,17 @@ function DonutChart({
   const centerStartY = centerLines.length > 1 ? 44 : 50;
 
   return (
-    <article className="flex h-full min-h-[290px] flex-col rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+    <article className={chartCardClassName}>
       <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
-      <div className="mt-1 h-44">
+      <div className="mt-3 h-[176px]">
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
             <Pie
               data={values}
               dataKey="value"
               nameKey="label"
-              innerRadius={56}
-              outerRadius={88}
+              innerRadius={54}
+              outerRadius={84}
               paddingAngle={2}
               strokeWidth={0}
             >
@@ -91,7 +96,7 @@ function DonutChart({
         </ResponsiveContainer>
       </div>
 
-      <div className="mt-5 space-y-1">
+      <div className="mt-4 space-y-2">
         {values.map((item) => {
           const percentage = total > 0 ? (item.value / total) * 100 : 0;
           return (
@@ -127,8 +132,10 @@ export function DashboardDonutCharts({
   pendingAmountCents: number;
   utilizationPercentage: number;
 }) {
+  const averageTicketAmountCents = calculateAverageTicketCents(paidAmountCents, paid);
+
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
+    <div className="grid h-full auto-rows-fr gap-4 lg:grid-cols-2 lg:grid-rows-2">
       <DonutChart
         title="Aproveitamento"
         centerValue={`${utilizationPercentage.toLocaleString("pt-BR", {
@@ -151,14 +158,22 @@ export function DashboardDonutCharts({
         compactCenterValue
       />
 
-      <article className="flex h-full min-h-[250px] flex-col rounded-2xl border border-dashed border-slate-200 bg-white p-4 shadow-sm">
-        <h3 className="text-sm font-semibold text-slate-900">Grafico 3</h3>
-        <div className="mt-3 flex flex-1 items-center justify-center rounded-2xl bg-slate-50 text-sm text-slate-400">
-          A definir
+      <article className={lowerChartCardClassName}>
+        <h3 className="text-sm font-semibold text-slate-900">Ticket medio da campanha</h3>
+        <p className="mt-1 text-xs text-slate-500">
+          Valor medio pago por pagamento confirmado.
+        </p>
+        <div className="mt-3 flex flex-3 flex-col items-center justify-center rounded-2xl bg-slate-50 px-6 py-6 text-center">
+          <div className="text-[2.15rem] font-semibold leading-none text-slate-900">
+            {formatCurrencyBR(averageTicketAmountCents)}
+          </div>
+          <p className="mt-4 max-w-[20rem] text-sm text-slate-600">
+            {formatCurrencyBR(paidAmountCents)} em {paid.toLocaleString("pt-BR")} pagamentos
+          </p>
         </div>
       </article>
 
-      <article className="flex h-full min-h-[250px] flex-col rounded-2xl border border-dashed border-slate-200 bg-white p-4 shadow-sm">
+      <article className="flex h-full min-h-[216px] flex-col rounded-2xl border border-dashed border-slate-200 bg-white p-4 shadow-sm">
         <h3 className="text-sm font-semibold text-slate-900">Grafico 4</h3>
         <div className="mt-3 flex flex-1 items-center justify-center rounded-2xl bg-slate-50 text-sm text-slate-400">
           A definir

@@ -1,10 +1,12 @@
 import { z } from "zod";
 import { requireApiUser } from "@/lib/auth/require-api-user";
 import { enqueueBatchJob } from "@/lib/batch-job-service";
-import { dispatchDurableProcessingWorkflow } from "@/lib/durable-processing-dispatch";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { fail, ok } from "@/lib/http/api-response";
-import { triggerQueuedProcessing } from "@/lib/processing-trigger";
+import {
+  dispatchDurableProcessingWorkflowSafely,
+  runImmediateProcessingKickoff
+} from "@/lib/processing-kickoff";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -64,17 +66,15 @@ export async function POST(
       );
     }
 
-    await dispatchDurableProcessingWorkflow({
+    const durableDispatchPromise = dispatchDurableProcessingWorkflowSafely({
       source: "batch",
       campaignId: batch.campaign_id,
       batchId: batch.id,
       requestedBy: auth.profile.id
     });
 
-    const kickoff = await triggerQueuedProcessing({
-      maxRuns: 1,
-      budgetMs: 20000
-    });
+    const kickoff = await runImmediateProcessingKickoff();
+    const durableDispatch = await durableDispatchPromise;
 
     return ok(
       {
@@ -82,11 +82,14 @@ export async function POST(
         batchId: job.batch_id,
         campaignId: job.campaign_id,
         kickoff,
+        durableDispatch,
         status: job.status,
         totalItems: job.total_items,
         created: job.created
       },
-      "O processamento do lote foi colocado na fila, iniciado localmente e entregue ao worker duravel ate o fim.",
+      durableDispatch.ok
+        ? "O processamento do lote foi colocado na fila, iniciado localmente e entregue ao worker duravel ate o fim."
+        : "O processamento do lote foi colocado na fila e iniciado localmente. O worker duravel falhou ao ser acionado e foi registrado para diagnostico.",
       202
     );
   } catch (error) {

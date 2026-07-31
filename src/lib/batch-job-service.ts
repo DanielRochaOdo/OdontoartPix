@@ -19,6 +19,7 @@ export type EnqueuedJob = {
   error_items: number;
   include_errors: boolean;
   created: boolean;
+  resumed?: boolean;
 };
 
 const PENDING_STATUSES = ["pending", "pendente", "aguardando", "retrying"];
@@ -45,6 +46,32 @@ async function reopenUnpaidMembersForManualProcessing(batchId: string) {
   if (error) throw error;
 }
 
+async function resumePausedJob(jobId: string) {
+  const supabase = createSupabaseAdminClient();
+  const resumedAt = new Date().toISOString();
+
+  const { data, error } = await supabase
+    .from("processing_jobs")
+    .update({
+      status: "queued",
+      stop_requested_at: null,
+      stop_requested_by: null,
+      stop_reason: null,
+      next_run_at: resumedAt,
+      finished_at: null,
+      updated_at: resumedAt
+    })
+    .eq("id", jobId)
+    .eq("status", "paused")
+    .select(
+      "id,campaign_id,batch_id,status,total_items,processed_items,success_items,error_items,include_errors"
+    )
+    .maybeSingle();
+
+  if (error) throw error;
+  return data;
+}
+
 export async function enqueueBatchJob(input: {
   campaignId: string;
   batchId: string;
@@ -67,6 +94,20 @@ export async function enqueueBatchJob(input: {
 
   if (activeJobError) throw activeJobError;
   if (activeJob) {
+    if (activeJob.status === "paused") {
+      const resumedJob = await resumePausedJob(activeJob.id);
+      if (!resumedJob) {
+        throw new Error("Job pausado não pôde ser retomado.");
+      }
+
+      return {
+        ...resumedJob,
+        status: resumedJob.status as ProcessingJobStatus,
+        created: false,
+        resumed: true
+      };
+    }
+
     return {
       ...activeJob,
       status: activeJob.status as ProcessingJobStatus,

@@ -8,6 +8,7 @@ type Props = {
   endpoint: string;
   label: string;
   iconOnly?: boolean;
+  variant?: "emerald" | "red";
 };
 
 type ApiPayload = {
@@ -16,11 +17,17 @@ type ApiPayload = {
   error?: { message?: string };
 };
 
-export function ProcessResourceButton({ endpoint, label, iconOnly = false }: Props) {
+export function ProcessResourceButton({
+  endpoint,
+  label,
+  iconOnly = false,
+  variant = "emerald"
+}: Props) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [isError, setIsError] = useState(false);
+  const shouldRenderMessage = !!message && (!iconOnly || isError);
 
   async function enqueue() {
     if (busy) return;
@@ -62,8 +69,16 @@ export function ProcessResourceButton({ endpoint, label, iconOnly = false }: Pro
         title={label}
         className={
           iconOnly
-            ? "inline-flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-700 text-white transition hover:bg-emerald-800 disabled:opacity-60"
-            : "rounded-lg bg-emerald-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-800 disabled:opacity-60"
+            ? `inline-flex h-10 w-10 items-center justify-center rounded-lg text-white transition disabled:opacity-60 ${
+                variant === "red"
+                  ? "bg-red-700 hover:bg-red-800"
+                  : "bg-emerald-700 hover:bg-emerald-800"
+              }`
+            : `rounded-lg px-4 py-2 text-sm font-medium text-white transition disabled:opacity-60 ${
+                variant === "red"
+                  ? "bg-red-700 hover:bg-red-800"
+                  : "bg-emerald-700 hover:bg-emerald-800"
+              }`
         }
       >
         {iconOnly ? (
@@ -79,7 +94,7 @@ export function ProcessResourceButton({ endpoint, label, iconOnly = false }: Pro
           )
         ) : busy ? "Enfileirando..." : label}
       </button>
-      {message ? (
+      {shouldRenderMessage ? (
         <p
           className={
             iconOnly

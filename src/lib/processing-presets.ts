@@ -1,0 +1,72 @@
+import type { ProcessingConfig } from "@/lib/processing-config";
+
+export type ProcessingPresetKey = "conservador" | "mediano" | "agressivo";
+
+export const PROCESSING_PRESETS: Record<ProcessingPresetKey, ProcessingConfig> = {
+  conservador: {
+    workerCount: 10,
+    claimBatchSize: 40,
+    perWorkerConcurrency: 8,
+    httpConnectTimeoutMs: 4000,
+    httpReadTimeoutMs: 4000,
+    maxAttemptsPerItem: 2,
+    staleHeartbeatMs: 180000,
+    workerCycleBudgetMs: 90000,
+    globalLockLeaseSeconds: 900,
+    productiveDelayMs: 10,
+    maxPageSize: 200,
+    maxPagesPerOperation: 1000
+  },
+  mediano: {
+    workerCount: 10,
+    claimBatchSize: 60,
+    perWorkerConcurrency: 15,
+    httpConnectTimeoutMs: 5000,
+    httpReadTimeoutMs: 5000,
+    maxAttemptsPerItem: 3,
+    staleHeartbeatMs: 120000,
+    workerCycleBudgetMs: 55000,
+    globalLockLeaseSeconds: 900,
+    productiveDelayMs: 10,
+    maxPageSize: 200,
+    maxPagesPerOperation: 1000
+  },
+  agressivo: {
+    workerCount: 10,
+    claimBatchSize: 120,
+    perWorkerConcurrency: 10,
+    httpConnectTimeoutMs: 5000,
+    httpReadTimeoutMs: 5000,
+    maxAttemptsPerItem: 3,
+    staleHeartbeatMs: 180000,
+    workerCycleBudgetMs: 90000,
+    globalLockLeaseSeconds: 900,
+    productiveDelayMs: 10,
+    maxPageSize: 200,
+    maxPagesPerOperation: 1000
+  }
+};
+
+export function matchProcessingPreset(config: ProcessingConfig): ProcessingPresetKey | null {
+  const entries = Object.entries(PROCESSING_PRESETS) as Array<[ProcessingPresetKey, ProcessingConfig]>;
+  for (const [key, preset] of entries) {
+    if (
+      preset.workerCount === config.workerCount &&
+      preset.claimBatchSize === config.claimBatchSize &&
+      preset.perWorkerConcurrency === config.perWorkerConcurrency &&
+      preset.httpConnectTimeoutMs === config.httpConnectTimeoutMs &&
+      preset.httpReadTimeoutMs === config.httpReadTimeoutMs &&
+      preset.maxAttemptsPerItem === config.maxAttemptsPerItem &&
+      preset.staleHeartbeatMs === config.staleHeartbeatMs &&
+      preset.workerCycleBudgetMs === config.workerCycleBudgetMs &&
+      preset.globalLockLeaseSeconds === config.globalLockLeaseSeconds &&
+      preset.productiveDelayMs === config.productiveDelayMs &&
+      preset.maxPageSize === config.maxPageSize &&
+      preset.maxPagesPerOperation === config.maxPagesPerOperation
+    ) {
+      return key;
+    }
+  }
+
+  return null;
+}
