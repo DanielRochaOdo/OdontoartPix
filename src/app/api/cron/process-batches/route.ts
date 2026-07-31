@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { triggerQueuedProcessing } from "@/lib/processing-trigger";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 55;
 export const dynamic = "force-dynamic";
 
 function isAuthorized(request: Request) {
@@ -38,7 +38,7 @@ export async function GET(request: Request) {
   try {
     const result = await triggerQueuedProcessing({
       maxRuns: 10000,
-      budgetMs: 58000
+      budgetMs: 45000
     });
     return NextResponse.json({ success: true, data: result });
   } catch (error) {
