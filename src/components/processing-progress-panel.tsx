@@ -21,6 +21,16 @@ type Metrics = {
   activeJobs: number;
   processingBlockSize: number;
   calculatedStatus: string;
+  latestJob?: {
+    status: string;
+    includeErrors: boolean;
+    totalItems: number;
+    processedItems: number;
+    successItems: number;
+    errorItems: number;
+    remainingItems: number;
+    finishedAt: string | null;
+  } | null;
 };
 
 type Props = {
@@ -47,6 +57,15 @@ const STATUS_LABELS: Record<string, string> = {
   travado: "Travado",
   pausado: "Pausado",
   cancelado: "Cancelado"
+};
+
+const JOB_STATUS_LABELS: Record<string, string> = {
+  queued: "Em fila",
+  running: "Executando",
+  completed: "Concluido",
+  failed: "Falhou",
+  paused: "Pausado",
+  cancelled: "Cancelado"
 };
 
 function statusMessage(status: string) {
@@ -280,10 +299,28 @@ export function ProcessingProgressPanel({
             )}
           </div>
 
-          <div className="mt-4 grid gap-3 sm:grid-cols-3">
+      <div className="mt-4 grid gap-3 sm:grid-cols-3">
             <div className="rounded-xl border border-slate-200 p-3 text-sm">
               Jobs em fila: <strong>{metrics.queuedJobs}</strong>
-            </div>
+      </div>
+
+      {metrics.latestJob ? (
+        <div className="mt-4 rounded-xl border border-slate-200 p-3 text-sm dark:border-slate-700 dark:text-slate-200">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <strong>{metrics.latestJob.includeErrors ? "Último reprocessamento de erros" : "Último processamento"}</strong>
+            <span>{JOB_STATUS_LABELS[metrics.latestJob.status] ?? metrics.latestJob.status}</span>
+          </div>
+          <div className="mt-2 grid gap-2 sm:grid-cols-4">
+            <span>Total: <strong>{metrics.latestJob.totalItems}</strong></span>
+            <span>Sucesso: <strong>{metrics.latestJob.successItems}</strong></span>
+            <span>Erro: <strong>{metrics.latestJob.errorItems}</strong></span>
+            <span>Restante: <strong>{metrics.latestJob.remainingItems}</strong></span>
+          </div>
+          {metrics.latestJob.finishedAt ? (
+            <p className="mt-2 text-xs text-slate-500">Finalizado em {new Date(metrics.latestJob.finishedAt).toLocaleString("pt-BR")}</p>
+          ) : null}
+        </div>
+      ) : null}
             <div className="rounded-xl border border-slate-200 p-3 text-sm">
               Jobs executando: <strong>{metrics.runningJobs}</strong>
             </div>

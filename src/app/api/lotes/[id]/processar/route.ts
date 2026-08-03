@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { requireApiUser } from "@/lib/auth/require-api-user";
-import { enqueueBatchJob } from "@/lib/batch-job-service";
+import {
+  enqueueBatchJob,
+  ProcessingJobModeConflictError
+} from "@/lib/batch-job-service";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { fail, ok } from "@/lib/http/api-response";
 import {
@@ -93,6 +96,9 @@ export async function POST(
       202
     );
   } catch (error) {
+    if (error instanceof ProcessingJobModeConflictError) {
+      return fail(error.code, error.message, 409);
+    }
     console.error("[BATCH_ENQUEUE_FAILED]", {
       batchId: parsed.data.id,
       message: error instanceof Error ? error.message : "Erro desconhecido"

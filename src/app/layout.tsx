@@ -13,7 +13,7 @@ export const metadata = {
     follow: false
   },
   icons: {
-    icon: "/favicon.ico"
+    icon: "/favicon.svg"
   }
 };
 

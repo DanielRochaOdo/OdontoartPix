@@ -15,7 +15,6 @@ export default async function MembersPage({
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const resolvedSearchParams = (await searchParams) ?? {};
-  const [members, profile] = await Promise.all([getMembers(), getCurrentProfile()]);
   const initialFilters = {
     query: typeof resolvedSearchParams.query === "string" ? resolvedSearchParams.query : "",
     code: typeof resolvedSearchParams.code === "string" ? resolvedSearchParams.code : "",
@@ -29,6 +28,14 @@ export default async function MembersPage({
     campaign: readSearchParamArray(resolvedSearchParams.campaign),
     batch: readSearchParamArray(resolvedSearchParams.batch)
   };
+  const [members, profile] = await Promise.all([
+    getMembers({
+      campaignIds: initialFilters.campaign,
+      batchIds: initialFilters.batch,
+      status: initialFilters.status
+    }),
+    getCurrentProfile()
+  ]);
 
   return (
     <main className="p-6">

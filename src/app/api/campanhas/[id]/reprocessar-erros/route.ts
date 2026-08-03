@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { requireApiUser } from "@/lib/auth/require-api-user";
-import { enqueueCampaignJobs } from "@/lib/batch-job-service";
+import {
+  enqueueCampaignJobs,
+  ProcessingJobModeConflictError
+} from "@/lib/batch-job-service";
 import { fail, ok } from "@/lib/http/api-response";
 import {
   dispatchDurableProcessingWorkflowSafely,
@@ -83,6 +86,9 @@ export async function POST(
       202
     );
   } catch (error) {
+    if (error instanceof ProcessingJobModeConflictError) {
+      return fail(error.code, error.message, 409);
+    }
     console.error("[CAMPAIGN_ERROR_REPROCESS_FAILED]", {
       campaignId: parsed.data.id,
       message: error instanceof Error ? error.message : "Erro desconhecido"

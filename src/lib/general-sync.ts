@@ -126,6 +126,8 @@ type ScopeResolution = {
   emptyReason: string | null;
 };
 
+const NON_PAID_MEMBER_FILTER = "payment_status.is.null,payment_status.neq.paid";
+
 export type GeneralSyncPreview = Omit<ScopeResolution, "filters" | "isAllScope" | "batches"> & {
   confirmationToken: string;
 };
@@ -281,22 +283,31 @@ async function getValidatedBatchIds(batchIds: string[]) {
 
 async function loadScopedBatches(filters: { campaignIds: string[]; batchIds: string[] }) {
   const supabase = createSupabaseAdminClient();
-  let query = supabase
-    .from("campaign_batches")
-    .select("id,campaign_id,name,created_at")
-    .is("deleted_at", null)
-    .order("created_at", { ascending: true })
-    .order("id", { ascending: true });
+  const batchPageSize = 1000;
+  const batches: Array<{ id: string; campaign_id: string; name: string; created_at: string }> = [];
 
-  if (filters.batchIds.length > 0) query = query.in("id", filters.batchIds);
-  if (filters.campaignIds.length > 0) query = query.in("campaign_id", filters.campaignIds);
+  for (let from = 0; ; from += batchPageSize) {
+    let query = supabase
+      .from("campaign_batches")
+      .select("id,campaign_id,name,created_at")
+      .is("deleted_at", null)
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, from + batchPageSize - 1);
 
-  const { data, error } = await query;
-  if (error) {
-    throw new DataAccessError("Nao foi possivel carregar os lotes do escopo.", "generalSync.loadBatches", error);
+    if (filters.batchIds.length > 0) query = query.in("id", filters.batchIds);
+    if (filters.campaignIds.length > 0) query = query.in("campaign_id", filters.campaignIds);
+
+    const { data, error } = await query;
+    if (error) {
+      throw new DataAccessError("Nao foi possivel carregar os lotes do escopo.", "generalSync.loadBatches", error);
+    }
+
+    const page = data ?? [];
+    batches.push(...page);
+    if (page.length < batchPageSize) break;
   }
 
-  const batches = data ?? [];
   if (batches.length === 0) return [];
 
   const campaignIds = [...new Set(batches.map((batch) => batch.campaign_id))];
@@ -322,7 +333,7 @@ async function loadScopedBatches(filters: { campaignIds: string[]; batchIds: str
       .select("id,batch_id")
       .in("batch_id", batchIds)
       .is("deleted_at", null)
-      .not("payment_status", "eq", "paid")
+      .or(NON_PAID_MEMBER_FILTER)
       .order("id", { ascending: true })
       .range(from, to);
 
@@ -613,17 +624,18 @@ async function resetBatchForGeneralSync(batchId: string) {
     .from("campaign_batch_members")
     .update({
       processing_status: "pending",
-      payment_status: null,
       last_error: null,
       next_retry_at: null,
+      next_check_at: null,
       processing_owner: null,
       processing_started_at: null,
       processing_heartbeat_at: null,
+      claim_token: null,
       updated_at: resetAt
     })
     .eq("batch_id", batchId)
     .is("deleted_at", null)
-    .not("payment_status", "eq", "paid");
+    .or(NON_PAID_MEMBER_FILTER);
 
   if (error) {
     throw new DataAccessError("Nao foi possivel preparar o lote para sincronizacao total.", "generalSync.resetBatch", error);
@@ -644,7 +656,7 @@ async function interruptBatchJob(batchId: string, reason: string, requestedBy?: 
     })
     .eq("batch_id", batchId)
     .in("status", ["running"])
-    .select("id,status");
+    .select("id,status,locked_by");
 
   if (runningJobsError) {
     throw new DataAccessError("Nao foi possivel sinalizar a interrupcao do lote ativo.", "generalSync.interruptBatchJob.running", runningJobsError);
@@ -673,19 +685,25 @@ async function interruptBatchJob(batchId: string, reason: string, requestedBy?: 
     return [...(runningJobs ?? []), ...(queuedJobs ?? [])];
   }
 
-  const { error: membersError } = await supabase
+  const { data: claimOwners, error: claimOwnersError } = await supabase
     .from("campaign_batch_members")
-    .update({
-      processing_status: "retrying",
-      processing_owner: null,
-      processing_started_at: null,
-      processing_heartbeat_at: null,
-      next_retry_at: stoppedAt,
-      last_error: reason,
-      updated_at: stoppedAt
-    })
+    .select("processing_owner")
     .eq("batch_id", batchId)
-    .eq("processing_status", "processing");
+    .eq("processing_status", "processing")
+    .not("processing_owner", "is", null)
+    .limit(1);
+
+  if (claimOwnersError) {
+    throw new DataAccessError("Nao foi possivel localizar o worker do lote interrompido.", "generalSync.interruptBatchJob.owner", claimOwnersError);
+  }
+
+  const workerId = runningJobs?.[0]?.locked_by ?? claimOwners?.[0]?.processing_owner ?? null;
+  const { error: membersError } = await supabase.rpc("release_worker_claims_v2", {
+    p_batch_id: batchId,
+    p_worker_id: workerId,
+    p_reason: reason,
+    p_next_retry_at: stoppedAt
+  });
 
   if (membersError) {
     throw new DataAccessError("Nao foi possivel liberar os itens do lote interrompido.", "generalSync.interruptBatchJob.members", membersError);
@@ -822,7 +840,32 @@ async function syncOneRunState(run: GeneralSyncRunRow, workerId: string) {
       null;
 
     if (activeBatch?.processing_job_id) {
-      await interruptBatchJob(activeBatch.batch_id, run.cancel_reason ?? "Sincronizacao geral cancelada.");
+      const activeJob = await getProcessingJob(activeBatch.processing_job_id);
+      const reason = run.cancel_reason ?? "Sincronizacao geral cancelada.";
+
+      if (activeJob && activeJob.status === "running") {
+        await interruptBatchJob(activeBatch.batch_id, reason);
+        await updateRunBatch(activeBatch.id, { message: "Interrupcao solicitada. Aguardando o worker finalizar o bloco atual." });
+        await updateRun(run.id, {
+          current_batch_id: activeBatch.batch_id,
+          current_batch_name: activeBatch.batch_name,
+          current_batch_position: activeBatch.position
+        });
+        await refreshRunHeartbeat(run.id, workerId);
+        await releaseRunLock(run.id, workerId);
+        return;
+      }
+
+      if (activeJob && ACTIVE_BATCH_JOB_STATUSES.includes(activeJob.status)) {
+        await interruptBatchJob(activeBatch.batch_id, reason);
+      }
+
+      await updateRunBatch(activeBatch.id, {
+        status: "cancelled",
+        finished_at: new Date().toISOString(),
+        message: reason
+      });
+    } else if (activeBatch) {
       await updateRunBatch(activeBatch.id, {
         status: "cancelled",
         finished_at: new Date().toISOString(),
@@ -1007,7 +1050,7 @@ async function syncOneRunState(run: GeneralSyncRunRow, workerId: string) {
     campaignId: nextBatch.campaign_id,
     batchId: nextBatch.batch_id,
     requestedBy: run.requested_by,
-    includeErrors: false
+    includeErrors: true
   });
 
   if (!job) {

@@ -87,6 +87,7 @@ export type MonthlyInstallment = {
 
 export type MonthlyAnalysis = {
   paymentStatus: "paid" | "unpaid";
+  paymentStatusSource: "erp_open_invoice" | "inferred_from_open_invoices_absence" | "legacy_contract";
   message: string;
   installmentsCount: number;
   totalPendingAmountCents: number;
@@ -97,7 +98,71 @@ export type MonthlyAnalysis = {
   }>;
   installments: MonthlyInstallment[];
   warnings: string[];
+  paginationComplete: boolean;
+  currentPage: number | null;
+  totalPages: number | null;
+  totalCount: number | null;
+  pageSize: number | null;
 };
+
+export function analyzeTargetInstallment(input: {
+  targetInstallmentId: string;
+  invoices: Array<{ id: string | number | null | undefined; finalAmountCents: number }>;
+  paginationComplete: boolean;
+  message?: string;
+}): MonthlyAnalysis {
+  const targetId = String(input.targetInstallmentId).trim();
+  const matched = input.invoices.find((invoice) => String(invoice.id ?? "").trim() === targetId);
+
+  if (!matched && !input.paginationComplete) {
+    throw new MonthlyResponseError(
+      "A consulta paginada do ERP nao foi concluida; a fatura alvo nao pode ser classificada como paga."
+    );
+  }
+
+  if (!matched) {
+    return {
+      paymentStatus: "paid",
+      paymentStatusSource: "inferred_from_open_invoices_absence",
+      message: input.message || "Parcela nao localizada para o associado informado.",
+      installmentsCount: 0,
+      totalPendingAmountCents: 0,
+      totalsByPlan: [],
+      installments: [],
+      warnings: [],
+      paginationComplete: true,
+      currentPage: null,
+      totalPages: null,
+      totalCount: null,
+      pageSize: null
+    };
+  }
+
+  return {
+    paymentStatus: "unpaid",
+    paymentStatusSource: "erp_open_invoice",
+    message: input.message || "Parcela localizada como pendente.",
+    installmentsCount: 1,
+    totalPendingAmountCents: matched.finalAmountCents,
+    totalsByPlan: [{ planType: "Nao informado", installmentsCount: 1, totalAmountCents: matched.finalAmountCents }],
+    installments: [{
+      installmentCode: targetId,
+      baseAmountCents: matched.finalAmountCents,
+      fineAmountCents: 0,
+      interestAmountCents: 0,
+      additionalAmountCents: 0,
+      discountAmountCents: 0,
+      finalAmountCents: matched.finalAmountCents,
+      planType: "Nao informado"
+    }],
+    warnings: [],
+    paginationComplete: input.paginationComplete,
+    currentPage: null,
+    totalPages: null,
+    totalCount: null,
+    pageSize: null
+  };
+}
 
 type NormalizedLegacyPayload = {
   source: "legacy";
@@ -109,12 +174,53 @@ type NormalizedPaginatedPayload = {
   source: "paginated";
   message?: string;
   items: z.infer<typeof MonthlyApiDataItemSchema>[];
+  currentPage: number | null;
+  totalPages: number | null;
+  totalCount: number | null;
+  pageSize: number | null;
 };
 
 function optionalText(value: unknown) {
   if (value == null) return undefined;
   const normalized = String(value).trim();
   return normalized || undefined;
+}
+
+function isEmptyErros(value: unknown) {
+  if (value == null) return true;
+  if (Array.isArray(value)) return value.length === 0;
+  if (typeof value === "object") return Object.keys(value as Record<string, unknown>).length === 0;
+  return false;
+}
+
+function validatePaginatedResponse(
+  parsed: z.infer<typeof MonthlyPaginatedResponseSchema>
+) {
+  const data = parsed.dados;
+  const currentPage = data.CurrentPage;
+  const totalPages = data.TotalPages;
+  const totalCount = data.TotalCount;
+  const pageSize = data.PageSize;
+
+  if (parsed.codigo !== 1 || !isEmptyErros(parsed.erros)) {
+    throw new MonthlyResponseError("O ERP retornou erro funcional na consulta de mensalidades.");
+  }
+
+  if (
+    currentPage == null ||
+    totalPages == null ||
+    totalCount == null ||
+    pageSize == null ||
+    currentPage < 1 ||
+    totalPages < 0 ||
+    totalCount < 0 ||
+    pageSize < 0 ||
+    (totalPages === 0 && data.Data.length !== 0) ||
+    (totalPages > 0 && currentPage > totalPages) ||
+    (pageSize > 0 && data.Data.length > pageSize)
+  ) {
+    throw new MonthlyResponseError("Os metadados de paginacao do ERP sao invalidos ou incompletos.");
+  }
 }
 
 function monetaryValue(value: unknown, field: string, warnings: string[]) {
@@ -137,10 +243,15 @@ function normalizeMonthlyPayload(input: unknown): NormalizedLegacyPayload | Norm
 
   const paginated = MonthlyPaginatedResponseSchema.safeParse(input);
   if (paginated.success) {
+    validatePaginatedResponse(paginated.data);
     return {
       source: "paginated",
       message: paginated.data.mensagem?.trim(),
-      items: paginated.data.dados.Data
+      items: paginated.data.dados.Data,
+      currentPage: paginated.data.dados.CurrentPage ?? null,
+      totalPages: paginated.data.dados.TotalPages ?? null,
+      totalCount: paginated.data.dados.TotalCount ?? null,
+      pageSize: paginated.data.dados.PageSize ?? null
     };
   }
 
@@ -201,12 +312,18 @@ function analyzeLegacyPayload(payload: NormalizedLegacyPayload): MonthlyAnalysis
   if (installments.length === 0) {
     return {
       paymentStatus: "paid",
+      paymentStatusSource: "legacy_contract",
       message: payload.message || "Associado sem mensalidades em aberto.",
       installmentsCount: 0,
       totalPendingAmountCents: 0,
       totalsByPlan: [],
       installments: [],
-      warnings
+      warnings,
+      paginationComplete: true,
+      currentPage: null,
+      totalPages: null,
+      totalCount: null,
+      pageSize: null
     };
   }
 
@@ -223,12 +340,18 @@ function analyzeLegacyPayload(payload: NormalizedLegacyPayload): MonthlyAnalysis
 
   return {
     paymentStatus: "unpaid",
+    paymentStatusSource: "legacy_contract",
     message: payload.message || "Associado possui mensalidades em aberto.",
     installmentsCount: installments.length,
     totalPendingAmountCents: installments.reduce((sum, installment) => sum + installment.finalAmountCents, 0),
     totalsByPlan: [...grouped.entries()].map(([planType, total]) => ({ planType, ...total })),
     installments,
-    warnings
+    warnings,
+    paginationComplete: true,
+    currentPage: null,
+    totalPages: null,
+    totalCount: null,
+    pageSize: null
   };
 }
 
@@ -242,16 +365,29 @@ function analyzePaginatedPayload(
     );
   }
 
-  const matched = payload.items.find((item) => optionalText(item.Id) === targetInstallmentId);
+  const matched = payload.items.find((item) => optionalText(item.Id) === String(targetInstallmentId).trim());
   if (!matched) {
+    const paginationComplete =
+      payload.totalPages === 0 || payload.totalPages === 1;
+    if (!paginationComplete) {
+      throw new MonthlyResponseError(
+        "A consulta paginada do ERP nao foi concluida; a fatura alvo nao pode ser classificada como paga."
+      );
+    }
     return {
       paymentStatus: "paid",
+      paymentStatusSource: "inferred_from_open_invoices_absence",
       message: payload.message || "Parcela não localizada para o associado informado.",
       installmentsCount: 0,
       totalPendingAmountCents: 0,
       totalsByPlan: [],
       installments: [],
-      warnings: []
+      warnings: [],
+      paginationComplete: true,
+      currentPage: payload.currentPage,
+      totalPages: payload.totalPages,
+      totalCount: payload.totalCount,
+      pageSize: payload.pageSize
     };
   }
 
@@ -264,6 +400,7 @@ function analyzePaginatedPayload(
 
   return {
     paymentStatus: "unpaid",
+    paymentStatusSource: "erp_open_invoice",
     message: payload.message || "Parcela localizada como pendente.",
     installmentsCount: 1,
     totalPendingAmountCents: finalAmount.cents,
@@ -286,7 +423,12 @@ function analyzePaginatedPayload(
         planType: "Não informado"
       }
     ],
-    warnings: []
+    warnings: [],
+    paginationComplete: payload.totalPages === 0 || payload.totalPages === 1,
+    currentPage: payload.currentPage,
+    totalPages: payload.totalPages,
+    totalCount: payload.totalCount,
+    pageSize: payload.pageSize
   };
 }
 

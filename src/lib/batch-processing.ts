@@ -62,6 +62,8 @@ type ClaimedMember = {
   member_id: string;
   target_installment_id: string | null;
   processing_attempts: number;
+  processing_owner: string | null;
+  claim_token: string | null;
 };
 
 type StoredMember = {
@@ -95,14 +97,8 @@ type BatchOutcome = {
   results: ConsultationResult[];
 };
 
-const NON_RETRYABLE_BATCH_ERROR_CODES: ReadonlySet<ErpErrorCode> = new Set([
-  "ERP_TIMEOUT",
-  "ERP_NETWORK_ERROR"
-]);
-
 export function shouldRetryConsultationInBatch(error: unknown) {
   if (!(error instanceof ErpError)) return true;
-  if (NON_RETRYABLE_BATCH_ERROR_CODES.has(error.code)) return false;
   return error.retryable;
 }
 
@@ -240,35 +236,63 @@ async function sleep(ms: number) {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function countEligible(batchId: string, includeErrors: boolean) {
-  const supabase = createSupabaseAdminClient();
-  const eligibleStatuses = includeErrors
-    ? ["pending", "pendente", "aguardando", "retrying", "error"]
-    : ["pending", "pendente", "aguardando", "retrying"];
-  const { count, error } = await withInfrastructureRetry(async () =>
-    supabase
-      .from("campaign_batch_members")
-      .select("id", { count: "exact", head: true })
-      .eq("batch_id", batchId)
-      .is("deleted_at", null)
-      .in("processing_status", eligibleStatuses)
-  );
-  if (error) throw error;
-  return count ?? 0;
+export type ClaimableCountRow = {
+  claimable_count?: number | string;
+  technical_retry_count?: number | string;
+  normal_recheck_count?: number | string;
+  manual_reprocess_count?: number | string;
+  blocked_count?: number | string;
+  scheduled_count?: number | string;
+  processing_count?: number | string;
+  next_retry_at?: string | null;
+  next_recheck_at?: string | null;
+  next_manual_reprocess_at?: string | null;
+  next_run_at?: string | null;
+};
+
+function parseCounter(value: number | string | undefined, field: string) {
+  const parsed = Number(value ?? 0);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new Error(`Contador inválido retornado pela RPC: ${field}.`);
+  }
+  return parsed;
 }
 
-async function countProcessing(batchId: string) {
+export function readClaimableCount(data: unknown) {
+  const rpcData = data as ClaimableCountRow[] | ClaimableCountRow | null;
+  const row = Array.isArray(rpcData) ? rpcData[0] : rpcData;
+
+  if (!row) {
+    throw new Error("count_claimable_batch_members_v2 não retornou o resumo esperado.");
+  }
+
+  return {
+    claimable: parseCounter(row.claimable_count, "claimable_count"),
+    technicalRetry: parseCounter(row.technical_retry_count, "technical_retry_count"),
+    normalRecheck: parseCounter(row.normal_recheck_count, "normal_recheck_count"),
+    manualReprocess: parseCounter(row.manual_reprocess_count, "manual_reprocess_count"),
+    blocked: parseCounter(row.blocked_count, "blocked_count"),
+    scheduled: parseCounter(row.scheduled_count, "scheduled_count"),
+    processing: parseCounter(row.processing_count, "processing_count"),
+    nextRetryAt: row.next_retry_at ?? null,
+    nextRecheckAt: row.next_recheck_at ?? null,
+    nextManualReprocessAt: row.next_manual_reprocess_at ?? null,
+    nextRunAt: row.next_run_at ?? null
+  };
+}
+
+async function countEligible(batchId: string, includeErrors: boolean) {
   const supabase = createSupabaseAdminClient();
-  const { count, error } = await withInfrastructureRetry(async () =>
-    supabase
-      .from("campaign_batch_members")
-      .select("id", { count: "exact", head: true })
-      .eq("batch_id", batchId)
-      .is("deleted_at", null)
-      .eq("processing_status", "processing")
-  );
+  const config = await getProcessingConfig();
+  const { data, error } = await withInfrastructureRetry(async () => supabase.rpc("count_claimable_batch_members_v3", {
+    p_batch_id: batchId,
+    p_include_errors: includeErrors,
+    p_stale_seconds: Math.ceil(config.staleHeartbeatMs / 1000),
+    p_max_attempts: config.maxAttemptsPerItem,
+    p_max_stale_reclaims: 3
+  }));
   if (error) throw error;
-  return count ?? 0;
+  return readClaimableCount(data);
 }
 
 async function readJob(jobId: string) {
@@ -320,8 +344,10 @@ async function heartbeatClaimedMembers(memberIds: string[], workerId: string) {
 
 async function persistMemberRetry(result: ConsultationResult, nextRetryAt: string, deadline: number) {
   const supabase = createSupabaseAdminClient();
-  const { error } = await withInfrastructureRetry(async () => supabase.rpc("persist_member_processing_retry", {
+  const { data, error } = await withInfrastructureRetry(async () => supabase.rpc("persist_member_processing_retry_v2", {
     p_campaign_batch_member_id: result.claimed.id,
+    p_worker_id: result.claimed.processing_owner,
+    p_claim_token: result.claimed.claim_token,
     p_error_code: result.errorCode ?? "ERP_NETWORK_ERROR",
     p_error_message: result.errorMessage ?? "Falha transitória durante a consulta.",
     p_http_status: result.httpStatus,
@@ -330,6 +356,7 @@ async function persistMemberRetry(result: ConsultationResult, nextRetryAt: strin
     p_recalculate: false
   }).abortSignal(databaseOperationSignal(deadline)));
   if (error) throw error;
+  return data === true;
 }
 
 function databaseOperationSignal(deadline: number) {
@@ -344,27 +371,31 @@ async function persistResult(result: ConsultationResult, deadline: number) {
   const forceRetry = result.errorCode === "WORKER_BUDGET_EXHAUSTED";
 
   if (result.ok && result.analysis) {
-    const { error } = await withInfrastructureRetry(async () => supabase.rpc("persist_member_processing_success", {
+    const { data, error } = await withInfrastructureRetry(async () => supabase.rpc("persist_member_processing_success_v2", {
       p_campaign_batch_member_id: result.claimed.id,
+      p_worker_id: result.claimed.processing_owner,
+      p_claim_token: result.claimed.claim_token,
       p_http_status: result.httpStatus,
       p_duration_ms: Math.round(result.durationMs),
       p_analysis: result.analysis,
+      p_next_check_at: new Date(Date.now() + 55 * 60 * 1000).toISOString(),
       p_recalculate: false
     }).abortSignal(databaseOperationSignal(deadline)));
     if (error) throw error;
+    if (data !== true) return "stale" as const;
     return "success" as const;
   }
 
   if (forceRetry || (result.retryable && attemptsRemaining)) {
     const retryDelayMs = computeRetryDelayMs(attemptsUsed, result.retryAfterMs);
     const nextRetryAt = new Date(Date.now() + retryDelayMs).toISOString();
-    await persistMemberRetry(result, nextRetryAt, deadline);
-    return "retrying" as const;
+    const persisted = await persistMemberRetry(result, nextRetryAt, deadline);
+    return persisted ? "retrying" as const : "stale" as const;
   }
 
   if (!result.retryable && !attemptsRemaining && !canStartAnotherAttempt(deadline, config)) {
     const nextRetryAt = new Date(Date.now() + computeRetryDelayMs(attemptsUsed)).toISOString();
-    await persistMemberRetry(
+    const persisted = await persistMemberRetry(
       {
         ...result,
         retryable: true,
@@ -374,19 +405,21 @@ async function persistResult(result: ConsultationResult, deadline: number) {
       nextRetryAt,
       deadline
     );
-    return "retrying" as const;
+    return persisted ? "retrying" as const : "stale" as const;
   }
 
-  const { error } = await withInfrastructureRetry(async () => supabase.rpc("persist_member_processing_error", {
-    p_campaign_batch_member_id: result.claimed.id,
-    p_error_code: result.errorCode ?? "ERP_NETWORK_ERROR",
-    p_error_message: result.errorMessage ?? "Falha desconhecida durante a consulta.",
-    p_http_status: result.httpStatus,
-    p_duration_ms: Math.round(result.durationMs),
-    p_recalculate: false
+  const { data, error } = await withInfrastructureRetry(async () => supabase.rpc("persist_member_processing_error_v2", {
+      p_campaign_batch_member_id: result.claimed.id,
+      p_worker_id: result.claimed.processing_owner,
+      p_claim_token: result.claimed.claim_token,
+      p_error_code: result.errorCode ?? "ERP_NETWORK_ERROR",
+      p_error_message: result.errorMessage ?? "Falha desconhecida durante a consulta.",
+      p_http_status: result.httpStatus,
+      p_duration_ms: Math.round(result.durationMs),
+      p_recalculate: false
   }).abortSignal(databaseOperationSignal(deadline)));
   if (error) throw error;
-  return "error" as const;
+  return data === true ? "error" as const : "stale" as const;
 }
 
 function prepareMember(
@@ -563,6 +596,12 @@ async function processClaimedMembers(
     if (persisted.state === "success") succeeded += 1;
     if (persisted.state === "retrying") retried += 1;
     if (persisted.state === "error") failed += 1;
+    if (persisted.state === "stale") {
+      console.warn("[PROCESSING_RESULT_DISCARDED_STALE_CLAIM]", {
+        jobId: job.id,
+        memberBatchId: results[index]?.claimed.id ?? null
+      });
+    }
   }
 
   const { error: recalculateError } = await withInfrastructureRetry(async () =>
@@ -595,12 +634,14 @@ async function processClaimedMembers(
 async function claimMembers(job: ProcessingJob, workerId: string) {
   const supabase = createSupabaseAdminClient();
   const config = await getProcessingConfig();
-  const { data, error } = await withInfrastructureRetry(async () => supabase.rpc("claim_batch_members", {
+  const { data, error } = await withInfrastructureRetry(async () => supabase.rpc("claim_batch_members_v2", {
     p_batch_id: job.batch_id,
     p_worker_id: workerId,
     p_limit: config.claimBatchSize,
     p_include_errors: job.include_errors,
-    p_stale_seconds: Math.ceil(config.staleHeartbeatMs / 1000)
+    p_stale_seconds: Math.ceil(config.staleHeartbeatMs / 1000),
+    p_max_attempts: config.maxAttemptsPerItem,
+    p_max_stale_reclaims: 3
   }));
   if (error) throw error;
   return (data ?? []) as ClaimedMember[];
@@ -690,11 +731,10 @@ export async function processNextJobBlock(): Promise<ProcessingBlockResult> {
     }
 
     const remaining = await countEligible(job.batch_id, job.include_errors);
-    const processing = await countProcessing(job.batch_id);
     const finalStatus =
       jobStatus === "paused"
         ? "paused"
-        : remaining === 0 && processing === 0
+        : remaining.claimable === 0 && remaining.processing === 0 && remaining.technicalRetry === 0
           ? "completed"
           : "queued";
 
@@ -706,7 +746,9 @@ export async function processNextJobBlock(): Promise<ProcessingBlockResult> {
       success_items: job.success_items + totalSucceeded,
       error_items: job.error_items + totalFailed,
       finished_at: finalStatus === "completed" || finalStatus === "paused" ? new Date().toISOString() : null,
-      next_run_at: finalStatus === "queued" ? new Date().toISOString() : null,
+      next_run_at: finalStatus === "queued"
+        ? (remaining.claimable > 0 ? new Date().toISOString() : remaining.nextRunAt)
+        : null,
       last_heartbeat_at: new Date().toISOString(),
       last_progress_at: new Date().toISOString(),
       last_error: null
@@ -748,21 +790,12 @@ export async function processNextJobBlock(): Promise<ProcessingBlockResult> {
       ? error.message
       : databaseError.message ?? databaseError.details ?? "Falha desconhecida no worker.";
 
-    await withInfrastructureRetry(async () =>
-      supabase
-        .from("campaign_batch_members")
-        .update({
-          processing_status: "retrying",
-          processing_owner: null,
-          processing_started_at: null,
-          processing_heartbeat_at: null,
-          next_retry_at: new Date(Date.now() + computeRetryDelayMs(1)).toISOString(),
-          last_error: message.slice(0, 1000)
-        })
-        .eq("batch_id", job.batch_id)
-        .eq("processing_owner", workerId)
-        .eq("processing_status", "processing")
-    );
+    await withInfrastructureRetry(async () => supabase.rpc("release_worker_claims_v2", {
+      p_batch_id: job.batch_id,
+      p_worker_id: workerId,
+      p_reason: message.slice(0, 1000),
+      p_next_retry_at: new Date(Date.now() + computeRetryDelayMs(1)).toISOString()
+    }));
 
     const nextStatus = isTransientInfrastructureError(error) ? "queued" : "failed";
 

@@ -1,8 +1,10 @@
 import Link from "next/link";
 import { DashboardDonutCharts } from "@/components/dashboard-donut-charts";
 import { DashboardFilters } from "@/components/dashboard-filters";
+import { canAdmin, getCurrentProfile } from "@/lib/auth";
 import { getBatches, getCampaigns } from "@/lib/data";
 import { DataAccessError } from "@/lib/errors/data-access-error";
+import { getActiveGeneralSyncRun } from "@/lib/general-sync";
 import { getDashboardMetrics } from "@/lib/metrics";
 import { formatCurrencyBR } from "@/lib/money";
 
@@ -40,16 +42,20 @@ export default async function DashboardPage({
   let metrics: Awaited<ReturnType<typeof getDashboardMetrics>> | null = null;
   let campaigns: Awaited<ReturnType<typeof getCampaigns>> = [];
   let batches: Awaited<ReturnType<typeof getBatches>> = [];
+  let profile: Awaited<ReturnType<typeof getCurrentProfile>> | null = null;
+  let activeGeneralSyncRun: Awaited<ReturnType<typeof getActiveGeneralSyncRun>> | null = null;
   let errorMessage: string | null = null;
 
   try {
-    [metrics, campaigns, batches] = await Promise.all([
+    [metrics, campaigns, batches, profile, activeGeneralSyncRun] = await Promise.all([
       getDashboardMetrics({
         campaignIds: selectedCampaignIds,
         batchIds: selectedBatchIds
       }),
       getCampaigns(),
-      getBatches()
+      getBatches(),
+      getCurrentProfile(),
+      getActiveGeneralSyncRun()
     ]);
   } catch (error) {
     console.error("[DASHBOARD_METRICS_LOAD_FAILED]", {
@@ -115,6 +121,8 @@ export default async function DashboardPage({
           }))}
           selectedCampaignIds={selectedCampaignIds}
           selectedBatchIds={selectedBatchIds}
+          canGeneralSync={canAdmin(profile?.role)}
+          initialGeneralSyncRun={activeGeneralSyncRun}
         />
       </header>
 
