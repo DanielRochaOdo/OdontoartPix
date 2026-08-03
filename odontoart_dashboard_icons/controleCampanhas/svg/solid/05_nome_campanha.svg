@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512"><defs>
+      <linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#00F0C2"/><stop offset="1" stop-color="#73FFE8"/></linearGradient>
+      <filter id="glow" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="7" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+      <linearGradient id="cardbg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0B2133"/><stop offset="1" stop-color="#071525"/></linearGradient>
+    </defs><path d="M410.5 997.5Q448 1035 448.0 1088.0Q448 1141 410.5 1178.5Q373 1216 320.0 1216.0Q267 1216 229.5 1178.5Q192 1141 192.0 1088.0Q192 1035 229.5 997.5Q267 960 320.0 960.0Q373 960 410.5 997.5ZM1515 512Q1515 459 1478 422L987 -70Q948 -107 896 -107Q843 -107 806 -70L91 646Q53 683 26.5 747.0Q0 811 0 864V1280Q0 1332 38.0 1370.0Q76 1408 128 1408H544Q597 1408 661.0 1381.5Q725 1355 763 1317L1478 603Q1515 564 1515 512Z" transform="translate(256.000 256.000) scale(0.198020 -0.198020) translate(-757.500 -650.500)" fill="url(#g)" filter="url(#glow)"/></svg>

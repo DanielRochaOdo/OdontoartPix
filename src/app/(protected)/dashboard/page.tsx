@@ -7,6 +7,7 @@ import { DataAccessError } from "@/lib/errors/data-access-error";
 import { getActiveGeneralSyncRun } from "@/lib/general-sync";
 import { getDashboardMetrics } from "@/lib/metrics";
 import { formatCurrencyBR } from "@/lib/money";
+import { ManualDashboardIcon, type ManualDashboardIconName } from "@/components/manual-dashboard-icon";
 
 export const dynamic = "force-dynamic";
 
@@ -28,6 +29,31 @@ function buildMembersErrorHref(campaignIds: string[], batchIds: string[]) {
   }
 
   return `/associados?${params.toString()}`;
+}
+
+function MetricIcon({ label }: { label: string }) {
+  const names: Record<string, ManualDashboardIconName> = {
+    "Campanhas consideradas": "campaigns",
+    "Campanhas em andamento": "running",
+    "Parcelas consolidadas": "parcels",
+    Pagos: "paid",
+    "Nao pagos": "unpaid",
+    Erros: "errors",
+    "Valor total dos lotes": "totalValue",
+    "Valor pago": "paidValue",
+    Aproveitamento: "utilization",
+    "Valor pendente": "pendingValue"
+  };
+  return <ManualDashboardIcon name={names[label] ?? "pendingValue"} className="h-9 w-9" />;
+}
+
+function metricIconClass(label: string) {
+  if (label === "Campanhas em andamento") return "border-[#00B8FF]/50 bg-[#00B8FF]/10 text-[#00B8FF]";
+  if (label === "Pagos" || label === "Valor pago" || label === "Aproveitamento") {
+    return "border-[#22D58C]/50 bg-[#22D58C]/10 text-[#22D58C]";
+  }
+  if (label === "Erros" || label === "Valor pendente") return "border-[#FF5B5B]/50 bg-[#FF5B5B]/10 text-[#FF5B5B]";
+  return "border-[#00E5C3]/50 bg-[#00E5C3]/10 text-[#00E5C3]";
 }
 
 export default async function DashboardPage({
@@ -97,14 +123,17 @@ export default async function DashboardPage({
   const membersErrorHref = buildMembersErrorHref(selectedCampaignIds, selectedBatchIds);
 
   return (
-    <main className="p-6">
-      <header className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+    <main className="min-h-screen bg-[#f5f8fc] p-6 text-[#102033] dark:bg-[#020d1f] dark:text-[#edf6ff] lg:p-7">
+      <header className="flex flex-col gap-5 border-b border-[#162c48] pb-5 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
-            <h1 className="text-3xl font-semibold">Dashboard operacional</h1>
-            <p className="text-sm text-slate-600 lg:max-w-none">
+          <div className="flex items-start gap-4">
+            <span className="mt-1 h-10 w-1 rounded-full bg-[#00a98f] shadow-[0_0_16px_rgba(0,169,143,0.35)] dark:bg-[#16d8bc] dark:shadow-[0_0_16px_rgba(22,216,188,0.7)]" />
+            <div>
+            <h1 className="text-3xl font-semibold tracking-tight text-[#102033] dark:text-[#f5f9ff] lg:text-4xl">Dashboard operacional</h1>
+            <p className="mt-2 text-sm text-[#5d7184] dark:text-[#b7c9dc] lg:max-w-none">
             Indicadores consolidados de campanhas, processamento e pendencias financeiras.
             </p>
+            </div>
           </div>
         </div>
 
@@ -128,29 +157,29 @@ export default async function DashboardPage({
       {canAdmin(profile?.role) ? <div id="dashboard-processing-slot" className="mt-5 w-full" /> : null}
 
       {errorMessage ? (
-        <div className="mt-6 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+        <div className="mt-6 rounded-2xl border border-red-500/40 bg-red-950/30 p-4 text-sm text-red-200">
           {errorMessage}
         </div>
       ) : (
-        <section className="mt-6 grid gap-6 xl:grid-cols-[560px_minmax(680px,1fr)] xl:items-stretch">
-          <div className="grid max-w-[560px] content-start gap-4 sm:grid-cols-2 xl:grid-cols-2">
+        <section className="mt-6 grid gap-5 xl:grid-cols-[minmax(560px,0.9fr)_minmax(680px,1.4fr)] xl:items-stretch">
+          <div className="grid content-start gap-3 sm:grid-cols-2">
             {cards.map((card) => (
               card.label === "Erros" ? (
                 <Link
                   key={card.label}
                   href={membersErrorHref}
-                  className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-red-300 hover:bg-red-50/40"
+                  className="group flex min-h-[112px] items-center gap-4 rounded-2xl border border-[#d6e3ef] bg-white p-4 shadow-sm transition hover:border-[#FF5B5B]/70 hover:bg-[#fff7f7] dark:border-[#284665] dark:bg-[#071b34]/90 dark:shadow-[0_8px_24px_rgba(0,0,0,0.16)] dark:hover:bg-[#10223b]"
                 >
-                  <p className="text-sm text-slate-500">{card.label}</p>
-                  <div className="mt-3 text-2xl font-semibold">{card.value}</div>
+                  <span className={`inline-flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border transition group-hover:shadow-[0_0_18px_rgba(255,91,91,0.22)] ${metricIconClass(card.label)}`}><MetricIcon label={card.label} /></span>
+                  <div className="min-w-0"><p className="text-[13px] leading-4 text-[#5d7184] dark:text-[#c1d0e0]">{card.label}</p><div className="mt-1 text-2xl font-semibold leading-tight text-[#102033] dark:text-[#f4f8ff]">{card.value}</div></div>
                 </Link>
               ) : (
                 <article
                   key={card.label}
-                  className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"
+                  className="group flex min-h-[112px] items-center gap-4 rounded-2xl border border-[#d6e3ef] bg-white p-4 shadow-sm transition hover:border-[#00a98f]/70 hover:bg-[#f4fffc] dark:border-[#284665] dark:bg-[#071b34]/90 dark:shadow-[0_8px_24px_rgba(0,0,0,0.16)] dark:hover:border-[#00E5C3]/70 dark:hover:bg-[#0b2440]"
                 >
-                  <p className="text-sm text-slate-500">{card.label}</p>
-                  <div className="mt-3 text-2xl font-semibold">{card.value}</div>
+                  <span className={`inline-flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border transition group-hover:shadow-[0_0_18px_rgba(0,229,195,0.2)] ${metricIconClass(card.label)}`}><MetricIcon label={card.label} /></span>
+                  <div className="min-w-0"><p className="text-[13px] leading-4 text-[#5d7184] dark:text-[#c1d0e0]">{card.label}</p><div className={`mt-1 text-2xl font-semibold leading-tight tracking-tight ${card.label === "Valor pago" || card.label === "Aproveitamento" ? "text-[#00a98f] dark:text-[#18d8b6]" : card.label === "Valor pendente" ? "text-[#d94352] dark:text-rose-400" : "text-[#102033] dark:text-[#f4f8ff]"}`}>{card.value}</div></div>
                 </article>
               )
             ))}
