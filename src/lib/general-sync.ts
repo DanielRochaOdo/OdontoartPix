@@ -101,6 +101,16 @@ type ProcessingJobRow = {
   total_items: number;
 };
 
+type GeneralSyncActivityRow = {
+  id: string;
+  event_type: string;
+  campaign_name: string | null;
+  batch_name: string | null;
+  reason: string | null;
+  details: Record<string, unknown> | null;
+  created_at: string;
+};
+
 type ScopeResolution = {
   scopeType: GeneralSyncScopeType;
   filters: {
@@ -153,7 +163,33 @@ export type GeneralSyncRunDetail = {
     processedCount: number;
     successCount: number;
     errorCount: number;
+    processingCount: number;
+    status: GeneralSyncBatchStatus;
   } | null;
+  batches: Array<{
+    id: string;
+    campaignId: string;
+    campaignName: string | null;
+    name: string;
+    position: number;
+    recordCount: number;
+    processedCount: number;
+    successCount: number;
+    errorCount: number;
+    status: GeneralSyncBatchStatus;
+    message: string | null;
+    startedAt: string | null;
+    finishedAt: string | null;
+  }>;
+  activities: Array<{
+    id: string;
+    type: string;
+    label: string;
+    campaignName: string | null;
+    batchName: string | null;
+    createdAt: string;
+  }>;
+  lastHeartbeatAt: string | null;
   filters: {
     campaignIds: string[];
     batchIds: string[];
@@ -464,6 +500,41 @@ async function getRunBatches(runId: string) {
   return (data ?? []) as GeneralSyncRunBatchRow[];
 }
 
+async function getRunActivities(runId: string) {
+  const supabase = createSupabaseAdminClient();
+  const { data, error } = await supabase
+    .from("event_logs")
+    .select("id,event_type,campaign_name,batch_name,reason,details,created_at")
+    .eq("category", "processing")
+    .eq("details->>runId", runId)
+    .order("created_at", { ascending: false })
+    .limit(12);
+
+  if (error) {
+    throw new DataAccessError("Nao foi possivel carregar as atividades da sincronizacao.", "generalSync.getRunActivities", error);
+  }
+
+  return (data ?? []) as GeneralSyncActivityRow[];
+}
+
+function activityLabel(row: GeneralSyncActivityRow) {
+  const processedCount = Number(row.details?.processedCount ?? 0);
+  switch (row.event_type) {
+    case "dashboard_general_sync_batch_started":
+      return "Lote colocado em processamento";
+    case "dashboard_general_sync_batch_completed":
+      return `Lote concluido${processedCount ? `: ${processedCount.toLocaleString("pt-BR")} registros` : ""}`;
+    case "dashboard_general_sync_completed":
+      return "Processamento geral concluido";
+    case "dashboard_general_sync_completed_with_errors":
+      return "Processamento geral concluido com erros";
+    case "dashboard_general_sync_cancelled":
+      return "Processamento geral pausado pelo usuario";
+    default:
+      return row.reason ?? "Atividade de processamento registrada";
+  }
+}
+
 async function getRunRow(runId: string) {
   const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase
@@ -497,7 +568,7 @@ async function getActiveRunRow() {
 }
 
 async function buildRunDetail(run: GeneralSyncRunRow): Promise<GeneralSyncRunDetail> {
-  const batches = await getRunBatches(run.id);
+  const [batches, activities] = await Promise.all([getRunBatches(run.id), getRunActivities(run.id)]);
   const activeBatchId =
     batches.find((item) => item.status === "running" || item.status === "queued" || item.status === "waiting_active_job")?.id ??
     null;
@@ -525,12 +596,27 @@ async function buildRunDetail(run: GeneralSyncRunRow): Promise<GeneralSyncRunDet
         recordCount: batch.record_count,
         processedCount: processed,
         successCount: success,
-        errorCount: errors
+        errorCount: errors,
+        processingCount: 0,
+        status: batch.status
       };
     }
   }
 
   const filters = parseGeneralSyncFilters(run.filters);
+  if (enrichedActiveBatch) {
+    const supabase = createSupabaseAdminClient();
+    const { count, error } = await supabase
+      .from("campaign_batch_members")
+      .select("id", { count: "exact", head: true })
+      .eq("batch_id", enrichedActiveBatch.id)
+      .eq("processing_status", "processing")
+      .is("deleted_at", null);
+    if (error) {
+      throw new DataAccessError("Nao foi possivel carregar o progresso em processamento.", "generalSync.getProcessingCount", error);
+    }
+    enrichedActiveBatch.processingCount = count ?? 0;
+  }
   return {
     id: run.id,
     status: run.status,
@@ -545,6 +631,30 @@ async function buildRunDetail(run: GeneralSyncRunRow): Promise<GeneralSyncRunDet
     startedAt: run.started_at,
     finishedAt: run.finished_at,
     currentBatch: enrichedActiveBatch,
+    batches: batches.map((batch) => ({
+      id: batch.batch_id,
+      campaignId: batch.campaign_id,
+      campaignName: batch.campaign_name,
+      name: batch.batch_name,
+      position: batch.position,
+      recordCount: batch.record_count,
+      processedCount: batch.processed_count,
+      successCount: batch.success_count,
+      errorCount: batch.error_count,
+      status: batch.status,
+      message: batch.message,
+      startedAt: batch.started_at,
+      finishedAt: batch.finished_at
+    })),
+    activities: activities.map((activity) => ({
+      id: activity.id,
+      type: activity.event_type,
+      label: activityLabel(activity),
+      campaignName: activity.campaign_name,
+      batchName: activity.batch_name,
+      createdAt: activity.created_at
+    })),
+    lastHeartbeatAt: run.last_heartbeat_at,
     filters,
     canCancel: run.status === "queued" || run.status === "running" || run.status === "cancelling"
   };

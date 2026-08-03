@@ -1,0 +1,12 @@
+- main [ref=e2]:
+  - generic [ref=e4]:
+    - generic [ref=e5]:
+      - heading "Entrar" [level=1] [ref=e6]
+      - paragraph [ref=e7]: Usuários devem ser criados somente no Supabase Auth. O acesso depende de um perfil ativo.
+    - generic [ref=e8]:
+      - text: E-mail
+      - textbox [ref=e9]
+    - generic [ref=e10]:
+      - text: Senha
+      - textbox [ref=e11]
+    - button "Entrar" [ref=e12] [cursor=pointer]
