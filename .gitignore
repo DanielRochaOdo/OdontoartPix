@@ -2,6 +2,7 @@ node_modules
 .next
 dist
 coverage
+.codex-main-process-batches/
 .env.local
 .env
 supabase/.temp
