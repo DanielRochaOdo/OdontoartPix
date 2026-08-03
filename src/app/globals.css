@@ -58,3 +58,52 @@ textarea {
   background-color: #1e293b;
   color: #f8fafc;
 }
+
+@keyframes processing-shimmer {
+  from { transform: translateX(-120%); }
+  to { transform: translateX(220%); }
+}
+
+@keyframes processing-active-glow {
+  0%, 100% { box-shadow: 0 0 0 0 rgb(16 185 129 / 0.05); }
+  50% { box-shadow: 0 0 0 5px rgb(16 185 129 / 0.08); }
+}
+
+@keyframes processing-batch-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.99); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.processing-active-card {
+  animation: processing-active-glow 3.2s ease-in-out infinite;
+}
+
+.processing-current-batch {
+  animation: processing-batch-in 500ms ease-out both;
+}
+
+.processing-progress-track {
+  position: relative;
+}
+
+.processing-progress-fill {
+  position: relative;
+  overflow: hidden;
+}
+
+.processing-progress-fill::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 42%;
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.3), transparent);
+  animation: processing-shimmer 1.8s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .processing-active-card,
+  .processing-current-batch,
+  .processing-progress-fill::after {
+    animation: none;
+  }
+}

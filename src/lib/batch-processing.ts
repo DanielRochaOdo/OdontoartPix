@@ -231,6 +231,45 @@ function canStartAnotherAttempt(deadline: number, config: Awaited<ReturnType<typ
   return remainingBudgetMs(deadline) > minimumSafeWindow;
 }
 
+export function calculateProcessingDeadline(
+  now: number,
+  outerDeadline: number,
+  workerCycleBudgetMs: number,
+  shutdownReserveMs: number
+) {
+  return Math.min(now + workerCycleBudgetMs, outerDeadline - shutdownReserveMs);
+}
+
+export function calculateMinimumEntryBudgetMs(
+  shutdownReserveMs: number,
+  erpTimeoutMs: number,
+  persistenceReserveMs: number,
+  finalizationReserveMs: number
+) {
+  return shutdownReserveMs + erpTimeoutMs + persistenceReserveMs + finalizationReserveMs;
+}
+
+export function calculateClaimLimit(
+  remainingMs: number,
+  claimBatchSize: number,
+  concurrency: number,
+  erpTimeoutMs: number,
+  persistenceReserveMs: number,
+  finalizationReserveMs: number
+) {
+  const waveBudgetMs = erpTimeoutMs + persistenceReserveMs;
+  const waveCapacity = Math.max(0, Math.floor((remainingMs - finalizationReserveMs) / waveBudgetMs));
+  return Math.max(0, Math.min(claimBatchSize, waveCapacity * concurrency));
+}
+
+function canStartWave(
+  deadline: number,
+  config: Awaited<ReturnType<typeof getProcessingConfig>>
+) {
+  const erpBudgetMs = config.httpConnectTimeoutMs + config.httpReadTimeoutMs;
+  return remainingBudgetMs(deadline) > erpBudgetMs + config.persistenceReserveMs + config.finalizationReserveMs;
+}
+
 async function sleep(ms: number) {
   if (ms <= 0) return;
   await new Promise((resolve) => setTimeout(resolve, ms));
@@ -263,7 +302,7 @@ export function readClaimableCount(data: unknown) {
   const row = Array.isArray(rpcData) ? rpcData[0] : rpcData;
 
   if (!row) {
-    throw new Error("count_claimable_batch_members_v2 não retornou o resumo esperado.");
+    throw new Error("count_claimable_batch_members_v3 não retornou o resumo esperado.");
   }
 
   return {
@@ -292,7 +331,7 @@ async function countEligible(batchId: string, includeErrors: boolean, deadline?:
       p_max_attempts: config.maxAttemptsPerItem,
       p_max_stale_reclaims: 3
     });
-    return deadline ? operation.abortSignal(databaseOperationSignal(deadline)) : operation;
+    return deadline ? operation.abortSignal(shortOperationSignal(deadline)) : operation;
   });
   if (error) throw error;
   return readClaimableCount(data);
@@ -313,7 +352,7 @@ async function readJob(jobId: string, deadline?: number) {
   return data;
 }
 
-async function heartbeatJob(jobId: string, workerId: string, deadline?: number, options?: { markProgress?: boolean }) {
+async function heartbeatJob(jobId: string, workerId: string, deadline?: number) {
   const supabase = createSupabaseAdminClient();
   const config = await getProcessingConfig();
   const heartbeatAt = new Date().toISOString();
@@ -322,13 +361,12 @@ async function heartbeatJob(jobId: string, workerId: string, deadline?: number, 
       .from("processing_jobs")
       .update({
         last_heartbeat_at: heartbeatAt,
-        ...(options?.markProgress ? { last_progress_at: heartbeatAt } : {}),
         lease_expires_at: new Date(Date.now() + config.globalLockLeaseSeconds * 1000).toISOString(),
         updated_at: heartbeatAt
       })
       .eq("id", jobId)
       .eq("locked_by", workerId);
-    return deadline ? operation.abortSignal(databaseOperationSignal(deadline)) : operation;
+    return deadline ? operation.abortSignal(shortOperationSignal(deadline)) : operation;
   });
   if (error) throw error;
 }
@@ -345,7 +383,7 @@ async function heartbeatClaimedMembers(memberIds: string[], workerId: string, de
       .in("id", memberIds)
       .eq("processing_owner", workerId)
       .eq("processing_status", "processing");
-    return deadline ? operation.abortSignal(databaseOperationSignal(deadline)) : operation;
+    return deadline ? operation.abortSignal(shortOperationSignal(deadline)) : operation;
   });
   if (error) throw error;
 }
@@ -369,6 +407,10 @@ async function persistMemberRetry(result: ConsultationResult, nextRetryAt: strin
 
 function databaseOperationSignal(deadline: number) {
   return AbortSignal.timeout(Math.max(1, remainingBudgetMs(deadline)));
+}
+
+function shortOperationSignal(outerDeadline: number, timeoutMs = 4000) {
+  return AbortSignal.timeout(Math.max(1, Math.min(timeoutMs, remainingBudgetMs(outerDeadline))));
 }
 
 async function persistResult(result: ConsultationResult, deadline: number) {
@@ -573,7 +615,8 @@ async function processClaimedMembers(
   job: ProcessingJob,
   workerId: string,
   claimed: ClaimedMember[],
-  deadline: number,
+  processingDeadline: number,
+  outerDeadline: number,
   onWaveCompleted: (wave: { succeeded: number; failed: number; retried: number }) => Promise<void>
 ): Promise<BatchOutcome> {
   const config = await getProcessingConfig();
@@ -588,6 +631,7 @@ async function processClaimedMembers(
         .from("members")
         .select("id,external_user_code")
         .in("id", memberIds.slice(index, index + hydrationChunkSize))
+        .abortSignal(databaseOperationSignal(processingDeadline))
     );
     if (error) throw error;
     storedMembers.push(...((chunk ?? []) as StoredMember[]));
@@ -603,13 +647,14 @@ async function processClaimedMembers(
   let totalRetried = 0;
   let totalErpDurationMs = 0;
   let totalPersistenceDurationMs = 0;
+  let unstartedClaims: ClaimedMember[] = [];
 
   let heartbeatInFlight: Promise<void> | null = null;
   const refreshHeartbeat = () => {
     if (heartbeatInFlight) return heartbeatInFlight;
     heartbeatInFlight = Promise.all([
-      heartbeatJob(job.id, workerId, deadline),
-      heartbeatClaimedMembers(claimed.map((item) => item.id), workerId, deadline)
+      heartbeatJob(job.id, workerId, outerDeadline),
+      heartbeatClaimedMembers(claimed.map((item) => item.id), workerId, outerDeadline)
     ]).then(() => undefined).finally(() => {
       heartbeatInFlight = null;
     });
@@ -628,9 +673,13 @@ async function processClaimedMembers(
   }, 5_000);
 
   try {
-    await heartbeatClaimedMembers(claimed.map((item) => item.id), workerId, deadline);
+    await heartbeatClaimedMembers(claimed.map((item) => item.id), workerId, outerDeadline);
 
     for (let offset = 0; offset < prepared.length; ) {
+      if (!canStartWave(processingDeadline, config)) {
+        unstartedClaims = prepared.slice(offset).map((item) => item.claimed);
+        break;
+      }
       const waveStartedAt = performance.now();
       const currentWaveSize = offset === 0 ? firstWaveSize : waveSize;
       const wave = prepared.slice(offset, offset + currentWaveSize);
@@ -659,7 +708,7 @@ async function processClaimedMembers(
         validMembers,
         waveSize,
         async (member) => {
-          const result = await consultPreparedMember(member, deadline, config);
+          const result = await consultPreparedMember(member, processingDeadline, config);
           if (!firstResponseLogged) {
             firstResponseLogged = true;
             logProcessingPhase({
@@ -673,9 +722,6 @@ async function processClaimedMembers(
           }
           return result;
         },
-        async () => {
-          if (heartbeatInFlight) await heartbeatInFlight;
-        }
       );
       const erpDurationMs = performance.now() - erpStartedAt;
       totalErpDurationMs += erpDurationMs;
@@ -696,14 +742,11 @@ async function processClaimedMembers(
         waveSize,
         async (result) => {
           try {
-            return { state: await persistResult(result, deadline), error: null } as const;
+            return { state: await persistResult(result, processingDeadline), error: null } as const;
           } catch (error) {
             return { state: null, error } as const;
           }
         },
-        async () => {
-          if (heartbeatInFlight) await heartbeatInFlight;
-        }
       );
 
       let waveSucceeded = 0;
@@ -750,20 +793,32 @@ async function processClaimedMembers(
       });
     }
 
-    const recalculateStartedAt = performance.now();
-    const { error: recalculateError } = await withInfrastructureRetry(async () =>
-      supabase
-        .rpc("recalculate_batch_totals", { p_batch_id: job.batch_id })
-        .abortSignal(databaseOperationSignal(deadline))
-    );
-    if (recalculateError) throw recalculateError;
-    logProcessingPhase({
-      phase: "block_recalculated",
-      job,
-      workerId,
-      startedAt: recalculateStartedAt,
-      details: { recalculateDurationMs: Math.round(performance.now() - recalculateStartedAt) }
-    });
+    if (unstartedClaims.length > 0) {
+      await withInfrastructureRetry(async () => supabase.rpc("release_unstarted_worker_claims_v1", {
+        p_batch_id: job.batch_id,
+        p_worker_id: workerId,
+        p_claims: unstartedClaims.map((item) => ({ id: item.id, claim_token: item.claim_token })),
+        p_reason: "Claims nao iniciados por falta de orcamento no ciclo do worker.",
+        p_next_retry_at: new Date(Date.now() + computeRetryDelayMs(1)).toISOString()
+      }).abortSignal(shortOperationSignal(outerDeadline)));
+    }
+
+    if (allResults.length > 0) {
+      const recalculateStartedAt = performance.now();
+      const { error: recalculateError } = await withInfrastructureRetry(async () =>
+        supabase
+          .rpc("recalculate_batch_totals", { p_batch_id: job.batch_id })
+          .abortSignal(shortOperationSignal(outerDeadline, Math.min(5000, Math.max(1, remainingBudgetMs(outerDeadline)))))
+      );
+      if (recalculateError) throw recalculateError;
+      logProcessingPhase({
+        phase: "block_recalculated",
+        job,
+        workerId,
+        startedAt: recalculateStartedAt,
+        details: { recalculateDurationMs: Math.round(performance.now() - recalculateStartedAt) }
+      });
+    }
     logProcessingPhase({
       phase: "block_completed",
       job,
@@ -799,7 +854,7 @@ async function processClaimedMembers(
     heartbeatInFlight = null;
     if (finalHeartbeat) {
       try {
-        await finalHeartbeat;
+        await Promise.race([finalHeartbeat, sleep(4000)]);
       } catch {
         // The enclosing processing error handles failed heartbeat writes.
       }
@@ -807,14 +862,14 @@ async function processClaimedMembers(
   }
 }
 
-async function claimMembers(job: ProcessingJob, workerId: string, deadline: number) {
+async function claimMembers(job: ProcessingJob, workerId: string, limit: number, deadline: number) {
   const supabase = createSupabaseAdminClient();
   const config = await getProcessingConfig();
   const { data, error } = await withInfrastructureRetry(async () => {
     const operation = supabase.rpc("claim_batch_members_v2", {
       p_batch_id: job.batch_id,
       p_worker_id: workerId,
-      p_limit: config.claimBatchSize,
+      p_limit: limit,
       p_include_errors: job.include_errors,
       p_stale_seconds: Math.ceil(config.staleHeartbeatMs / 1000),
       p_max_attempts: config.maxAttemptsPerItem,
@@ -826,7 +881,7 @@ async function claimMembers(job: ProcessingJob, workerId: string, deadline: numb
   return (data ?? []) as ClaimedMember[];
 }
 
-async function releaseJob(jobId: string, workerId: string, values: Record<string, unknown>) {
+async function releaseJob(jobId: string, workerId: string, values: Record<string, unknown>, outerDeadline: number) {
   const supabase = createSupabaseAdminClient();
   const { error } = await withInfrastructureRetry(async () =>
     supabase
@@ -839,21 +894,46 @@ async function releaseJob(jobId: string, workerId: string, values: Record<string
       })
       .eq("id", jobId)
       .eq("locked_by", workerId)
+      .abortSignal(shortOperationSignal(outerDeadline))
   );
   if (error) throw error;
 }
 
-export async function processNextJobBlock(): Promise<ProcessingBlockResult> {
+export async function processNextJobBlock(outerDeadline?: number): Promise<ProcessingBlockResult> {
   const supabase = createSupabaseAdminClient();
   const workerId = randomUUID();
   const config = await getProcessingConfig();
   const startedAt = Date.now();
-  const deadline = startedAt + config.workerCycleBudgetMs;
+  const executorDeadline = outerDeadline ?? startedAt + config.workerCycleBudgetMs;
+  const processingDeadline = calculateProcessingDeadline(
+    startedAt,
+    executorDeadline,
+    config.workerCycleBudgetMs,
+    config.shutdownReserveMs
+  );
+
+  const minimumEntryBudgetMs = calculateMinimumEntryBudgetMs(
+    config.shutdownReserveMs,
+    config.httpConnectTimeoutMs + config.httpReadTimeoutMs,
+    config.persistenceReserveMs,
+    config.finalizationReserveMs
+  );
+  if (remainingBudgetMs(executorDeadline) <= minimumEntryBudgetMs) {
+    return {
+      workerId,
+      jobId: null,
+      claimed: 0,
+      succeeded: 0,
+      failed: 0,
+      retried: 0,
+      status: "queued"
+    };
+  }
 
   const { data: jobData, error: claimJobError } = await withInfrastructureRetry(async () => supabase.rpc("claim_next_processing_job", {
     p_worker_id: workerId,
     p_lease_seconds: config.globalLockLeaseSeconds
-  }));
+  }).abortSignal(databaseOperationSignal(processingDeadline)));
   if (claimJobError) throw claimJobError;
 
   const job = ((jobData ?? []) as ProcessingJob[])[0];
@@ -885,8 +965,8 @@ export async function processNextJobBlock(): Promise<ProcessingBlockResult> {
   });
 
   try {
-    while (canStartAnotherAttempt(deadline, config)) {
-      const refreshedJob = await readJob(job.id, deadline);
+  while (canStartAnotherAttempt(processingDeadline, config)) {
+      const refreshedJob = await readJob(job.id, processingDeadline);
       if (!refreshedJob) {
         jobStatus = "paused";
         break;
@@ -896,9 +976,18 @@ export async function processNextJobBlock(): Promise<ProcessingBlockResult> {
         break;
       }
 
-      await heartbeatJob(job.id, workerId, deadline);
+      await heartbeatJob(job.id, workerId, executorDeadline);
+      const claimLimit = Math.min(config.perWorkerConcurrency, calculateClaimLimit(
+        remainingBudgetMs(processingDeadline),
+        config.claimBatchSize,
+        Math.min(config.perWorkerConcurrency, 15),
+        config.httpConnectTimeoutMs + config.httpReadTimeoutMs,
+        config.persistenceReserveMs,
+        config.finalizationReserveMs
+      ));
+      if (claimLimit <= 0) break;
       const claimStartedAt = performance.now();
-      const claimed = await claimMembers(job, workerId, deadline);
+      const claimed = await claimMembers(job, workerId, claimLimit, processingDeadline);
       logProcessingPhase({
         phase: "records_claimed",
         job,
@@ -913,7 +1002,8 @@ export async function processNextJobBlock(): Promise<ProcessingBlockResult> {
         job,
         workerId,
         claimed,
-        deadline,
+        processingDeadline,
+        executorDeadline,
         async (wave) => {
           totalSucceeded += wave.succeeded;
           totalFailed += wave.failed;
@@ -921,22 +1011,22 @@ export async function processNextJobBlock(): Promise<ProcessingBlockResult> {
           await updateJobProgress(job, workerId, {
             succeeded: totalSucceeded,
             failed: totalFailed
-          }, deadline);
+          }, processingDeadline);
         }
       );
       allResults = allResults.concat(batchOutcome.results);
 
-      const postBatchJob = await readJob(job.id, deadline);
+      const postBatchJob = await readJob(job.id, processingDeadline);
       if (!postBatchJob || postBatchJob.status === "paused" || postBatchJob.stop_requested_at) {
         jobStatus = "paused";
         break;
       }
 
-      if (!canStartAnotherAttempt(deadline, config)) break;
+      if (!canStartAnotherAttempt(processingDeadline, config)) break;
       await sleep(config.productiveDelayMs);
     }
 
-    const remaining = await countEligible(job.batch_id, job.include_errors, deadline);
+    const remaining = await countEligible(job.batch_id, job.include_errors, executorDeadline);
     const finalStatus =
       jobStatus === "paused"
         ? "paused"
@@ -956,9 +1046,8 @@ export async function processNextJobBlock(): Promise<ProcessingBlockResult> {
         ? (remaining.claimable > 0 ? new Date().toISOString() : remaining.nextRunAt)
         : null,
       last_heartbeat_at: new Date().toISOString(),
-      last_progress_at: new Date().toISOString(),
       last_error: null
-    });
+    }, executorDeadline);
 
     console.info("[PROCESSING_JOB_BLOCK_COMPLETED]", {
       workerId,
@@ -1001,7 +1090,7 @@ export async function processNextJobBlock(): Promise<ProcessingBlockResult> {
       p_worker_id: workerId,
       p_reason: message.slice(0, 1000),
       p_next_retry_at: new Date(Date.now() + computeRetryDelayMs(1)).toISOString()
-    }));
+    }).abortSignal(shortOperationSignal(executorDeadline)));
 
     const nextStatus = isTransientInfrastructureError(error) ? "queued" : "failed";
 
@@ -1010,7 +1099,7 @@ export async function processNextJobBlock(): Promise<ProcessingBlockResult> {
       last_error: message.slice(0, 1000),
       finished_at: nextStatus === "failed" ? new Date().toISOString() : null,
       next_run_at: nextStatus === "queued" ? new Date().toISOString() : null
-    });
+    }, executorDeadline);
 
     console.error("[CRON_JOB_FAILED]", {
       workerId,

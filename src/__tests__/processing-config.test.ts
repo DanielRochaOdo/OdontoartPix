@@ -14,6 +14,9 @@ describe("processing-config", () => {
     delete process.env.PROCESSING_MAX_ATTEMPTS;
     delete process.env.PROCESSING_STALE_HEARTBEAT_MS;
     delete process.env.PROCESSING_WORKER_CYCLE_BUDGET_MS;
+    delete process.env.PROCESSING_SHUTDOWN_RESERVE_MS;
+    delete process.env.PROCESSING_PERSISTENCE_RESERVE_MS;
+    delete process.env.PROCESSING_FINALIZATION_RESERVE_MS;
     delete process.env.PROCESSING_LEASE_SECONDS;
     delete process.env.PROCESSING_PRODUCTIVE_DELAY_MS;
     delete process.env.MENSALIDADES_API_PAGE_SIZE;
@@ -32,6 +35,9 @@ describe("processing-config", () => {
     expect(config.maxAttemptsPerItem).toBe(3);
     expect(config.staleHeartbeatMs).toBe(120000);
     expect(config.workerCycleBudgetMs).toBe(55000);
+    expect(config.shutdownReserveMs).toBe(9000);
+    expect(config.persistenceReserveMs).toBe(5000);
+    expect(config.finalizationReserveMs).toBe(8000);
     expect(config.globalLockLeaseSeconds).toBe(900);
     expect(config.productiveDelayMs).toBe(10);
     expect(config.maxPageSize).toBe(200);

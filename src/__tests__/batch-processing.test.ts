@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   computeRetryDelayMs,
+  calculateClaimLimit,
+  calculateMinimumEntryBudgetMs,
+  calculateProcessingDeadline,
   mapWithConcurrency,
   readClaimableCount,
   shouldRetryConsultationInBatch
@@ -22,6 +25,21 @@ describe("batch-processing", () => {
 
     expect(peak).toBeLessThanOrEqual(2);
     expect(result).toEqual([0, 2, 4, 6, 8, 10]);
+  });
+
+  it("limita o deadline interno ao deadline externo com margem de encerramento", () => {
+    expect(calculateProcessingDeadline(0, 45000, 55000, 9000)).toBe(36000);
+    expect(calculateProcessingDeadline(0, 120000, 55000, 9000)).toBe(55000);
+  });
+
+  it("calcula o orçamento mínimo de entrada antes de reivindicar um job", () => {
+    expect(calculateMinimumEntryBudgetMs(9000, 10000, 5000, 8000)).toBe(32000);
+  });
+
+  it("nao reivindica registros que nao cabem nas ondas restantes", () => {
+    expect(calculateClaimLimit(23000, 60, 15, 10000, 5000, 8000)).toBe(15);
+    expect(calculateClaimLimit(50000, 60, 15, 10000, 5000, 8000)).toBe(30);
+    expect(calculateClaimLimit(9000, 60, 15, 10000, 5000, 8000)).toBe(0);
   });
 
   it("executa o callback de conclusao para cada item", async () => {
