@@ -59,6 +59,35 @@ function formatDate(value: string | null | undefined) {
   return new Date(value).toLocaleString("pt-BR");
 }
 
+function formatElapsed(value: string | null | undefined) {
+  if (!value) return "00min 00s";
+  const seconds = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 1000));
+  const minutes = Math.floor(seconds / 60);
+  return `${String(minutes).padStart(2, "0")}min ${String(seconds % 60).padStart(2, "0")}s`;
+}
+
+function formatRelative(value: string) {
+  const seconds = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 1000));
+  if (seconds < 5) return "agora";
+  if (seconds < 60) return `ha ${seconds}s`;
+  return `ha ${Math.floor(seconds / 60)}min`;
+}
+
+const BATCH_STATUS_LABELS: Record<string, string> = {
+  pending: "Na fila",
+  queued: "Na fila",
+  waiting_active_job: "Aguardando execução atual",
+  running: "Processando",
+  completed: "Concluído",
+  completed_with_errors: "Concluído com erros",
+  failed: "Com falha",
+  cancelled: "Cancelado"
+};
+
+function percentage(processed: number, total: number) {
+  return total <= 0 ? 0 : Math.min(100, Math.max(0, (processed / total) * 100));
+}
+
 function progressPercentage(run: GeneralSyncRunDetail) {
   if (run.recordCount <= 0) return 0;
   return Math.min(100, Math.max(0, (run.processedCount / run.recordCount) * 100));
@@ -83,7 +112,10 @@ export function GeneralSyncButton({
   selectedBatchIds: string[];
   initialRun: GeneralSyncRunDetail | null;
 }) {
-  const [open, setOpen] = useState(Boolean(initialRun));
+  // A execução ativa deve ser acompanhada no card persistente do dashboard.
+  // O modal só abre por ação explícita do usuário, evitando cobrir a tela
+  // assim que o dashboard é carregado ou atualizado.
+  const [open, setOpen] = useState(false);
   const [preview, setPreview] = useState<GeneralSyncPreview | null>(null);
   const [run, setRun] = useState<GeneralSyncRunDetail | null>(initialRun);
   const [loadingPreview, setLoadingPreview] = useState(false);
@@ -132,7 +164,7 @@ export function GeneralSyncButton({
     void refresh();
     const timer = window.setInterval(() => {
       void refresh();
-    }, 4000);
+    }, 2500);
 
     return () => {
       active = false;
@@ -242,6 +274,15 @@ export function GeneralSyncButton({
   const runProgress = run ? progressPercentage(run) : 0;
   const currentBatchProgress = batchProgressPercentage(run);
   const baseProgress = baseProgressPercentage(run);
+  const currentBatch = run?.currentBatch ?? null;
+  const lastUpdate = run?.lastHeartbeatAt ?? run?.startedAt;
+  const completedCampaignCount = run
+    ? new Set(
+        run.batches
+          .filter((batch) => batch.status === "completed" || batch.status === "completed_with_errors")
+          .map((batch) => batch.campaignId)
+      ).size
+    : 0;
 
   return (
     <>
@@ -260,8 +301,130 @@ export function GeneralSyncButton({
             : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
         } disabled:opacity-60`}
       >
-        <SyncIcon spinning={loadingPreview || starting || Boolean(activeRun)} />
+        <SyncIcon spinning={loadingPreview || starting} />
       </button>
+
+      {activeRun && run ? (
+        <section className="mt-5 w-full rounded-2xl border border-emerald-200 bg-white p-5 shadow-sm ring-1 ring-emerald-100 dark:border-emerald-900 dark:bg-slate-950 dark:ring-emerald-950">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.16em] text-emerald-700 dark:text-emerald-400">
+                <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-emerald-500" aria-hidden="true" />
+                Processamento geral em andamento
+              </div>
+              <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
+                {run.scopeType === "all"
+                  ? "Processando toda a base"
+                  : `Processando ${run.campaignCount} campanhas e ${run.batchCount} lotes selecionados`}
+              </p>
+            </div>
+            <div className="text-left text-sm text-slate-500 lg:text-right dark:text-slate-400">
+              <p>Tempo decorrido: <strong className="text-slate-800 dark:text-slate-100">{formatElapsed(run.startedAt)}</strong></p>
+              <p className="mt-1">Última atualização: {lastUpdate ? formatRelative(lastUpdate) : "aguardando"}</p>
+              <button
+                type="button"
+                onClick={() => void cancel()}
+                disabled={cancelling}
+                className="mt-3 rounded-lg bg-red-700 px-3 py-2 text-xs font-semibold text-white transition hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {cancelling ? "Interrompendo..." : "Interromper sincronização"}
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-5 grid gap-3 sm:grid-cols-3">
+            <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-900">
+              <p className="text-xs uppercase tracking-wide text-slate-500">Campanhas</p>
+              <p className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-50">{formatInteger(completedCampaignCount)} / {formatInteger(run.campaignCount)}</p>
+              <p className="text-xs text-slate-500">campanhas concluídas</p>
+            </div>
+            <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-900">
+              <p className="text-xs uppercase tracking-wide text-slate-500">Lotes</p>
+              <p className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-50">{formatInteger(run.completedBatchCount)} / {formatInteger(run.batchCount)}</p>
+              <p className="text-xs text-slate-500">{baseProgress.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}% concluídos</p>
+            </div>
+            <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-900">
+              <p className="text-xs uppercase tracking-wide text-slate-500">Registros</p>
+              <p className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-50">{formatInteger(run.processedCount)} / {formatInteger(run.recordCount)}</p>
+              <p className="text-xs text-slate-500">{runProgress.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}% processados</p>
+            </div>
+          </div>
+
+          <div className="mt-4 h-3 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800" role="progressbar" aria-label="Progresso global" aria-valuemin={0} aria-valuemax={100} aria-valuenow={runProgress}>
+            <div className="h-full rounded-full bg-emerald-600 transition-[width] duration-700 ease-out" style={{ width: `${runProgress}%` }} />
+          </div>
+
+          {currentBatch ? (
+            <div className="mt-5 rounded-2xl border border-sky-200 bg-sky-50/70 p-4 shadow-sm dark:border-sky-900 dark:bg-sky-950/30">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-sky-700 dark:text-sky-300">
+                    <span className="h-2 w-2 animate-pulse rounded-full bg-sky-500" aria-hidden="true" />
+                    Processando agora
+                  </p>
+                  <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">Lote {currentBatch.position} de {run.batchCount}</p>
+                  <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-50">{currentBatch.name}</h3>
+                </div>
+                <span className="text-lg font-semibold text-sky-700 dark:text-sky-300">{currentBatchProgress.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%</span>
+              </div>
+              <div className="mt-3 h-2.5 overflow-hidden rounded-full bg-white/80 dark:bg-slate-900/80">
+                <div className="h-full rounded-full bg-sky-500 transition-[width] duration-700 ease-out" style={{ width: `${currentBatchProgress}%` }} />
+              </div>
+              <div className="mt-3 grid gap-2 text-sm text-slate-600 sm:grid-cols-4 dark:text-slate-300">
+                <span><strong>{formatInteger(currentBatch.processedCount)}</strong> / {formatInteger(currentBatch.recordCount)}</span>
+                <span>Sucessos: <strong>{formatInteger(currentBatch.successCount)}</strong></span>
+                <span>Erros: <strong>{formatInteger(currentBatch.errorCount)}</strong></span>
+                <span>Em processamento: <strong>{formatInteger(currentBatch.processingCount)}</strong></span>
+              </div>
+              {currentBatch.processedCount === 0 && currentBatch.processingCount > 0 ? (
+                <p className="mt-3 text-xs font-medium text-sky-700 dark:text-sky-300">
+                  Preparando primeira etapa — {formatInteger(currentBatch.processingCount)} registros em andamento
+                </p>
+              ) : null}
+            </div>
+          ) : (
+            <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+              Nenhum lote está sendo processado agora. A sincronização está aguardando a próxima execução do orquestrador.
+            </div>
+          )}
+
+          <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1.3fr)_minmax(260px,0.7fr)]">
+            <div>
+              <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-50">Fila de lotes</h3>
+              <div className="mt-2 max-h-64 space-y-2 overflow-y-auto pr-1">
+                {run.batches.map((batch) => {
+                  const batchPercent = percentage(batch.processedCount, batch.recordCount);
+                  const isCurrent = currentBatch?.id === batch.id;
+                  return (
+                    <div key={batch.id} className={`rounded-xl border p-3 transition-colors ${isCurrent ? "border-sky-300 bg-sky-50/60 dark:border-sky-800 dark:bg-sky-950/30" : "border-slate-200 dark:border-slate-800"}`}>
+                      <div className="flex items-center gap-3">
+                        <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${batch.status === "running" ? "animate-pulse bg-sky-500" : batch.status === "completed" || batch.status === "completed_with_errors" ? "bg-emerald-500" : "bg-slate-300"}`} aria-hidden="true" />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-medium text-slate-900 dark:text-slate-50">{batch.position}. {batch.name}</p>
+                          <p className="truncate text-xs text-slate-500">{batch.campaignName ?? "Campanha"} · {BATCH_STATUS_LABELS[batch.status] ?? batch.status}</p>
+                        </div>
+                        <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">{batch.recordCount ? `${batchPercent.toLocaleString("pt-BR", { maximumFractionDigits: 0 })}%` : "—"}</span>
+                      </div>
+                      {batch.status === "running" || batch.processedCount > 0 ? <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800"><div className="h-full rounded-full bg-sky-500 transition-[width] duration-700" style={{ width: `${batchPercent}%` }} /></div> : null}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-50">Atividades recentes</h3>
+              <div className="mt-2 space-y-3">
+                {run.activities.length === 0 ? <p className="text-sm text-slate-500">Aguardando a primeira atividade.</p> : run.activities.slice(0, 5).map((activity) => (
+                  <div key={activity.id} className="border-l-2 border-emerald-200 pl-3 dark:border-emerald-900">
+                    <p className="text-xs text-slate-500">{formatDate(activity.createdAt)} · {formatRelative(activity.createdAt)}</p>
+                    <p className="text-sm text-slate-700 dark:text-slate-200">{activity.label}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
+      ) : null}
 
       {open ? (
         <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/70 p-4">
