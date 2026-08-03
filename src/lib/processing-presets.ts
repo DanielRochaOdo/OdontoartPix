@@ -12,6 +12,9 @@ export const PROCESSING_PRESETS: Record<ProcessingPresetKey, ProcessingConfig> =
     maxAttemptsPerItem: 2,
     staleHeartbeatMs: 180000,
     workerCycleBudgetMs: 90000,
+    shutdownReserveMs: 9000,
+    persistenceReserveMs: 5000,
+    finalizationReserveMs: 8000,
     globalLockLeaseSeconds: 900,
     productiveDelayMs: 10,
     maxPageSize: 200,
@@ -26,6 +29,9 @@ export const PROCESSING_PRESETS: Record<ProcessingPresetKey, ProcessingConfig> =
     maxAttemptsPerItem: 3,
     staleHeartbeatMs: 120000,
     workerCycleBudgetMs: 55000,
+    shutdownReserveMs: 9000,
+    persistenceReserveMs: 5000,
+    finalizationReserveMs: 8000,
     globalLockLeaseSeconds: 900,
     productiveDelayMs: 10,
     maxPageSize: 200,
@@ -40,6 +46,9 @@ export const PROCESSING_PRESETS: Record<ProcessingPresetKey, ProcessingConfig> =
     maxAttemptsPerItem: 3,
     staleHeartbeatMs: 180000,
     workerCycleBudgetMs: 90000,
+    shutdownReserveMs: 9000,
+    persistenceReserveMs: 5000,
+    finalizationReserveMs: 8000,
     globalLockLeaseSeconds: 900,
     productiveDelayMs: 10,
     maxPageSize: 200,
@@ -59,6 +68,9 @@ export function matchProcessingPreset(config: ProcessingConfig): ProcessingPrese
       preset.maxAttemptsPerItem === config.maxAttemptsPerItem &&
       preset.staleHeartbeatMs === config.staleHeartbeatMs &&
       preset.workerCycleBudgetMs === config.workerCycleBudgetMs &&
+      preset.shutdownReserveMs === config.shutdownReserveMs &&
+      preset.persistenceReserveMs === config.persistenceReserveMs &&
+      preset.finalizationReserveMs === config.finalizationReserveMs &&
       preset.globalLockLeaseSeconds === config.globalLockLeaseSeconds &&
       preset.productiveDelayMs === config.productiveDelayMs &&
       preset.maxPageSize === config.maxPageSize &&

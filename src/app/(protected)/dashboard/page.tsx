@@ -100,13 +100,12 @@ export default async function DashboardPage({
     <main className="p-6">
       <header className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <p className="text-sm font-medium uppercase tracking-[0.2em] text-emerald-700">
-            Visao geral
-          </p>
-          <h1 className="mt-2 text-3xl font-semibold">Dashboard operacional</h1>
-          <p className="mt-2 max-w-2xl text-sm text-slate-600">
+          <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+            <h1 className="text-3xl font-semibold">Dashboard operacional</h1>
+            <p className="text-sm text-slate-600 lg:max-w-none">
             Indicadores consolidados de campanhas, processamento e pendencias financeiras.
-          </p>
+            </p>
+          </div>
         </div>
 
         <DashboardFilters
@@ -125,6 +124,8 @@ export default async function DashboardPage({
           initialGeneralSyncRun={activeGeneralSyncRun}
         />
       </header>
+
+      {canAdmin(profile?.role) ? <div id="dashboard-processing-slot" className="mt-5 w-full" /> : null}
 
       {errorMessage ? (
         <div className="mt-6 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">

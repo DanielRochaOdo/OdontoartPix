@@ -9,6 +9,9 @@ export type ProcessingConfig = {
   maxAttemptsPerItem: number;
   staleHeartbeatMs: number;
   workerCycleBudgetMs: number;
+  shutdownReserveMs: number;
+  persistenceReserveMs: number;
+  finalizationReserveMs: number;
   globalLockLeaseSeconds: number;
   productiveDelayMs: number;
   maxPageSize: number;
@@ -24,6 +27,9 @@ type ProcessingSettingsRow = {
   processing_max_attempts: number | null;
   processing_stale_heartbeat_ms: number | null;
   processing_worker_cycle_budget_ms: number | null;
+  processing_shutdown_reserve_ms: number | null;
+  processing_persistence_reserve_ms: number | null;
+  processing_finalization_reserve_ms: number | null;
   processing_lease_seconds: number | null;
   processing_productive_delay_ms: number | null;
   mensalidades_api_page_size: number | null;
@@ -48,6 +54,9 @@ function buildProcessingConfigFromEnvironment(): ProcessingConfig {
     maxAttemptsPerItem: readInteger("PROCESSING_MAX_ATTEMPTS", 3, 1, 10),
     staleHeartbeatMs: readInteger("PROCESSING_STALE_HEARTBEAT_MS", 120000, 1000, 900000),
     workerCycleBudgetMs: readInteger("PROCESSING_WORKER_CYCLE_BUDGET_MS", 55000, 5000, 120000),
+    shutdownReserveMs: readInteger("PROCESSING_SHUTDOWN_RESERVE_MS", 9000, 5000, 20000),
+    persistenceReserveMs: readInteger("PROCESSING_PERSISTENCE_RESERVE_MS", 5000, 1000, 30000),
+    finalizationReserveMs: readInteger("PROCESSING_FINALIZATION_RESERVE_MS", 8000, 3000, 30000),
     globalLockLeaseSeconds: readInteger("PROCESSING_LEASE_SECONDS", 900, 30, 3600),
     productiveDelayMs: readInteger("PROCESSING_PRODUCTIVE_DELAY_MS", 10, 0, 10000),
     maxPageSize: readInteger("MENSALIDADES_API_PAGE_SIZE", 200, 1, 200),
@@ -74,6 +83,12 @@ function mergeStoredSettings(
       row.processing_stale_heartbeat_ms ?? baseConfig.staleHeartbeatMs,
     workerCycleBudgetMs:
       row.processing_worker_cycle_budget_ms ?? baseConfig.workerCycleBudgetMs,
+    shutdownReserveMs:
+      row.processing_shutdown_reserve_ms ?? baseConfig.shutdownReserveMs,
+    persistenceReserveMs:
+      row.processing_persistence_reserve_ms ?? baseConfig.persistenceReserveMs,
+    finalizationReserveMs:
+      row.processing_finalization_reserve_ms ?? baseConfig.finalizationReserveMs,
     globalLockLeaseSeconds:
       row.processing_lease_seconds ?? baseConfig.globalLockLeaseSeconds,
     productiveDelayMs:
@@ -92,7 +107,7 @@ async function loadProcessingConfig(): Promise<ProcessingConfig> {
     const { data, error } = await supabase
       .from("processing_settings")
       .select(
-        "worker_count,processing_block_size,processing_concurrency,mensalidades_api_connect_timeout_ms,mensalidades_api_read_timeout_ms,processing_max_attempts,processing_stale_heartbeat_ms,processing_worker_cycle_budget_ms,processing_lease_seconds,processing_productive_delay_ms,mensalidades_api_page_size,mensalidades_api_max_pages"
+        "worker_count,processing_block_size,processing_concurrency,mensalidades_api_connect_timeout_ms,mensalidades_api_read_timeout_ms,processing_max_attempts,processing_stale_heartbeat_ms,processing_worker_cycle_budget_ms,processing_shutdown_reserve_ms,processing_persistence_reserve_ms,processing_finalization_reserve_ms,processing_lease_seconds,processing_productive_delay_ms,mensalidades_api_page_size,mensalidades_api_max_pages"
       )
       .eq("settings_key", "default")
       .maybeSingle();
