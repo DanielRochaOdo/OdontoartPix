@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   analyzeMonthlyResponse,
+  analyzeTargetInstallment,
   MonthlyResponseError
 } from "@/lib/analysis";
 
@@ -166,5 +167,93 @@ import {
     expect(() =>
       analyzeMonthlyResponse({ parcelas: [{ cod_parcela: "10", ValorFinal: "abc" }] })
     ).toThrow("ValorFinal inválido");
+  });
+});
+
+describe("analise da fatura alvo e completude da paginacao", () => {
+  it("analisa um conjunto de paginas sem depender do transporte HTTP", () => {
+    const result = analyzeTargetInstallment({
+      targetInstallmentId: "55",
+      invoices: [{ id: 55, finalAmountCents: 1000 }, { id: 99, finalAmountCents: 2000 }],
+      paginationComplete: true
+    });
+
+    expect(result.paymentStatus).toBe("unpaid");
+  });
+
+  it("ignora outras faturas quando o alvo nao esta na resposta completa", () => {
+    const result = analyzeMonthlyResponse({
+      codigo: 1,
+      dados: {
+        CurrentPage: 1,
+        TotalPages: 1,
+        TotalCount: 1,
+        PageSize: 100,
+        Data: [{ Id: 999, ValorFinal: 87.42 }]
+      }
+    }, "55");
+
+    expect(result.paymentStatus).toBe("paid");
+    expect(result.paymentStatusSource).toBe("inferred_from_open_invoices_absence");
+  });
+
+  it("nao conclui pagamento quando ainda existem paginas nao consultadas", () => {
+    expect(() => analyzeMonthlyResponse({
+      codigo: 1,
+      dados: {
+        CurrentPage: 1,
+        TotalPages: 2,
+        TotalCount: 2,
+        PageSize: 1,
+        Data: [{ Id: 999, ValorFinal: 87.42 }]
+      }
+    }, "55")).toThrow("consulta paginada");
+  });
+
+  it("normaliza o identificador alvo entre numero e texto", () => {
+    const result = analyzeMonthlyResponse({
+      codigo: 1,
+      dados: {
+        CurrentPage: 1,
+        TotalPages: 1,
+        TotalCount: 1,
+        PageSize: 1,
+        Data: [{ Id: 55, ValorFinal: 10 }]
+      }
+    }, "55");
+
+    expect(result.paymentStatus).toBe("unpaid");
+  });
+
+  it("rejeita codigo funcional diferente de 1 mesmo com Data vazia", () => {
+    expect(() => analyzeMonthlyResponse({
+      codigo: 0,
+      dados: { CurrentPage: 1, TotalPages: 0, TotalCount: 0, PageSize: 0, Data: [] },
+      erros: null
+    }, "55")).toThrow("erro funcional");
+  });
+
+  it("rejeita erros funcionais preenchidos mesmo com Data vazia", () => {
+    expect(() => analyzeMonthlyResponse({
+      codigo: 1,
+      dados: { CurrentPage: 1, TotalPages: 0, TotalCount: 0, PageSize: 0, Data: [] },
+      erros: [{ codigo: "ERP_ERROR" }]
+    }, "55")).toThrow("erro funcional");
+  });
+
+  it("rejeita metadados de pagina incoerentes", () => {
+    expect(() => analyzeMonthlyResponse({
+      codigo: 1,
+      dados: { CurrentPage: 2, TotalPages: 1, TotalCount: 0, PageSize: 0, Data: [] },
+      erros: null
+    }, "55")).toThrow("metadados");
+  });
+
+  it("rejeita metadados ausentes", () => {
+    expect(() => analyzeMonthlyResponse({
+      codigo: 1,
+      dados: { Data: [] },
+      erros: null
+    }, "55")).toThrow(MonthlyResponseError);
   });
 });

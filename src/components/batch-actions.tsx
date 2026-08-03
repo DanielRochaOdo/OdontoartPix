@@ -28,6 +28,9 @@ export function BatchActions({ batchId }: { batchId: string }) {
       <button disabled={busy !== null} onClick={() => run("reprocessar-erros")} className="rounded-md border px-3 py-1.5 text-sm">
         Reprocessar erros
       </button>
+      <button disabled={busy !== null} onClick={() => run("reprocessar-bloqueados")} className="rounded-md border px-3 py-1.5 text-sm">
+        Reprocessar bloqueados
+      </button>
     </>
   );
 }

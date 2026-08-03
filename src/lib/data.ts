@@ -150,19 +150,29 @@ export async function getMemberPreviewByBatch(batchId: string, limit = 20) {
   return data ?? [];
 }
 
-export async function getMembers() {
+export async function getMembers(filters: {
+  campaignIds?: string[];
+  batchIds?: string[];
+  status?: string;
+} = {}) {
   const supabase = createSupabaseAdminClient();
   const pageSize = 1000;
   const rows: MembersListItem[] = [];
 
   for (let from = 0; from < 5000; from += pageSize) {
     const to = from + pageSize - 1;
-    const { data, error } = await supabase
+    let query = supabase
       .from("campaign_batch_members")
       .select(
         "id,campaign_id,batch_id,target_installment_id,processing_status,payment_status,total_pending_amount_cents,installments_count,last_checked_at,processing_attempts,last_error,member:members(id,cpf,cpf_hash,name,external_user_code),batch:campaign_batches(id,name),campaign:campaigns(id,name)"
       )
-      .is("deleted_at", null)
+      .is("deleted_at", null);
+
+    if (filters.campaignIds?.length) query = query.in("campaign_id", filters.campaignIds);
+    if (filters.batchIds?.length) query = query.in("batch_id", filters.batchIds);
+    if (filters.status && filters.status !== "all") query = query.eq("processing_status", filters.status);
+
+    const { data, error } = await query
       .order("created_at", { ascending: false })
       .range(from, to);
 

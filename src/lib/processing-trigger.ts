@@ -221,20 +221,12 @@ async function recoverStalledProcessingIfNeeded() {
     if (recoverJobError) throw recoverJobError;
 
     if (recoveredJob) {
-      const { error: releaseMembersError } = await supabase
-        .from("campaign_batch_members")
-        .update({
-          processing_status: "retrying",
-          processing_owner: null,
-          processing_started_at: null,
-          processing_heartbeat_at: null,
-          next_retry_at: recoveredAt,
-          last_error: reason,
-          updated_at: recoveredAt
-        })
-        .eq("batch_id", targetJob.batch_id)
-        .eq("processing_owner", targetJob.locked_by)
-        .eq("processing_status", "processing");
+      const { error: releaseMembersError } = await supabase.rpc("release_worker_claims_v2", {
+        p_batch_id: targetJob.batch_id,
+        p_worker_id: targetJob.locked_by,
+        p_reason: reason,
+        p_next_retry_at: recoveredAt
+      });
 
       if (releaseMembersError) throw releaseMembersError;
 
@@ -310,6 +302,10 @@ export async function triggerQueuedProcessing(options?: {
     retried: 0,
     lastStatus: "idle"
   };
+
+  const supabase = createSupabaseAdminClient();
+  const { error: recheckError } = await supabase.rpc("enqueue_due_normal_recheck_jobs_v1");
+  if (recheckError) throw recheckError;
 
   await recoverStalledProcessingIfNeeded();
 

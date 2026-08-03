@@ -1,8 +1,10 @@
 "use client";
 
 import { CampaignFocusToggle } from "@/components/campaign-focus-toggle";
+import { GeneralSyncButton } from "@/components/general-sync-button";
 import { useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import type { GeneralSyncRunDetail } from "@/lib/general-sync";
 
 type CampaignOption = {
   id: string;
@@ -78,12 +80,16 @@ export function DashboardFilters({
   campaigns,
   batches,
   selectedCampaignIds,
-  selectedBatchIds
+  selectedBatchIds,
+  canGeneralSync = false,
+  initialGeneralSyncRun = null
 }: {
   campaigns: CampaignOption[];
   batches: BatchOption[];
   selectedCampaignIds: string[];
   selectedBatchIds: string[];
+  canGeneralSync?: boolean;
+  initialGeneralSyncRun?: GeneralSyncRunDetail | null;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -190,6 +196,13 @@ export function DashboardFilters({
     <div className="flex flex-col gap-2 lg:items-end">
       <div className="flex flex-wrap gap-2 lg:justify-end">
         <CampaignFocusToggle />
+        {canGeneralSync ? (
+          <GeneralSyncButton
+            selectedCampaignIds={campaignIds}
+            selectedBatchIds={batchIds}
+            initialRun={initialGeneralSyncRun}
+          />
+        ) : null}
         <FilterMenu
           label="Campanhas"
           selectedCount={campaignIds.length}

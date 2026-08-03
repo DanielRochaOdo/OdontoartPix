@@ -1,4 +1,5 @@
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { getProcessingConfig } from "@/lib/processing-config";
 
 export type ProcessingJobStatus =
   | "queued"
@@ -22,7 +23,57 @@ export type EnqueuedJob = {
   resumed?: boolean;
 };
 
-const PENDING_STATUSES = ["pending", "pendente", "aguardando", "retrying"];
+export class ProcessingJobModeConflictError extends Error {
+  readonly code = "PROCESSING_JOB_MODE_CONFLICT";
+
+  constructor(
+    readonly batchId: string,
+    readonly activeJobId: string,
+    readonly activeIncludesErrors: boolean,
+    readonly requestedIncludesErrors: boolean
+  ) {
+    super(
+      requestedIncludesErrors
+        ? "O lote possui um processamento normal ativo. Aguarde a conclusao antes de reprocessar os erros."
+        : "O lote possui um reprocessamento de erros ativo. Aguarde a conclusao antes de iniciar o processamento normal."
+    );
+    this.name = "ProcessingJobModeConflictError";
+  }
+}
+
+type ClaimableSummary = {
+  claimable_count?: number | string;
+  technical_retry_count?: number | string;
+  processing_count?: number | string;
+};
+
+async function getClaimableSummary(batchId: string, includeErrors: boolean, maxAttempts: number) {
+  const supabase = createSupabaseAdminClient();
+  const { data, error } = await supabase.rpc("count_claimable_batch_members_v3", {
+    p_batch_id: batchId,
+    p_include_errors: includeErrors,
+    p_stale_seconds: 120,
+    p_max_attempts: maxAttempts,
+    p_max_stale_reclaims: 3
+  });
+  if (error) throw error;
+  const row = Array.isArray(data) ? data[0] as ClaimableSummary | undefined : data as ClaimableSummary | null;
+  if (!row) throw new Error("A RPC de elegibilidade não retornou um resumo.");
+  return {
+    claimable: Number(row.claimable_count ?? 0),
+    technicalRetry: Number(row.technical_retry_count ?? 0),
+    processing: Number(row.processing_count ?? 0)
+  };
+}
+
+async function normalizeExhaustedMembers(batchId: string, maxAttempts: number) {
+  const supabase = createSupabaseAdminClient();
+  const { error } = await supabase.rpc("normalize_exhausted_batch_members_v1", {
+    p_batch_id: batchId,
+    p_max_attempts: maxAttempts
+  });
+  if (error) throw error;
+}
 
 async function reopenUnpaidMembersForManualProcessing(batchId: string) {
   const supabase = createSupabaseAdminClient();
@@ -33,6 +84,9 @@ async function reopenUnpaidMembersForManualProcessing(batchId: string) {
       payment_status: null,
       last_error: null,
       next_retry_at: null,
+      next_check_at: null,
+      claim_token: null,
+      error_reprocess_requested_at: null,
       processing_owner: null,
       processing_started_at: null,
       processing_heartbeat_at: null,
@@ -80,6 +134,7 @@ export async function enqueueBatchJob(input: {
 }): Promise<EnqueuedJob | null> {
   const supabase = createSupabaseAdminClient();
   const includeErrors = input.includeErrors ?? false;
+  const config = await getProcessingConfig();
 
   const { data: activeJob, error: activeJobError } = await supabase
     .from("processing_jobs")
@@ -94,6 +149,15 @@ export async function enqueueBatchJob(input: {
 
   if (activeJobError) throw activeJobError;
   if (activeJob) {
+    if (activeJob.include_errors !== includeErrors) {
+      throw new ProcessingJobModeConflictError(
+        input.batchId,
+        activeJob.id,
+        activeJob.include_errors,
+        includeErrors
+      );
+    }
+
     if (activeJob.status === "paused") {
       const resumedJob = await resumePausedJob(activeJob.id);
       if (!resumedJob) {
@@ -108,6 +172,20 @@ export async function enqueueBatchJob(input: {
       };
     }
 
+    if (activeJob.status === "queued") {
+      const summary = await getClaimableSummary(input.batchId, includeErrors, config.maxAttemptsPerItem);
+      if (summary.claimable === 0 && summary.processing === 0 && summary.technicalRetry === 0) {
+        const finishedAt = new Date().toISOString();
+        const { error: finalizeError } = await supabase
+          .from("processing_jobs")
+          .update({ status: "completed", finished_at: finishedAt, next_run_at: null, updated_at: finishedAt })
+          .eq("id", activeJob.id)
+          .eq("status", "queued");
+        if (finalizeError) throw finalizeError;
+        return null;
+      }
+    }
+
     return {
       ...activeJob,
       status: activeJob.status as ProcessingJobStatus,
@@ -117,17 +195,26 @@ export async function enqueueBatchJob(input: {
 
   if (!includeErrors) {
     await reopenUnpaidMembersForManualProcessing(input.batchId);
+    await normalizeExhaustedMembers(input.batchId, config.maxAttemptsPerItem);
+  } else {
+    const requestedAt = new Date().toISOString();
+    const { error: requestError } = await supabase
+      .from("campaign_batch_members")
+      .update({
+        error_reprocess_requested_at: requestedAt,
+        processing_attempts: 0,
+        updated_at: requestedAt
+      })
+      .eq("batch_id", input.batchId)
+      .is("deleted_at", null)
+      .eq("processing_status", "error")
+      .or("payment_status.is.null,payment_status.neq.paid");
+
+    if (requestError) throw requestError;
   }
 
-  const { count, error: countError } = await supabase
-    .from("campaign_batch_members")
-    .select("id", { count: "exact", head: true })
-    .eq("batch_id", input.batchId)
-    .is("deleted_at", null)
-    .in("processing_status", includeErrors ? [...PENDING_STATUSES, "error"] : PENDING_STATUSES);
-
-  if (countError) throw countError;
-  const totalItems = count ?? 0;
+  const summary = await getClaimableSummary(input.batchId, includeErrors, config.maxAttemptsPerItem);
+  const totalItems = summary.claimable;
   if (totalItems === 0) return null;
 
   const { data: job, error: insertError } = await supabase

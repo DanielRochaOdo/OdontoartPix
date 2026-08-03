@@ -17,12 +17,12 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   if (!auth.ok) return auth.response;
 
   const parsedParams = ParamsSchema.safeParse(await params);
-  if (!parsedParams.success) return fail("VALIDATION_ERROR", "Lote invÃ¡lido.", 400);
+  if (!parsedParams.success) return fail("VALIDATION_ERROR", "Lote invalido.", 400);
 
   const body = await request.json().catch(() => null);
   const parsedBody = RenameSchema.safeParse(body);
   if (!parsedBody.success) {
-    return fail("VALIDATION_ERROR", "Informe um nome vÃ¡lido para o lote.", 400);
+    return fail("VALIDATION_ERROR", "Informe um nome valido para o lote.", 400);
   }
 
   const supabase = createSupabaseAdminClient();
@@ -42,9 +42,9 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       details: error.details,
       hint: error.hint
     });
-    return fail("DATABASE_ERROR", "NÃ£o foi possÃ­vel renomear o lote.", 500);
+    return fail("DATABASE_ERROR", "Nao foi possivel renomear o lote.", 500);
   }
-  if (!data) return fail("NOT_FOUND", "Lote nÃ£o encontrado.", 404);
+  if (!data) return fail("NOT_FOUND", "Lote nao encontrado.", 404);
 
   return ok(data, "Lote renomeado com sucesso.");
 }

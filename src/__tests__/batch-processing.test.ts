@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   computeRetryDelayMs,
   mapWithConcurrency,
+  readClaimableCount,
   shouldRetryConsultationInBatch
 } from "@/lib/batch-processing";
 import { ErpError } from "@/lib/mensalidades-api";
@@ -53,24 +54,71 @@ describe("batch-processing", () => {
     expect(computeRetryDelayMs(2)).toBe(2400);
   });
 
-  it("trata timeout do ERP como erro final no processamento em lote", () => {
+  it("agenda timeout do ERP para retry futuro", () => {
     const error = new ErpError(
       "ERP_TIMEOUT",
       "A consulta ao ERP excedeu o tempo limite.",
       true
     );
 
-    expect(shouldRetryConsultationInBatch(error)).toBe(false);
+    expect(shouldRetryConsultationInBatch(error)).toBe(true);
   });
 
-  it("trata erro de rede do ERP como erro final no processamento em lote", () => {
+  it("agenda erro de rede do ERP para retry futuro", () => {
     const error = new ErpError(
       "ERP_NETWORK_ERROR",
       "Nao foi possivel estabelecer comunicacao com o ERP.",
       true
     );
 
-    expect(shouldRetryConsultationInBatch(error)).toBe(false);
+    expect(shouldRetryConsultationInBatch(error)).toBe(true);
+  });
+
+  it("lê a contagem da RPC quando o PostgREST retorna uma linha em array", () => {
+    expect(readClaimableCount([{
+      claimable_count: "2",
+      scheduled_count: 3,
+      processing_count: "1",
+      next_run_at: "2026-08-03T12:00:00.000Z"
+    }])).toEqual({
+      claimable: 2,
+      technicalRetry: 0,
+      normalRecheck: 0,
+      manualReprocess: 0,
+      blocked: 0,
+      scheduled: 3,
+      processing: 1,
+      nextRetryAt: null,
+      nextRecheckAt: null,
+      nextManualReprocessAt: null,
+      nextRunAt: "2026-08-03T12:00:00.000Z"
+    });
+  });
+
+  it("também aceita a linha da RPC no formato objeto", () => {
+    expect(readClaimableCount({ claimable_count: 1 })).toEqual({
+      claimable: 1,
+      technicalRetry: 0,
+      normalRecheck: 0,
+      manualReprocess: 0,
+      blocked: 0,
+      scheduled: 0,
+      processing: 0,
+      nextRetryAt: null,
+      nextRecheckAt: null,
+      nextManualReprocessAt: null,
+      nextRunAt: null
+    });
+  });
+
+  it.each([
+    ["negativo", -1],
+    ["NaN", "NaN"],
+    ["infinito", "Infinity"]
+  ])("rejeita contador %s retornado pela RPC", (_label, value) => {
+    expect(() => readClaimableCount({ claimable_count: value })).toThrow(
+      "Contador inválido retornado pela RPC: claimable_count."
+    );
   });
 
   it("mantem retry para limitacao temporaria do ERP", () => {
