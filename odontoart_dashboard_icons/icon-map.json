@@ -1,0 +1,149 @@
+[
+  {
+    "id": 1,
+    "slug": "campanhas-consideradas",
+    "label": "Campanhas consideradas",
+    "color": "#5EF2DF",
+    "kind": "teal"
+  },
+  {
+    "id": 2,
+    "slug": "campanhas-em-andamento",
+    "label": "Campanhas em andamento",
+    "color": "#5EF2DF",
+    "kind": "teal"
+  },
+  {
+    "id": 3,
+    "slug": "parcelas-consolidadas",
+    "label": "Parcelas consolidadas",
+    "color": "#5EF2DF",
+    "kind": "teal"
+  },
+  {
+    "id": 4,
+    "slug": "pagos",
+    "label": "Pagos",
+    "color": "#5EF2DF",
+    "kind": "teal"
+  },
+  {
+    "id": 5,
+    "slug": "nao-pagos",
+    "label": "Não pagos",
+    "color": "#5EF2DF",
+    "kind": "teal"
+  },
+  {
+    "id": 6,
+    "slug": "erros",
+    "label": "Erros",
+    "color": "#FF6570",
+    "kind": "red"
+  },
+  {
+    "id": 7,
+    "slug": "valor-total-lotes",
+    "label": "Valor total dos lotes",
+    "color": "#5EF2DF",
+    "kind": "teal"
+  },
+  {
+    "id": 8,
+    "slug": "valor-pago",
+    "label": "Valor pago",
+    "color": "#5EF2DF",
+    "kind": "teal"
+  },
+  {
+    "id": 9,
+    "slug": "aproveitamento",
+    "label": "Aproveitamento",
+    "color": "#5EF2DF",
+    "kind": "teal"
+  },
+  {
+    "id": 10,
+    "slug": "valor-pendente",
+    "label": "Valor pendente",
+    "color": "#FF6570",
+    "kind": "red"
+  },
+  {
+    "id": 11,
+    "slug": "aproveitamento-mini-grafico",
+    "label": "Aproveitamento - mini gráfico",
+    "color": "#5EF2DF",
+    "kind": "teal"
+  },
+  {
+    "id": 12,
+    "slug": "valores",
+    "label": "Valores",
+    "color": "#5EF2DF",
+    "kind": "teal"
+  },
+  {
+    "id": 13,
+    "slug": "ticket-medio",
+    "label": "Ticket médio da campanha",
+    "color": "#5EF2DF",
+    "kind": "teal"
+  },
+  {
+    "id": 14,
+    "slug": "insights-rapidos",
+    "label": "Insights rápidos",
+    "color": "#5EF2DF",
+    "kind": "teal"
+  },
+  {
+    "id": 15,
+    "slug": "ultima-atualizacao",
+    "label": "Última atualização",
+    "color": "#5EF2DF",
+    "kind": "teal"
+  },
+  {
+    "id": 16,
+    "slug": "dados-consolidados",
+    "label": "Dados consolidados",
+    "color": "#5EF2DF",
+    "kind": "teal"
+  },
+  {
+    "id": 17,
+    "slug": "visualizacao",
+    "label": "Visualização",
+    "color": "#F5F8FF",
+    "kind": "white"
+  },
+  {
+    "id": 18,
+    "slug": "confirmado-ativo",
+    "label": "Confirmado / ativo",
+    "color": "#5EF2DF",
+    "kind": "teal"
+  },
+  {
+    "id": 19,
+    "slug": "limpar",
+    "label": "Limpar / reset",
+    "color": "#F5F8FF",
+    "kind": "white"
+  },
+  {
+    "id": 20,
+    "slug": "aplicar",
+    "label": "Aplicar / confirmar",
+    "color": "#5EF2DF",
+    "kind": "teal"
+  },
+  {
+    "id": 21,
+    "slug": "dropdown",
+    "label": "Seta de dropdown",
+    "color": "#F5F8FF",
+    "kind": "white"
+  }
+]

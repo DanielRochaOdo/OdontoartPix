@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { emitMetricsSync } from "@/lib/metrics-sync";
 import type { GeneralSyncPreview, GeneralSyncRunDetail } from "@/lib/general-sync";
+import { ManualDashboardIcon, type ManualDashboardIconName } from "@/components/manual-dashboard-icon";
 
 type ApiSuccess<T> = {
   success?: boolean;
@@ -13,42 +14,7 @@ type ApiSuccess<T> = {
 };
 
 function SyncIcon({ spinning = false }: { spinning?: boolean }) {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 24 24"
-      className={`h-5 w-5 ${spinning ? "animate-spin" : ""}`}
-      fill="none"
-    >
-      <circle
-        cx="12"
-        cy="12"
-        r="10"
-        className="fill-white stroke-emerald-600 dark:fill-slate-50 dark:stroke-emerald-400"
-        strokeWidth="1"
-      />
-      <path
-        d="M12.6 3.7v2.8c2.9.3 5.5 1.9 7 4.4l-1.2 1.8a7.4 7.4 0 0 0-5.8-3.4v4.3a8.7 8.7 0 0 0 5.1-2.9l.7-.9.2-.3c-1.1-2.2-2.9-4-5.2-5Z"
-        className="fill-emerald-600 dark:fill-emerald-400"
-      />
-      <path
-        d="M11.4 20.3v-2.8c-2.9-.3-5.5-1.9-7-4.4l1.2-1.8a7.4 7.4 0 0 0 5.8 3.4v-4.3a8.7 8.7 0 0 0-5.1 2.9l-.7.9-.2.3c1.1 2.2 2.9 4 5.2 5Z"
-        className="fill-emerald-600 dark:fill-emerald-400"
-      />
-      <path
-        d="M4.9 14.7c1.3-2.9 3.7-5.2 6.5-6.7"
-        className="stroke-emerald-600 dark:stroke-emerald-400"
-        strokeWidth="1.9"
-        strokeLinecap="round"
-      />
-      <path
-        d="M19.1 9.3c-1.3 2.9-3.7 5.2-6.5 6.7"
-        className="stroke-emerald-600 dark:stroke-emerald-400"
-        strokeWidth="1.9"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
+  return <ManualDashboardIcon name="apply" className={`h-5 w-5 ${spinning ? "animate-spin" : ""}`} />;
 }
 
 function formatInteger(value: number) {
@@ -121,9 +87,9 @@ function ProcessingMetricCard({
   onSelect: () => void;
 }) {
   const toneClasses = {
-    emerald: "hover:border-emerald-300 hover:bg-emerald-50/70 focus-visible:ring-emerald-400",
-    red: "hover:border-red-300 hover:bg-red-50/70 focus-visible:ring-red-400",
-    sky: "hover:border-sky-300 hover:bg-sky-50/70 focus-visible:ring-sky-400"
+    emerald: "hover:border-[#22D58C] hover:bg-[#22D58C]/10 focus-visible:ring-[#22D58C]",
+    red: "hover:border-[#FF5B5B] hover:bg-[#FF5B5B]/10 focus-visible:ring-[#FF5B5B]",
+    sky: "hover:border-[#00B8FF] hover:bg-[#00B8FF]/10 focus-visible:ring-[#00B8FF]"
   }[tone];
 
   return (
@@ -131,7 +97,7 @@ function ProcessingMetricCard({
       type="button"
       onClick={onSelect}
       aria-pressed={selected}
-      className={`rounded-xl border p-3 text-left transition duration-300 focus:outline-none focus-visible:ring-2 ${toneClasses} ${selected ? "border-sky-400 bg-sky-50 shadow-sm ring-1 ring-sky-200 dark:border-sky-700 dark:bg-sky-950/40 dark:ring-sky-900" : "border-transparent bg-slate-50 dark:bg-slate-900"}`}
+      className={`rounded-xl border p-3 text-left transition duration-300 focus:outline-none focus-visible:ring-2 ${toneClasses} ${selected ? "border-[#00B8FF] bg-[#00B8FF]/10 shadow-sm ring-1 ring-[#00B8FF]/40" : "border-transparent bg-slate-50 dark:bg-slate-900"}`}
     >
       <span className="flex items-center gap-3">
         <ProcessingIcon type={icon} tone={tone} size="compact" />
@@ -154,24 +120,24 @@ function ProcessingIcon({
   size?: "large" | "compact";
 }) {
   const toneClass = {
-    emerald: "border-emerald-400/20 bg-emerald-500/10 text-emerald-400",
-    sky: "border-sky-400/20 bg-sky-500/10 text-sky-400",
-    red: "border-red-400/20 bg-red-500/10 text-red-400"
+    emerald: "border-[#22D58C]/35 bg-[#22D58C]/10 text-[#22D58C]",
+    sky: "border-[#00B8FF]/35 bg-[#00B8FF]/10 text-[#00B8FF]",
+    red: "border-[#FF5B5B]/35 bg-[#FF5B5B]/10 text-[#FF5B5B]"
   }[tone];
 
   const sizeClass = size === "compact" ? "h-11 w-11 rounded-full" : "h-16 w-16 rounded-2xl";
-  const iconSizeClass = size === "compact" ? "h-6 w-6" : "h-8 w-8";
+  const iconSizeClass = size === "compact" ? "h-7 w-7" : "h-10 w-10";
+  const iconName: ManualDashboardIconName =
+    type === "campaigns" ? "campaigns" :
+    type === "batches" ? "parcels" :
+    type === "records" ? "totalValue" :
+    type === "success" ? "active" :
+    type === "error" ? "errors" :
+    type === "processing" ? "running" : "active";
 
   return (
     <span className={`inline-flex ${sizeClass} shrink-0 items-center justify-center border ${toneClass}`}>
-      <svg viewBox="0 0 24 24" className={iconSizeClass} fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
-        {type === "campaigns" ? <><path d="M4 18V8l8-4 8 4v10" /><path d="M8 20v-6h8v6M3 20h18" /></> : null}
-        {type === "batches" ? <><path d="m12 3 8 4-8 4-8-4 8-4Z" /><path d="m4 12 8 4 8-4M4 17l8 4 8-4" /></> : null}
-        {type === "records" ? <><ellipse cx="12" cy="5" rx="7" ry="3" /><path d="M5 5v7c0 1.7 3.1 3 7 3s7-1.3 7-3V5M5 12v7c0 1.7 3.1 3 7 3s7-1.3 7-3v-7" /></> : null}
-        {type === "success" ? <><circle cx="12" cy="12" r="8" /><path d="m8 12 2.5 2.5L16 9" /></> : null}
-        {type === "error" ? <><circle cx="12" cy="12" r="8" /><path d="m9 9 6 6M15 9l-6 6" /></> : null}
-        {type === "processing" ? <><path d="M12 4a8 8 0 1 1-5.7 2.3" /><path d="M4 4v5h5" /><path d="M12 8v4l3 2" /></> : null}
-      </svg>
+      <ManualDashboardIcon name={iconName} className={iconSizeClass} />
     </span>
   );
 }

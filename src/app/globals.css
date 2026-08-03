@@ -59,6 +59,12 @@ textarea {
   color: #f8fafc;
 }
 
+/* Campos compostos da importação: o fundo pertence ao wrapper, não ao input. */
+.campaign-field-control,
+.campaign-field-control:focus {
+  background-color: transparent !important;
+}
+
 @keyframes processing-shimmer {
   from { transform: translateX(-120%); }
   to { transform: translateX(220%); }

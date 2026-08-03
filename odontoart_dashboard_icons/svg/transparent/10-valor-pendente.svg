@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 24 24" role="img" aria-label="Valor pendente">
+  <title>Valor pendente</title>
+  <g fill="none" stroke="#FF6570" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v9h9"/><path d="M21 12a9 9 0 1 1-9-9"/><path d="M15 3.5A9 9 0 0 1 20.5 9H15Z"/></g>
+</svg>

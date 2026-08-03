@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { CampaignControlIcon } from "@/components/campaign-control-icon";
 
 type ImportResponse = {
   success?: boolean;
@@ -99,13 +100,13 @@ export function CampaignImportForm({
   return (
     <form
       onSubmit={onSubmit}
-      className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
+      className="space-y-4 rounded-2xl border border-[#16C79A]/70 bg-white p-5 shadow-sm dark:bg-[#071b34]/90 dark:shadow-[0_8px_28px_rgba(0,0,0,0.2)]"
     >
-      <div>
-        <h2 className="text-lg font-semibold">Importar campanha ou lote</h2>
-        <p className="mt-1 text-sm text-slate-500">
+      <div className="border-b border-[#183956] pb-4">
+        <div className="flex items-center gap-3"><span className="inline-flex h-12 w-12 items-center justify-center rounded-full border border-[#d6e3ef] bg-[#eef4f8] dark:border-[#284665] dark:bg-[#071525]"><CampaignControlIcon name="importCampaign" className="h-7 w-7" /></span><div><h2 className="text-lg font-semibold text-[#102033] dark:text-[#F5F8FF]">Importar campanha ou lote</h2>
+        <p className="mt-1 text-sm text-[#5d7184] dark:text-[#8CA3B3]">
           Aceita CSV, TXT e XLSX com CodigoAssociadoEmpresa, Parcela e Valor da Parcela obrigatorios.
-        </p>
+        </p></div></div>
       </div>
       {initialCampaignId ? (
         <>
@@ -114,7 +115,7 @@ export function CampaignImportForm({
         </>
       ) : (
         <>
-          <label className="block text-sm font-medium text-slate-700 dark:text-slate-200" htmlFor="campaign-target">Destino da importacao</label>
+          <label className="flex items-center gap-2 text-sm font-medium text-[#00F0C2]" htmlFor="campaign-target"><CampaignControlIcon name="destination" className="h-5 w-5" />Destino da importacao</label>
           <select
             id="campaign-target"
             name="campaignId"
@@ -124,7 +125,7 @@ export function CampaignImportForm({
               setCampaignId(nextId);
               setCampaignName(campaigns.find((campaign) => campaign.id === nextId)?.name ?? "");
             }}
-            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+            className="w-full rounded-lg border border-[#d6e3ef] bg-[#eef4f8] px-3 py-2 text-sm text-[#102033] dark:border-[#284665] dark:bg-[#0B2133] dark:text-[#F5F8FF]"
           >
             <option value="">Criar nova campanha</option>
             {campaigns.map((campaign) => <option key={campaign.id} value={campaign.id}>Adicionar lote em: {campaign.name}</option>)}
@@ -139,23 +140,10 @@ export function CampaignImportForm({
           <input type="hidden" name="name" value={campaignName} />
         </>
       ) : (
-        <input
-          name="name"
-          placeholder="Nome da campanha"
-          required
-          className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
-        />
+        <div className="flex items-center gap-3 rounded-lg border border-[#d6e3ef] bg-[#eef4f8] px-3 dark:border-[#284665] dark:bg-[#0B2133]"><CampaignControlIcon name="campaignName" className="h-5 w-5 shrink-0" /><input name="name" placeholder="Nome da campanha" required className="campaign-field-control w-full py-3 text-sm text-[#102033] outline-none placeholder:text-[#5d7184] dark:text-[#F5F8FF] dark:placeholder:text-[#8CA3B3]" /></div>
       )}
-      <input
-        name="batchName"
-        placeholder="Nome do lote"
-        className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
-      />
-      <textarea
-        name="description"
-        placeholder="Descricao"
-        className="min-h-24 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
-      />
+      <div className="flex items-center gap-3 rounded-lg border border-[#d6e3ef] bg-[#eef4f8] px-3 dark:border-[#284665] dark:bg-[#0B2133]"><CampaignControlIcon name="batchName" className="h-5 w-5 shrink-0" /><input name="batchName" placeholder="Nome do lote" className="campaign-field-control w-full py-3 text-sm text-[#102033] outline-none placeholder:text-[#5d7184] dark:text-[#F5F8FF] dark:placeholder:text-[#8CA3B3]" /></div>
+      <div className="flex items-start gap-3 rounded-lg border border-[#d6e3ef] bg-[#eef4f8] px-3 dark:border-[#284665] dark:bg-[#0B2133]"><CampaignControlIcon name="description" className="mt-3 h-5 w-5 shrink-0" /><textarea name="description" placeholder="Descricao" className="campaign-field-control min-h-24 w-full resize-y py-3 text-sm text-[#102033] outline-none placeholder:text-[#5d7184] dark:text-[#F5F8FF] dark:placeholder:text-[#8CA3B3]" /></div>
       <div
         onDragOver={(event) => {
           event.preventDefault();
@@ -169,8 +157,8 @@ export function CampaignImportForm({
         }}
         className={`rounded-xl border-2 border-dashed p-5 text-center transition ${
           isDragging
-            ? "border-emerald-500 bg-emerald-50 dark:bg-emerald-950"
-            : "border-slate-300 bg-slate-50 dark:border-slate-600 dark:bg-slate-800"
+            ? "border-[#00F0C2] bg-[#0B3442]"
+            : "border-[#284665] bg-[#071525]"
         }`}
       >
         <input
@@ -183,17 +171,17 @@ export function CampaignImportForm({
           onChange={(event) => setSelectedFile(event.target.files?.[0]?.name ?? "")}
           className="sr-only"
         />
-        <label htmlFor="campaign-file" className="cursor-pointer text-sm text-slate-600 dark:text-slate-300">
-          <span className="font-medium text-emerald-700 dark:text-emerald-300">Arraste o arquivo aqui</span> ou clique para escolher
+        <label htmlFor="campaign-file" className="flex cursor-pointer flex-col items-center text-sm text-[#AFC3D4]">
+          <CampaignControlIcon name="upload" className="h-12 w-12" /><span className="mt-2"><span className="font-medium text-[#00F0C2]">Arraste o arquivo aqui</span> ou clique para escolher</span>
         </label>
         <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">CSV, TXT ou XLSX</p>
         {selectedFile ? <p className="mt-2 truncate text-sm font-medium text-slate-900 dark:text-white">{selectedFile}</p> : null}
       </div>
       <button
         disabled={busy}
-        className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-800 disabled:opacity-60"
+        className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-[#00F0C2] px-4 py-3 text-sm font-semibold text-[#06151F] shadow-[0_0_18px_rgba(0,240,194,0.2)] transition hover:bg-[#73FFE8] disabled:opacity-60"
       >
-        {busy ? "Importando..." : "Importar base"}
+        <CampaignControlIcon name="importBase" className="h-5 w-5" />{busy ? "Importando..." : "Importar base"}
       </button>
       {status ? <p className="text-sm text-slate-600">{status}</p> : null}
     </form>
