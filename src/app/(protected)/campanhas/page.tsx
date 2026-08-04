@@ -43,17 +43,11 @@ export default async function CampaignsPage() {
       <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <div className="flex items-center gap-4">
-            <span className="inline-flex h-16 w-16 items-center justify-center rounded-full border border-[#00F0C2]/70 bg-[#071b34] shadow-[0_0_24px_rgba(0,240,194,0.18)]">
-              <CampaignControlIcon name="campaigns" className="h-10 w-10" />
-            </span>
             <div>
-          <p className="text-sm font-medium uppercase tracking-[0.2em] text-[#00a98f] dark:text-[#00F0C2]">
-            Campanhas
-          </p>
-          <h1 className="mt-2 text-3xl font-semibold tracking-tight text-[#102033] dark:text-[#F5F8FF] lg:text-4xl">Gestao de campanhas</h1>
-          <p className="mt-2 text-sm text-[#5d7184] dark:text-[#8CA3B3]">
-            Importacao separada do processamento, com totais calculados diretamente no banco.
-          </p>
+              <p className="text-sm font-medium uppercase tracking-[0.2em] text-[#00a98f] dark:text-[#00F0C2]">
+                Campanhas
+              </p>
+              <h1 className="mt-2 text-3xl font-semibold tracking-tight text-[#102033] dark:text-[#F5F8FF] lg:text-4xl">Gestao de campanhas</h1>
             </div>
           </div>
         </div>
@@ -101,9 +95,9 @@ export default async function CampaignsPage() {
                     <tr key={campaign.id} className="border-t border-[#183956] transition hover:bg-[#0B2133]/70">
                       <td className="min-w-0 px-2 py-3 lg:px-3">
                         <div className="flex min-w-0 items-center gap-2"><span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[#d6e3ef] bg-[#eef4f8] dark:border-[#284665] dark:bg-[#071525]"><CampaignControlIcon name="table" className="h-4 w-4" /></span><div className="min-w-0"><div className="truncate font-medium text-[#102033] dark:text-[#F5F8FF]">{campaign.name}</div>
-                        <div className="max-w-xs truncate text-xs text-[#5d7184] dark:text-[#8CA3B3]">
-                          {campaign.description || "Sem descricao"}
-                        </div></div></div>
+                          <div className="max-w-xs truncate text-xs text-[#5d7184] dark:text-[#8CA3B3]">
+                            {campaign.description || "Sem descricao"}
+                          </div></div></div>
                       </td>
                       <td className="px-2 py-3 lg:px-3">
                         <span className="inline-flex items-center gap-1.5 rounded-md border border-[#16C79A]/40 bg-[#16C79A]/10 px-2 py-1 text-xs font-medium text-[#00F0C2]"><CampaignControlIcon name="completed" className="h-4 w-4" />{STATUS_LABELS[campaign.calculated_status] ?? campaign.calculated_status}</span>

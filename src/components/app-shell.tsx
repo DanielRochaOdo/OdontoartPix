@@ -7,6 +7,7 @@ import type { Role } from "@/lib/auth";
 import { LogoutButton } from "@/components/logout-button";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { listenMetricsSync } from "@/lib/metrics-sync";
+import { GlobalProcessingIndicator } from "@/components/global-processing-indicator";
 
 function LogoIcon({ className = "h-6 w-6" }: { className?: string }) {
   return (
@@ -133,6 +134,7 @@ export function AppShell({
 
   return (
     <div className="min-h-screen bg-[#061719] text-slate-950">
+      <GlobalProcessingIndicator />
       <div
         className={`mx-auto grid min-h-screen max-w-[1600px] grid-cols-1 transition-[grid-template-columns] duration-200 ${
           focusMode ? "lg:grid-cols-[1fr]" : collapsed ? "lg:grid-cols-[92px_1fr]" : "lg:grid-cols-[264px_1fr]"

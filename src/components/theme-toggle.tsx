@@ -13,6 +13,8 @@ export function ThemeToggle() {
       : window.matchMedia("(prefers-color-scheme: dark)").matches;
 
     document.documentElement.classList.toggle("dark", nextDark);
+    // A hidratação inicial precisa refletir a preferência persistida do navegador.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setDark(nextDark);
     setMounted(true);
   }, []);

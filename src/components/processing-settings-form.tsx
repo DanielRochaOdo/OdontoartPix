@@ -19,7 +19,7 @@ const labels: Record<ProcessingPresetKey, string> = {
 const descriptions: Record<ProcessingPresetKey, string> = {
   conservador: "Menor pressao no ERP, mais tolerancia operacional e menor throughput.",
   mediano: "Perfil padrao balanceado entre velocidade e estabilidade.",
-  agressivo: "Bloco em 120 com ajuste para continuar estavel no processamento."
+  agressivo: "Concorrência dobrada em relação ao perfil mediano, com ondas de até 30 registros."
 };
 
 function rowsForConfig(config: ProcessingConfig) {

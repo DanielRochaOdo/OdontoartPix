@@ -8,6 +8,7 @@ import { getActiveGeneralSyncRun } from "@/lib/general-sync";
 import { getDashboardMetrics } from "@/lib/metrics";
 import { formatCurrencyBR } from "@/lib/money";
 import { ManualDashboardIcon, type ManualDashboardIconName } from "@/components/manual-dashboard-icon";
+import { DashboardMetricCard } from "@/components/dashboard-metric-card";
 
 export const dynamic = "force-dynamic";
 
@@ -34,7 +35,7 @@ function buildMembersErrorHref(campaignIds: string[], batchIds: string[]) {
 function MetricIcon({ label }: { label: string }) {
   const names: Record<string, ManualDashboardIconName> = {
     "Campanhas consideradas": "campaigns",
-    "Campanhas em andamento": "running",
+    Associados: "consolidated",
     "Parcelas consolidadas": "parcels",
     Pagos: "paid",
     "Nao pagos": "unpaid",
@@ -48,7 +49,7 @@ function MetricIcon({ label }: { label: string }) {
 }
 
 function metricIconClass(label: string) {
-  if (label === "Campanhas em andamento") return "border-[#00B8FF]/50 bg-[#00B8FF]/10 text-[#00B8FF]";
+  if (label === "Associados") return "border-[#00B8FF]/50 bg-[#00B8FF]/10 text-[#00B8FF]";
   if (label === "Pagos" || label === "Valor pago" || label === "Aproveitamento") {
     return "border-[#22D58C]/50 bg-[#22D58C]/10 text-[#22D58C]";
   }
@@ -94,7 +95,7 @@ export default async function DashboardPage({
   const cards = metrics
     ? [
         { label: "Campanhas consideradas", value: String(metrics.totalCampaigns) },
-        { label: "Campanhas em andamento", value: String(metrics.campaignsInProgress) },
+        { label: "Associados", value: String(metrics.uniqueCpfs) },
         { label: "Parcelas consolidadas", value: String(metrics.totalCpfs) },
         { label: "Pagos", value: String(metrics.paid) },
         { label: "Nao pagos", value: String(metrics.unpaid) },
@@ -164,6 +165,19 @@ export default async function DashboardPage({
         <section className="mt-6 grid gap-5 xl:grid-cols-[minmax(560px,0.9fr)_minmax(680px,1.4fr)] xl:items-stretch">
           <div className="grid content-start gap-3 sm:grid-cols-2">
             {cards.map((card) => (
+              ["Pagos", "Valor pago", "Aproveitamento"].includes(card.label) ? (
+                <DashboardMetricCard
+                  key={card.label}
+                  label={card.label}
+                  value={card.value}
+                  numericValue={card.label === "Pagos" ? metrics?.paid ?? 0 : card.label === "Valor pago" ? metrics?.totalPaidAmountCents ?? 0 : metrics?.utilizationPercentage ?? 0}
+                  kind={card.label === "Pagos" ? "count" : card.label === "Valor pago" ? "currency" : "percentage"}
+                  icon={card.label === "Pagos" ? "paid" : card.label === "Valor pago" ? "paidValue" : "utilization"}
+                  detailEndpoint={card.label === "Pagos" ? `/api/dashboard/paid-details?campaignIds=${encodeURIComponent(selectedCampaignIds.join(","))}&batchIds=${encodeURIComponent(selectedBatchIds.join(","))}` : undefined}
+                  scopeKey={`${selectedCampaignIds.slice().sort().join(",") || "all"}|${selectedBatchIds.slice().sort().join(",") || "all"}`}
+                  valueClassName={card.label === "Valor pago" || card.label === "Aproveitamento" ? "text-[#00a98f] dark:text-[#18d8b6]" : undefined}
+                />
+              ) :
               card.label === "Erros" ? (
                 <Link
                   key={card.label}
@@ -192,6 +206,7 @@ export default async function DashboardPage({
               paidAmountCents={metrics.totalPaidAmountCents}
               pendingAmountCents={metrics.totalPendingAmountCents}
               utilizationPercentage={metrics.utilizationPercentage}
+              historyScope={`campaigns:${selectedCampaignIds.slice().sort().join(",") || "all"}|batches:${selectedBatchIds.slice().sort().join(",") || "all"}`}
             />
           ) : null}
         </section>

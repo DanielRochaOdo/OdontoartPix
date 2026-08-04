@@ -58,6 +58,7 @@ export const BatchMetricsSchema = CampaignMetricsSchema.omit({
 export const DashboardMetricsSchema = z.object({
   totalCampaigns: NumberSchema,
   campaignsInProgress: NumberSchema,
+  uniqueCpfs: NumberSchema,
   totalCpfs: NumberSchema,
   paid: NumberSchema,
   unpaid: NumberSchema,

@@ -1,6 +1,7 @@
 "use client";
 
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
+import { useEffect, useMemo, useState } from "react";
 import { calculateAverageTicketCents, formatCurrencyBR } from "@/lib/money";
 import { ManualDashboardIcon } from "@/components/manual-dashboard-icon";
 
@@ -133,15 +134,71 @@ export function DashboardDonutCharts({
   unpaid,
   paidAmountCents,
   pendingAmountCents,
-  utilizationPercentage
+  utilizationPercentage,
+  historyScope = "all"
 }: {
   paid: number;
   unpaid: number;
   paidAmountCents: number;
   pendingAmountCents: number;
   utilizationPercentage: number;
+  historyScope?: string;
 }) {
   const averageTicketAmountCents = calculateAverageTicketCents(paidAmountCents, paid);
+  const [previousTicketCents, setPreviousTicketCents] = useState<number | null>(null);
+  const [ticketHistory, setTicketHistory] = useState<number[]>([]);
+
+  useEffect(() => {
+    const scopeKey = encodeURIComponent(historyScope || "all");
+    const storageKey = `dashboard-metric-last:ticket-medio:${scopeKey}`;
+    try {
+      const historyKey = `dashboard-metric-history:ticket-medio:${scopeKey}`;
+      const savedHistory = JSON.parse(window.localStorage.getItem(historyKey) ?? "[]");
+      const history = Array.isArray(savedHistory)
+        ? savedHistory.filter((value): value is number => typeof value === "number" && Number.isFinite(value))
+        : [];
+      if (history.length === 0) {
+        const legacyValue = Number(window.localStorage.getItem(storageKey));
+        if (Number.isFinite(legacyValue) && legacyValue !== averageTicketAmountCents) history.push(legacyValue);
+      }
+      const lastValue = history.at(-1) ?? null;
+      const nextHistory = lastValue === averageTicketAmountCents
+        ? history
+        : [...history, averageTicketAmountCents].slice(-12);
+      window.localStorage.setItem(historyKey, JSON.stringify(nextHistory));
+      window.localStorage.setItem(storageKey, String(averageTicketAmountCents));
+      // Este efeito hidrata o histórico persistido no navegador.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setPreviousTicketCents(nextHistory.length > 1 ? nextHistory.at(-2) ?? null : null);
+      setTicketHistory(nextHistory);
+    } catch {
+      setPreviousTicketCents(null);
+      setTicketHistory([averageTicketAmountCents]);
+    }
+  }, [averageTicketAmountCents, historyScope]);
+
+  const ticketVariation = previousTicketCents && previousTicketCents !== 0
+    ? ((averageTicketAmountCents - previousTicketCents) / previousTicketCents) * 100
+    : null;
+  const wavePath = useMemo(() => {
+    const values = ticketHistory.length > 0 ? ticketHistory : [averageTicketAmountCents];
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const range = max - min;
+    const points = values.map((value, index) => ({
+      x: values.length === 1 ? 132 : (index / (values.length - 1)) * 264,
+      y: range === 0 ? 28 : 44 - ((value - min) / range) * 32
+    }));
+    if (points.length === 1) return "M0,28 Q66,28 132,28 T264,28";
+    let path = `M${points[0].x},${points[0].y}`;
+    for (let index = 1; index < points.length; index += 1) {
+      const previous = points[index - 1];
+      const current = points[index];
+      path += ` Q${previous.x},${previous.y} ${(previous.x + current.x) / 2},${(previous.y + current.y) / 2}`;
+    }
+    const last = points[points.length - 1];
+    return `${path} Q${last.x},${last.y} ${last.x},${last.y}`;
+  }, [averageTicketAmountCents, ticketHistory]);
 
   return (
     <div className="grid h-full auto-rows-fr gap-4 lg:grid-cols-2 lg:grid-rows-2">
@@ -172,13 +229,23 @@ export function DashboardDonutCharts({
         <p className="mt-1 text-sm text-[#5d7184] dark:text-[#a9bdd0]">
           Valor medio pago por pagamento confirmado.
         </p>
-        <div className="mt-3 flex flex-3 flex-col items-center justify-center rounded-2xl border border-[#284665] bg-[#06172c] px-6 py-6 text-center shadow-[inset_0_1px_18px_rgba(16,196,174,0.06)]">
-          <div className="text-[2.15rem] font-semibold leading-none text-[#13d7b5]">
-            {formatCurrencyBR(averageTicketAmountCents)}
+        <div className="mt-3 flex flex-col items-center justify-center rounded-2xl border border-[#c7d8e6] bg-[#f5f8fc] px-6 py-5 text-center shadow-[inset_0_1px_18px_rgba(16,196,174,0.06)] dark:border-[#284665] dark:bg-[#06172c]">
+          <div className="flex items-baseline justify-center gap-2 whitespace-nowrap">
+            <span className="text-[2.15rem] font-semibold leading-none text-[#13d7b5]">{formatCurrencyBR(averageTicketAmountCents)}</span>
+            <span className={`text-xs font-semibold ${ticketVariation === null || ticketVariation === 0 ? "text-[#6d8396] dark:text-[#8fa7bc]" : ticketVariation > 0 ? "text-[#159b69] dark:text-[#72f0bc]" : "text-[#d94352] dark:text-[#ff9ba3]"}`}>
+              ({ticketVariation === null ? "—" : `${ticketVariation > 0 ? "+" : ""}${ticketVariation.toLocaleString("pt-BR", { maximumFractionDigits: 2 })}%`})
+            </span>
           </div>
-          <p className="mt-4 max-w-[20rem] text-sm text-[#b6c9dc]">
+          <p className="mt-2 max-w-[20rem] text-sm text-[#5d7184] dark:text-[#b6c9dc]">
             {formatCurrencyBR(paidAmountCents)} em {paid.toLocaleString("pt-BR")} pagamentos
           </p>
+          <div className="mt-4 w-full max-w-[18rem] border-t border-[#d6e3ef] pt-3 dark:border-[#284665]">
+            <svg viewBox="0 0 264 52" className={`h-12 w-full ${ticketVariation !== null && ticketVariation < 0 ? "text-[#FF5B5B]" : "text-[#00E5C3]"}`} preserveAspectRatio="none" aria-label="Variação do ticket médio" role="img">
+              <path d={wavePath} fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M0,50 H264" fill="none" stroke="currentColor" strokeOpacity="0.12" strokeWidth="1" />
+            </svg>
+            <p className="mt-1 text-[10px] uppercase tracking-[0.14em] text-[#6d8396] dark:text-[#7893ab]">Variação do ticket médio</p>
+          </div>
         </div>
       </article>
 

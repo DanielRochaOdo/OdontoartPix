@@ -301,7 +301,7 @@ export async function POST(request: Request) {
             duplicated_records: imports.length - membersUpsert.length,
             skipped_duplicate_records: skippedDuplicateRecords,
             imported_records: 0,
-            issues: duplicateInstallmentIssues
+            issues: eventIssues
           }
         },
         "Todas as parcelas informadas ja estao vinculadas a outras campanhas."
@@ -347,7 +347,7 @@ export async function POST(request: Request) {
           duplicated_records: imports.length - membersUpsert.length,
           skipped_duplicate_records: skippedDuplicateRecords,
           imported_records: linksPayload.length,
-          issues: duplicateInstallmentIssues
+          issues: eventIssues
         },
         processing: {
           status: "aguardando",

@@ -38,34 +38,52 @@ export type IgnoredImportEventInput = {
   }>;
 };
 
+export type ProcessingEventInput = {
+  campaignId: string;
+  batchId: string;
+  eventType: "processing_block_completed" | "processing_job_completed" | "processing_job_failed";
+  reason: string;
+  details: Record<string, unknown>;
+};
+
+export async function logProcessingEvent(input: ProcessingEventInput) {
+  const supabase = createSupabaseAdminClient();
+  const { error } = await supabase.from("event_logs").insert({
+    event_type: input.eventType,
+    category: "processing",
+    severity: "info",
+    campaign_id: input.campaignId,
+    batch_id: input.batchId,
+    reason: input.reason,
+    details: input.details
+  });
+  if (error) throw new DataAccessError("Nao foi possivel registrar o evento de processamento.", "logProcessingEvent", error);
+}
+
 export async function logIgnoredImportEvents(input: IgnoredImportEventInput) {
   if (input.issues.length === 0) return;
 
   const supabase = createSupabaseAdminClient();
-  const rows = input.issues.map((issue) => ({
-    event_type: "ignored_installment_import",
+  const rows = [{
+    event_type: "ignored_installment_import_batch",
     category: "import",
     severity: "warning",
     campaign_id: input.campaignId,
     campaign_name: input.campaignName,
     batch_id: input.batchId,
     batch_name: input.batchName,
-    associated_code: issue.associatedCode ?? null,
-    target_installment_id: issue.targetInstallmentId ?? null,
-    installment_amount_cents: issue.installmentAmountCents ?? null,
-    cpf: issue.cpf ?? null,
-    member_name: issue.name ?? null,
-    line_number: issue.line ?? null,
-    reason: issue.reason ?? "Motivo nao informado.",
+    reason: `${input.issues.length} registro(s) nao cadastrado(s) na importacao.`,
     details: {
       source: "campaign-import",
       campaignId: input.campaignId,
       batchId: input.batchId,
       campaignName: input.campaignName,
-      batchName: input.batchName
+      batchName: input.batchName,
+      totalIssues: input.issues.length,
+      issues: input.issues
     },
     created_by: input.createdBy
-  }));
+  }];
 
   const { error } = await supabase.from("event_logs").insert(rows);
   if (error) {
