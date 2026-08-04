@@ -221,6 +221,40 @@ export function GeneralSyncButton({
 
   const runId = run?.id ?? null;
   const shouldPollRun = run?.canCancel ?? false;
+  const shouldDiscoverActiveRun = !run || !run.canCancel;
+
+  useEffect(() => {
+    if (!shouldDiscoverActiveRun) return;
+
+    let active = true;
+    async function discover() {
+      try {
+        const response = await fetch("/api/dashboard/general-sync/active", {
+          headers: { Accept: "application/json" },
+          cache: "no-store"
+        });
+        const payload = (await response.json().catch(() => null)) as ApiSuccess<GeneralSyncRunDetail> | null;
+        if (!active || !response.ok || !payload?.success) return;
+
+        if (payload.data) {
+          setRun(payload.data);
+          emitMetricsSync();
+        }
+      } catch {
+        // A transient polling failure must not remove the current dashboard state.
+      }
+    }
+
+    void discover();
+    const timer = window.setInterval(() => {
+      void discover();
+    }, 2500);
+
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [shouldDiscoverActiveRun]);
 
   useEffect(() => {
     if (!runId || !shouldPollRun) return;
@@ -402,10 +436,14 @@ export function GeneralSyncButton({
             <div>
               <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.16em] text-emerald-700 dark:text-emerald-400">
                 <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-emerald-500" aria-hidden="true" />
-                Processamento geral em andamento
+                {run.triggerSource === "scheduled"
+                  ? "Sincronizacao automatica em andamento"
+                  : "Processamento geral em andamento"}
               </div>
               <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
-                {run.scopeType === "all"
+                {run.triggerSource === "scheduled"
+                  ? "Iniciada pelo cron horario. O dashboard atualiza o progresso automaticamente."
+                  : run.scopeType === "all"
                   ? "Processando toda a base"
                   : `Processando ${run.campaignCount} campanhas e ${run.batchCount} lotes selecionados`}
               </p>
