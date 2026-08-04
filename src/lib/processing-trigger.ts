@@ -1,5 +1,5 @@
 import { calculateMinimumEntryBudgetMs, processNextJobBlock } from "@/lib/batch-processing";
-import { advanceGeneralSyncRuns } from "@/lib/general-sync";
+import { advanceGeneralSyncRuns, startScheduledGeneralSync } from "@/lib/general-sync";
 import { dispatchDurableProcessingWorkflowSafely } from "@/lib/durable-processing-dispatch";
 import { getProcessingConfig } from "@/lib/processing-config";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -283,10 +283,6 @@ export async function triggerQueuedProcessing(options?: {
     lastStatus: "idle"
   };
 
-  const supabase = createSupabaseAdminClient();
-  const { error: recheckError } = await supabase.rpc("enqueue_due_normal_recheck_jobs_v1");
-  if (recheckError) throw recheckError;
-
   await recoverStalledProcessingIfNeeded();
   const config = await getProcessingConfig();
   const minimumEntryBudgetMs = calculateMinimumEntryBudgetMs(
@@ -312,6 +308,7 @@ export async function triggerQueuedProcessing(options?: {
     if (result.status === "idle") {
       await recoverStalledProcessingIfNeeded();
       await advanceGeneralSyncRuns();
+      await startScheduledGeneralSync();
       summary.lastStatus = await resolveActiveSystemStatus();
       if (summary.lastStatus === "idle") break;
 

@@ -48,6 +48,8 @@ type GeneralSyncRunRow = {
   scope_type: GeneralSyncScopeType;
   filters: Record<string, unknown> | null;
   status: GeneralSyncRunStatus;
+  trigger_source: "manual" | "scheduled";
+  sync_mode: "full_sync" | "scheduled_recheck" | "error_reprocess";
   campaign_count: number;
   batch_count: number;
   record_count: number;
@@ -145,6 +147,8 @@ export type GeneralSyncPreview = Omit<ScopeResolution, "filters" | "isAllScope" 
 export type GeneralSyncRunDetail = {
   id: string;
   status: GeneralSyncRunStatus;
+  triggerSource: "manual" | "scheduled";
+  syncMode: "full_sync" | "scheduled_recheck" | "error_reprocess";
   scopeType: GeneralSyncScopeType;
   campaignCount: number;
   batchCount: number;
@@ -620,6 +624,8 @@ async function buildRunDetail(run: GeneralSyncRunRow): Promise<GeneralSyncRunDet
   return {
     id: run.id,
     status: run.status,
+    triggerSource: run.trigger_source ?? "manual",
+    syncMode: run.sync_mode ?? "full_sync",
     scopeType: run.scope_type,
     campaignCount: run.campaign_count,
     batchCount: run.batch_count,
@@ -1150,7 +1156,10 @@ async function syncOneRunState(run: GeneralSyncRunRow, workerId: string) {
     return;
   }
 
-  await resetBatchForGeneralSync(nextBatch.batch_id);
+  const isScheduledRecheck = run.sync_mode === "scheduled_recheck";
+  if (!isScheduledRecheck) {
+    await resetBatchForGeneralSync(nextBatch.batch_id);
+  }
 
   if (!run.requested_by) {
     throw new Error("A sincronizacao geral nao possui um usuario solicitante valido.");
@@ -1160,7 +1169,7 @@ async function syncOneRunState(run: GeneralSyncRunRow, workerId: string) {
     campaignId: nextBatch.campaign_id,
     batchId: nextBatch.batch_id,
     requestedBy: run.requested_by,
-    includeErrors: true
+    includeErrors: run.sync_mode === "error_reprocess" || run.sync_mode === "full_sync"
   });
 
   if (!job) {
@@ -1302,6 +1311,40 @@ export async function startGeneralSync(input: ScopeInput & { requestedBy: string
     created: true,
     run: await getGeneralSyncRun(run.id)
   };
+}
+
+export async function startScheduledGeneralSync() {
+  const requestKey = `scheduled:${new Date().toISOString().slice(0, 13)}`;
+  const systemUserId = process.env.PROCESSING_SYSTEM_USER_ID?.trim() || null;
+  const supabase = createSupabaseAdminClient();
+  const { data, error } = await supabase.rpc("create_scheduled_general_sync_run_v1", {
+    p_request_key: requestKey,
+    p_requested_by: systemUserId
+  });
+
+  if (error) {
+    throw new DataAccessError("Nao foi possivel criar a sincronizacao geral agendada.", "generalSync.startScheduled", error);
+  }
+
+  if (!data) return null;
+
+  const rawRun = data as GeneralSyncRunRow;
+  const run = await getGeneralSyncRun(rawRun.id);
+  if (rawRun.request_key === requestKey && rawRun.trigger_source === "scheduled") {
+    await logGeneralSyncEvent({
+      eventType: "scheduled_general_sync_started",
+      createdBy: systemUserId,
+      runId: run.id,
+      details: {
+        source: "scheduled",
+        syncMode: "scheduled_recheck",
+        requestKey,
+        recordCount: run.recordCount,
+        batchCount: run.batchCount
+      }
+    });
+  }
+  return run;
 }
 
 export async function getGeneralSyncRun(runId: string): Promise<GeneralSyncRunDetail> {
