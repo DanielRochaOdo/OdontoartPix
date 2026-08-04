@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { logProcessingEvent } from "@/lib/event-logs";
 import {
   consultMonthlyByAssociatedCode,
   ErpError,
@@ -96,6 +97,13 @@ type BatchOutcome = {
   retried: number;
   results: ConsultationResult[];
 };
+
+class ProcessingStopRequestedError extends Error {
+  constructor() {
+    super("Processamento interrompido pelo operador.");
+    this.name = "ProcessingStopRequestedError";
+  }
+}
 
 export function shouldRetryConsultationInBatch(error: unknown) {
   if (!(error instanceof ErpError)) return true;
@@ -569,7 +577,8 @@ function prepareMember(
 async function consultPreparedMember(
   member: PreparedMember,
   deadline: number,
-  config: Awaited<ReturnType<typeof getProcessingConfig>>
+  config: Awaited<ReturnType<typeof getProcessingConfig>>,
+  stopSignal?: AbortSignal
 ): Promise<ConsultationResult> {
   if (!canStartAnotherAttempt(deadline, config)) {
     return {
@@ -587,7 +596,8 @@ async function consultPreparedMember(
   try {
     const consultation = await consultMonthlyByAssociatedCode(
       member.associatedCode,
-      member.targetInstallmentId
+      member.targetInstallmentId,
+      stopSignal
     );
     return {
       claimed: member.claimed,
@@ -617,7 +627,8 @@ async function processClaimedMembers(
   claimed: ClaimedMember[],
   processingDeadline: number,
   outerDeadline: number,
-  onWaveCompleted: (wave: { succeeded: number; failed: number; retried: number }) => Promise<void>
+  onWaveCompleted: (wave: { succeeded: number; failed: number; retried: number }) => Promise<void>,
+  stopSignal?: AbortSignal
 ): Promise<BatchOutcome> {
   const config = await getProcessingConfig();
   const supabase = createSupabaseAdminClient();
@@ -639,7 +650,7 @@ async function processClaimedMembers(
 
   const membersById = new Map(storedMembers.map((member) => [member.id, member]));
   const prepared = claimed.map((item) => prepareMember(item, membersById));
-  const waveSize = Math.max(1, Math.min(config.perWorkerConcurrency, 15));
+  const waveSize = Math.max(1, config.perWorkerConcurrency);
   const firstWaveSize = Math.min(waveSize, 15);
   const allResults: ConsultationResult[] = [];
   let totalSucceeded = 0;
@@ -708,7 +719,7 @@ async function processClaimedMembers(
         validMembers,
         waveSize,
         async (member) => {
-          const result = await consultPreparedMember(member, processingDeadline, config);
+          const result = await consultPreparedMember(member, processingDeadline, config, stopSignal);
           if (!firstResponseLogged) {
             firstResponseLogged = true;
             logProcessingPhase({
@@ -735,10 +746,12 @@ async function processClaimedMembers(
       });
 
       const results = [...invalidResults, ...consultationResults];
-      allResults.push(...results);
+      const stoppedResults = results.filter((result) => result.errorCode === "PROCESSING_STOPPED");
+      const persistableResults = results.filter((result) => result.errorCode !== "PROCESSING_STOPPED");
+      allResults.push(...persistableResults);
       const persistenceStartedAt = performance.now();
       const persistenceResults = await mapWithConcurrency(
-        results,
+        persistableResults,
         waveSize,
         async (result) => {
           try {
@@ -752,7 +765,7 @@ async function processClaimedMembers(
       let waveSucceeded = 0;
       let waveFailed = 0;
       let waveRetried = 0;
-      for (const [index, persisted] of persistenceResults.entries()) {
+      for (const persisted of persistenceResults) {
         if (persisted.error) {
           throw persisted.error;
         }
@@ -791,6 +804,9 @@ async function processClaimedMembers(
           persistenceDurationMs: Math.round(persistenceDurationMs)
         }
       });
+      if (stoppedResults.length > 0 || stopSignal?.aborted) {
+        throw new ProcessingStopRequestedError();
+      }
     }
 
     if (unstartedClaims.length > 0) {
@@ -956,6 +972,23 @@ export async function processNextJobBlock(outerDeadline?: number): Promise<Proce
   let allResults: ConsultationResult[] = [];
   let jobStatus: ProcessingBlockResult["status"] = "queued";
   const selectedAt = performance.now();
+  const processingStartedAt = new Date().toISOString();
+  const stopController = new AbortController();
+  let stopPollInFlight = false;
+  const stopPollTimer = setInterval(() => {
+    if (stopPollInFlight || stopController.signal.aborted) return;
+    stopPollInFlight = true;
+    void readJob(job.id, executorDeadline)
+      .then((currentJob) => {
+        if (currentJob?.stop_requested_at || currentJob?.status === "paused" || currentJob?.status === "cancelled") {
+          stopController.abort("processing-stopped");
+        }
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        stopPollInFlight = false;
+      });
+  }, 250);
 
   logProcessingPhase({
     phase: "job_selected",
@@ -966,6 +999,10 @@ export async function processNextJobBlock(outerDeadline?: number): Promise<Proce
 
   try {
   while (canStartAnotherAttempt(processingDeadline, config)) {
+      if (stopController.signal.aborted) {
+        jobStatus = "paused";
+        break;
+      }
       const refreshedJob = await readJob(job.id, processingDeadline);
       if (!refreshedJob) {
         jobStatus = "paused";
@@ -980,7 +1017,7 @@ export async function processNextJobBlock(outerDeadline?: number): Promise<Proce
       const claimLimit = Math.min(config.perWorkerConcurrency, calculateClaimLimit(
         remainingBudgetMs(processingDeadline),
         config.claimBatchSize,
-        Math.min(config.perWorkerConcurrency, 15),
+        config.perWorkerConcurrency,
         config.httpConnectTimeoutMs + config.httpReadTimeoutMs,
         config.persistenceReserveMs,
         config.finalizationReserveMs
@@ -1012,9 +1049,15 @@ export async function processNextJobBlock(outerDeadline?: number): Promise<Proce
             succeeded: totalSucceeded,
             failed: totalFailed
           }, processingDeadline);
-        }
+        },
+        stopController.signal
       );
       allResults = allResults.concat(batchOutcome.results);
+
+      if (stopController.signal.aborted) {
+        jobStatus = "paused";
+        break;
+      }
 
       const postBatchJob = await readJob(job.id, processingDeadline);
       if (!postBatchJob || postBatchJob.status === "paused" || postBatchJob.stop_requested_at) {
@@ -1048,6 +1091,7 @@ export async function processNextJobBlock(outerDeadline?: number): Promise<Proce
       last_heartbeat_at: new Date().toISOString(),
       last_error: null
     }, executorDeadline);
+    clearInterval(stopPollTimer);
 
     console.info("[PROCESSING_JOB_BLOCK_COMPLETED]", {
       workerId,
@@ -1058,6 +1102,24 @@ export async function processNextJobBlock(outerDeadline?: number): Promise<Proce
       retried: totalRetried,
       status: finalStatus
     });
+
+    await logProcessingEvent({
+      campaignId: job.campaign_id,
+      batchId: job.batch_id,
+      eventType: "processing_job_completed",
+      reason: finalStatus === "completed" ? "Processamento concluído" : "Bloco de processamento concluído",
+      details: {
+        status: finalStatus,
+        startedAt: processingStartedAt,
+        finishedAt: new Date().toISOString(),
+        durationMs: Date.now() - new Date(processingStartedAt).getTime(),
+        claimed: totalClaimed,
+        processed: totalSucceeded + totalFailed,
+        succeeded: totalSucceeded,
+        failed: totalFailed,
+        retried: totalRetried
+      }
+    }).catch((eventError) => console.error("[PROCESSING_EVENT_LOG_FAILED]", eventError));
 
     return {
       workerId,
@@ -1080,6 +1142,7 @@ export async function processNextJobBlock(outerDeadline?: number): Promise<Proce
           : undefined
     };
   } catch (error) {
+    clearInterval(stopPollTimer);
     const databaseError = error as { message?: string; code?: string; details?: string; hint?: string };
     const message = error instanceof Error
       ? error.message
@@ -1092,12 +1155,13 @@ export async function processNextJobBlock(outerDeadline?: number): Promise<Proce
       p_next_retry_at: new Date(Date.now() + computeRetryDelayMs(1)).toISOString()
     }).abortSignal(shortOperationSignal(executorDeadline)));
 
-    const nextStatus = isTransientInfrastructureError(error) ? "queued" : "failed";
+    const stopRequested = stopController.signal.aborted || error instanceof ProcessingStopRequestedError;
+    const nextStatus = stopRequested ? "paused" : isTransientInfrastructureError(error) ? "queued" : "failed";
 
     await releaseJob(job.id, workerId, {
       status: nextStatus,
       last_error: message.slice(0, 1000),
-      finished_at: nextStatus === "failed" ? new Date().toISOString() : null,
+      finished_at: stopRequested || nextStatus === "failed" ? new Date().toISOString() : null,
       next_run_at: nextStatus === "queued" ? new Date().toISOString() : null
     }, executorDeadline);
 
@@ -1118,7 +1182,7 @@ export async function processNextJobBlock(outerDeadline?: number): Promise<Proce
       succeeded: totalSucceeded,
       failed: totalFailed,
       retried: totalRetried,
-      status: isTransientInfrastructureError(error) ? "queued" : "failed"
+      status: stopRequested ? "paused" : isTransientInfrastructureError(error) ? "queued" : "failed"
     };
   }
 }

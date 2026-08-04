@@ -13,7 +13,8 @@ export type ErpErrorCode =
   | "ERP_SERVER_ERROR"
   | "ERP_HTTP_ERROR"
   | "ERP_INVALID_RESPONSE"
-  | "ERP_NOT_CONFIGURED";
+  | "ERP_NOT_CONFIGURED"
+  | "PROCESSING_STOPPED";
 
 export class ErpError extends Error {
   constructor(
@@ -102,7 +103,8 @@ async function readResponseBody(response: Response, controller: AbortController)
 
 export async function consultMonthlyByAssociatedCode(
   associatedCode: string,
-  targetInstallmentId?: string
+  targetInstallmentId?: string,
+  externalSignal?: AbortSignal
 ): Promise<MonthlyConsultationResult> {
   const baseUrl = process.env.MENSALIDADES_API_BASE_URL;
   const token = process.env.MENSALIDADES_API_TOKEN;
@@ -118,6 +120,9 @@ export async function consultMonthlyByAssociatedCode(
 
   const { httpConnectTimeoutMs } = await getProcessingConfig();
   const controller = new AbortController();
+  const abortFromWorker = () => controller.abort("processing-stopped");
+  if (externalSignal?.aborted) controller.abort("processing-stopped");
+  else externalSignal?.addEventListener("abort", abortFromWorker, { once: true });
   const startedAt = performance.now();
   const connectTimeout = setTimeout(() => controller.abort("connect-timeout"), httpConnectTimeoutMs);
 
@@ -169,6 +174,10 @@ export async function consultMonthlyByAssociatedCode(
     clearTimeout(connectTimeout);
     if (error instanceof ErpError) throw error;
 
+    if (externalSignal?.aborted) {
+      throw new ErpError("PROCESSING_STOPPED", "A consulta foi interrompida pelo operador.", false);
+    }
+
     if (error instanceof Error && error.name === "AbortError") {
       throw new ErpError(
         "ERP_TIMEOUT",
@@ -182,6 +191,8 @@ export async function consultMonthlyByAssociatedCode(
       "Não foi possível estabelecer comunicação com o ERP.",
       true
     );
+  } finally {
+    externalSignal?.removeEventListener("abort", abortFromWorker);
   }
 }
 

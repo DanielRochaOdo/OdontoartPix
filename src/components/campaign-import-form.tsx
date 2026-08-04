@@ -12,7 +12,7 @@ type ImportResponse = {
       imported_records?: number;
       invalid_records?: number;
       skipped_duplicate_records?: number;
-      issues?: Array<{ line?: number; associatedCode?: string; reason?: string }>;
+      issues?: Array<{ line?: number; associatedCode?: string; targetInstallmentId?: string; reason?: string }>;
     };
   };
   error?: { message?: string };
@@ -86,6 +86,7 @@ export function CampaignImportForm({
               summary: json.data.summary
             })
           );
+          window.dispatchEvent(new Event("campaign-import-report-updated"));
         } catch {}
         router.push(`/campanhas/${json.data.campaignId}`);
         router.refresh();

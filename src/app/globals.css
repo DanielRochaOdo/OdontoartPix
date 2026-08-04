@@ -70,6 +70,15 @@ textarea {
   to { transform: translateX(220%); }
 }
 
+@keyframes global-processing-orb {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 14px rgb(0 229 195 / 0.45); }
+  50% { transform: scale(1.08); box-shadow: 0 0 28px rgb(0 229 195 / 0.8); }
+}
+
+.global-processing-orb {
+  animation: global-processing-orb 1.8s ease-in-out infinite;
+}
+
 @keyframes processing-active-glow {
   0%, 100% { box-shadow: 0 0 0 0 rgb(16 185 129 / 0.05); }
   50% { box-shadow: 0 0 0 5px rgb(16 185 129 / 0.08); }
@@ -109,7 +118,8 @@ textarea {
 @media (prefers-reduced-motion: reduce) {
   .processing-active-card,
   .processing-current-batch,
-  .processing-progress-fill::after {
+  .processing-progress-fill::after,
+  .global-processing-orb {
     animation: none;
   }
 }

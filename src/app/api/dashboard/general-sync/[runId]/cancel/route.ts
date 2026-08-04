@@ -25,8 +25,13 @@ export async function POST(
 
   try {
     await cancelGeneralSyncRun(parsed.data.runId, reason, auth.profile.id);
-    const advancement = await advanceGeneralSyncRuns();
-    const run = await getGeneralSyncRun(parsed.data.runId);
+    let advancement = await advanceGeneralSyncRuns();
+    let run = await getGeneralSyncRun(parsed.data.runId);
+    for (let attempt = 0; attempt < 40 && (run.status === "cancelling" || run.status === "queued" || run.status === "running"); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      advancement = await advanceGeneralSyncRuns();
+      run = await getGeneralSyncRun(parsed.data.runId);
+    }
 
     console.info("[GENERAL_SYNC_CANCEL_REQUESTED]", {
       runId: parsed.data.runId,
@@ -34,7 +39,7 @@ export async function POST(
       advancement
     });
 
-    return ok(run, "Sincronizacao geral interrompida.");
+    return ok(run, run.status === "cancelled" ? "Sincronizacao geral interrompida." : "Interrupcao solicitada; aguardando o encerramento do worker.");
   } catch (error) {
     const message = error instanceof Error ? error.message : "Nao foi possivel cancelar a sincronizacao geral.";
     console.error("[GENERAL_SYNC_CANCEL_FAILED]", {

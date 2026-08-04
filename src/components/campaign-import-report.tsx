@@ -7,6 +7,7 @@ const STORAGE_KEY = "campaign-import-report";
 type ImportIssue = {
   line?: number;
   associatedCode?: string;
+  targetInstallmentId?: string;
   reason?: string;
 };
 
@@ -32,20 +33,29 @@ export function CampaignImportReport({
   const [report, setReport] = useState<ImportReport | null>(null);
 
   useEffect(() => {
-    try {
-      const raw = window.sessionStorage.getItem(STORAGE_KEY);
-      if (!raw) return;
+    function loadReport() {
+      let shouldRemove = false;
+      try {
+        const raw = window.sessionStorage.getItem(STORAGE_KEY);
+        if (!raw) return;
 
-      const parsed = JSON.parse(raw) as ImportReport;
-      const matchesCampaign = campaignId && parsed.campaignId === campaignId;
-      const matchesBatch = batchId && parsed.batchId === batchId;
-      if (!matchesCampaign && !matchesBatch) return;
+        const parsed = JSON.parse(raw) as ImportReport;
+        const matchesCampaign = campaignId && parsed.campaignId === campaignId;
+        const matchesBatch = batchId && parsed.batchId === batchId;
+        if (!matchesCampaign && !matchesBatch) return;
 
-      setReport(parsed);
-      window.sessionStorage.removeItem(STORAGE_KEY);
-    } catch {
-      window.sessionStorage.removeItem(STORAGE_KEY);
+        setReport(parsed);
+        shouldRemove = true;
+      } catch {
+        shouldRemove = true;
+      } finally {
+        if (shouldRemove) window.sessionStorage.removeItem(STORAGE_KEY);
+      }
     }
+
+    loadReport();
+    window.addEventListener("campaign-import-report-updated", loadReport);
+    return () => window.removeEventListener("campaign-import-report-updated", loadReport);
   }, [batchId, campaignId]);
 
   if (!report) return null;
@@ -100,6 +110,7 @@ export function CampaignImportReport({
                 <tr>
                   <th className="pb-2 pr-4 font-medium">Linha</th>
                   <th className="pb-2 pr-4 font-medium">Codigo</th>
+                  <th className="pb-2 pr-4 font-medium">Parcela</th>
                   <th className="pb-2 font-medium">Motivo</th>
                 </tr>
               </thead>
@@ -111,6 +122,7 @@ export function CampaignImportReport({
                   >
                     <td className="py-2 pr-4 align-top">{issue.line ?? "-"}</td>
                     <td className="py-2 pr-4 align-top">{issue.associatedCode ?? "-"}</td>
+                    <td className="py-2 pr-4 align-top">{issue.targetInstallmentId ?? "-"}</td>
                     <td className="py-2 align-top">{issue.reason ?? "Motivo nao informado."}</td>
                   </tr>
                 ))}

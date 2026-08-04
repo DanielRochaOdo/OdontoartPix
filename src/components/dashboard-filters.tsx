@@ -32,11 +32,11 @@ function SearchIcon() {
 }
 
 function ResetIcon() {
-  return <ManualDashboardIcon name="reset" className="h-4 w-4" />;
+  return <ManualDashboardIcon name="reset" className="h-4 w-4 dark:brightness-0 dark:invert" />;
 }
 
 function CheckIcon() {
-  return <ManualDashboardIcon name="apply" className="h-4 w-4" />;
+  return <ManualDashboardIcon name="apply" className="h-4 w-4 dark:brightness-0 dark:invert" />;
 }
 
 function FilterMenu({
@@ -285,19 +285,21 @@ export function DashboardFilters({
 
         <button
           type="button"
-          onClick={clearFilters}
-          className="inline-flex items-center gap-2 rounded-xl border border-[#9db5c8] bg-transparent px-4 py-3 text-sm text-[#30485d] shadow-sm transition hover:border-[#00a98f] hover:bg-[#eafaf6] dark:border-[#52708b] dark:text-[#d7e5f2] dark:hover:border-[#00E5C3] dark:hover:bg-[#0b2540]"
+          onClick={applyFilters}
+          aria-label="Aplicar filtros"
+          title="Aplicar filtros"
+          className="inline-flex h-12 w-12 items-center justify-center rounded-xl bg-[#00c8aa] text-[#03211f] shadow-[0_0_18px_rgba(0,229,195,0.22)] transition hover:bg-[#00b596] dark:bg-[#00E5C3] dark:hover:bg-[#22D5B8]"
         >
-          <ResetIcon />
-          Limpar
+          <CheckIcon />
         </button>
         <button
           type="button"
-          onClick={applyFilters}
-          className="inline-flex items-center gap-2 rounded-xl bg-[#00c8aa] px-4 py-3 text-sm font-semibold text-[#03211f] shadow-[0_0_18px_rgba(0,229,195,0.22)] transition hover:bg-[#00b596] dark:bg-[#00E5C3] dark:hover:bg-[#22D5B8]"
+          onClick={clearFilters}
+          aria-label="Limpar filtros"
+          title="Limpar filtros"
+          className="inline-flex h-12 w-12 items-center justify-center rounded-xl border border-[#9db5c8] bg-transparent text-[#30485d] shadow-sm transition hover:border-[#00a98f] hover:bg-[#eafaf6] dark:border-[#52708b] dark:text-[#d7e5f2] dark:hover:border-[#00E5C3] dark:hover:bg-[#0b2540]"
         >
-          <CheckIcon />
-          Aplicar
+          <ResetIcon />
         </button>
       </div>
 
@@ -327,11 +329,7 @@ export function DashboardFilters({
             );
           })}
         </div>
-      ) : (
-        <p className="text-xs text-[#91a8bd] lg:text-right">
-          Sem filtros selecionados: o dashboard exibe os numeros absolutos do sistema.
-        </p>
-      )}
+      ) : null}
     </div>
   );
 }

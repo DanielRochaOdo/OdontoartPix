@@ -1334,7 +1334,7 @@ export async function cancelGeneralSyncRun(runId: string, reason: string, reques
     batches.find((item) => item.status === "running" || item.status === "queued" || item.status === "waiting_active_job") ??
     null;
 
-  if (activeBatch?.processing_job_id) {
+  if (activeBatch?.processing_job_id || activeBatch?.waiting_job_id) {
     await interruptBatchJob(activeBatch.batch_id, reason, requestedBy);
   }
 

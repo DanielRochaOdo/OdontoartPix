@@ -38,14 +38,14 @@ export const PROCESSING_PRESETS: Record<ProcessingPresetKey, ProcessingConfig> =
     maxPagesPerOperation: 1000
   },
   agressivo: {
-    workerCount: 10,
+    workerCount: 20,
     claimBatchSize: 120,
-    perWorkerConcurrency: 10,
+    perWorkerConcurrency: 30,
     httpConnectTimeoutMs: 5000,
     httpReadTimeoutMs: 5000,
     maxAttemptsPerItem: 3,
-    staleHeartbeatMs: 180000,
-    workerCycleBudgetMs: 90000,
+    staleHeartbeatMs: 120000,
+    workerCycleBudgetMs: 55000,
     shutdownReserveMs: 9000,
     persistenceReserveMs: 5000,
     finalizationReserveMs: 8000,
