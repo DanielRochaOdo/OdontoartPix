@@ -1313,9 +1313,9 @@ export async function startGeneralSync(input: ScopeInput & { requestedBy: string
   };
 }
 
-export async function startScheduledGeneralSync() {
+export async function startScheduledGeneralSync(systemUserIdOverride?: string | null) {
   const requestKey = `scheduled:${new Date().toISOString().slice(0, 13)}`;
-  const systemUserId = process.env.PROCESSING_SYSTEM_USER_ID?.trim() || null;
+  const systemUserId = systemUserIdOverride?.trim() || process.env.PROCESSING_SYSTEM_USER_ID?.trim() || null;
   const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase.rpc("create_scheduled_general_sync_run_v1", {
     p_request_key: requestKey,

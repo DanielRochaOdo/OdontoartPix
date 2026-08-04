@@ -269,6 +269,7 @@ function sleep(milliseconds: number) {
 export async function triggerQueuedProcessing(options?: {
   maxRuns?: number;
   budgetMs?: number;
+  systemUserId?: string | null;
 }): Promise<ProcessingKickoffResult> {
   const maxRuns = Math.max(1, options?.maxRuns ?? 10000);
   const budgetMs = Math.max(1000, options?.budgetMs ?? 840000);
@@ -308,7 +309,7 @@ export async function triggerQueuedProcessing(options?: {
     if (result.status === "idle") {
       await recoverStalledProcessingIfNeeded();
       await advanceGeneralSyncRuns();
-      await startScheduledGeneralSync();
+      await startScheduledGeneralSync(options?.systemUserId);
       summary.lastStatus = await resolveActiveSystemStatus();
       if (summary.lastStatus === "idle") break;
 

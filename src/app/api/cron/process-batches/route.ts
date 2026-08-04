@@ -36,9 +36,11 @@ export async function GET(request: Request) {
   }
 
   try {
+    const systemUserId = request.headers.get("x-processing-system-user-id")?.trim() || null;
     const result = await triggerQueuedProcessing({
       maxRuns: 10000,
-      budgetMs: 45000
+      budgetMs: 45000,
+      systemUserId
     });
     return NextResponse.json({ success: true, data: result });
   } catch (error) {
