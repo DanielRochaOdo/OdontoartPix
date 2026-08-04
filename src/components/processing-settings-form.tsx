@@ -26,7 +26,10 @@ function rowsForConfig(config: ProcessingConfig) {
   return [
     ["Workers", String(config.workerCount)],
     ["Block size", String(config.claimBatchSize)],
-    ["Concurrency", String(config.perWorkerConcurrency)],
+    ["ERP concurrency", String(config.erpConcurrency)],
+    ["Persistence concurrency", String(config.persistenceConcurrency)],
+    ["Persistence batch", String(config.persistenceBatchSize)],
+    ["Max buffered", String(config.maxBufferedResults)],
     ["Connect timeout", `${config.httpConnectTimeoutMs} ms`],
     ["Read timeout", `${config.httpReadTimeoutMs} ms`],
     ["Max attempts", String(config.maxAttemptsPerItem)],

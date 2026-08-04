@@ -98,6 +98,18 @@ type BatchOutcome = {
   results: ConsultationResult[];
 };
 
+type WavePersistenceSummary = {
+  waveId: string;
+  jobId: string;
+  batchId: string;
+  resultCount: number;
+  persistedSuccess: number;
+  persistedRetry: number;
+  persistedError: number;
+  staleDiscarded: number;
+  terminalCount: number;
+};
+
 class ProcessingStopRequestedError extends Error {
   constructor() {
     super("Processamento interrompido pelo operador.");
@@ -480,30 +492,84 @@ async function persistResult(result: ConsultationResult, deadline: number) {
   return data === true ? "error" as const : "stale" as const;
 }
 
-async function updateJobProgress(
+function buildWavePayload(
+  results: ConsultationResult[],
+  config: Awaited<ReturnType<typeof getProcessingConfig>>
+) {
+  return results.map((result) => {
+    if (result.ok && result.analysis) {
+      return {
+        campaignBatchMemberId: result.claimed.id,
+        claimToken: result.claimed.claim_token,
+        resultType: "success",
+        httpStatus: result.httpStatus,
+        durationMs: Math.round(result.durationMs),
+        nextCheckAt: result.analysis.paymentStatus === "unpaid"
+          ? new Date(Date.now() + 55 * 60 * 1000).toISOString()
+          : null,
+        analysis: result.analysis
+      };
+    }
+
+    const forceRetry = result.errorCode === "WORKER_BUDGET_EXHAUSTED";
+    if (forceRetry || (result.retryable && result.claimed.processing_attempts < config.maxAttemptsPerItem)) {
+      return {
+        campaignBatchMemberId: result.claimed.id,
+        claimToken: result.claimed.claim_token,
+        resultType: "retry",
+        httpStatus: result.httpStatus,
+        durationMs: Math.round(result.durationMs),
+        errorCode: result.errorCode ?? "ERP_NETWORK_ERROR",
+        errorMessage: result.errorMessage ?? "Falha transitória durante a consulta.",
+        nextRetryAt: new Date(
+          Date.now() + computeRetryDelayMs(result.claimed.processing_attempts, result.retryAfterMs)
+        ).toISOString()
+      };
+    }
+
+    return {
+      campaignBatchMemberId: result.claimed.id,
+      claimToken: result.claimed.claim_token,
+      resultType: "error",
+      httpStatus: result.httpStatus,
+      durationMs: Math.round(result.durationMs),
+      errorCode: result.errorCode ?? "ERP_NETWORK_ERROR",
+      errorMessage: result.errorMessage ?? "Falha desconhecida durante a consulta."
+    };
+  });
+}
+
+async function persistProcessingWave(
   job: ProcessingJob,
   workerId: string,
-  progress: { succeeded: number; failed: number },
-  deadline: number
+  results: ConsultationResult[],
+  deadline: number,
+  config: Awaited<ReturnType<typeof getProcessingConfig>>
 ) {
   const supabase = createSupabaseAdminClient();
-  const progressAt = new Date().toISOString();
-  const { error } = await withInfrastructureRetry(async () => {
-    const operation = supabase
-      .from("processing_jobs")
-      .update({
-        processed_items: job.processed_items + progress.succeeded + progress.failed,
-        success_items: job.success_items + progress.succeeded,
-        error_items: job.error_items + progress.failed,
-        last_heartbeat_at: progressAt,
-        last_progress_at: progressAt,
-        updated_at: progressAt
-      })
-      .eq("id", job.id)
-      .eq("locked_by", workerId);
-    return operation.abortSignal(databaseOperationSignal(deadline));
-  });
+  const waveId = randomUUID();
+  const payload = buildWavePayload(results, config);
+  const payloadBytes = Buffer.byteLength(JSON.stringify(payload), "utf8");
+  const startedAt = performance.now();
+  const { data, error } = await withInfrastructureRetry(async () =>
+    supabase.rpc("persist_processing_wave_v1", {
+      p_job_id: job.id,
+      p_batch_id: job.batch_id,
+      p_worker_id: workerId,
+      p_wave_id: waveId,
+      p_results: payload
+    }).abortSignal(databaseOperationSignal(deadline))
+  );
+
   if (error) throw error;
+
+  const summary = data as WavePersistenceSummary;
+  return {
+    waveId,
+    summary,
+    payloadBytes,
+    rpcLatencyMs: performance.now() - startedAt
+  };
 }
 
 function logProcessingPhase(input: {
@@ -650,8 +716,12 @@ async function processClaimedMembers(
 
   const membersById = new Map(storedMembers.map((member) => [member.id, member]));
   const prepared = claimed.map((item) => prepareMember(item, membersById));
-  const waveSize = Math.max(1, config.perWorkerConcurrency);
-  const firstWaveSize = Math.min(waveSize, 15);
+  const waveSize = Math.max(1, Math.min(
+    config.erpConcurrency,
+    config.persistenceBatchSize,
+    config.maxBufferedResults
+  ));
+  const firstWaveSize = waveSize;
   const allResults: ConsultationResult[] = [];
   let totalSucceeded = 0;
   let totalFailed = 0;
@@ -750,30 +820,16 @@ async function processClaimedMembers(
       const persistableResults = results.filter((result) => result.errorCode !== "PROCESSING_STOPPED");
       allResults.push(...persistableResults);
       const persistenceStartedAt = performance.now();
-      const persistenceResults = await mapWithConcurrency(
+      const persistedWave = await persistProcessingWave(
+        job,
+        workerId,
         persistableResults,
-        waveSize,
-        async (result) => {
-          try {
-            return { state: await persistResult(result, processingDeadline), error: null } as const;
-          } catch (error) {
-            return { state: null, error } as const;
-          }
-        },
+        processingDeadline,
+        config
       );
-
-      let waveSucceeded = 0;
-      let waveFailed = 0;
-      let waveRetried = 0;
-      for (const persisted of persistenceResults) {
-        if (persisted.error) {
-          throw persisted.error;
-        }
-        if (persisted.state === "success") waveSucceeded += 1;
-        if (persisted.state === "retrying") waveRetried += 1;
-        if (persisted.state === "error") waveFailed += 1;
-      }
-
+      const waveSucceeded = persistedWave.summary.persistedSuccess;
+      const waveFailed = persistedWave.summary.persistedError;
+      const waveRetried = persistedWave.summary.persistedRetry;
       const persistenceDurationMs = performance.now() - persistenceStartedAt;
       totalPersistenceDurationMs += persistenceDurationMs;
       totalSucceeded += waveSucceeded;
@@ -801,7 +857,12 @@ async function processClaimedMembers(
           failed: waveFailed,
           retried: waveRetried,
           erpDurationMs: Math.round(erpDurationMs),
-          persistenceDurationMs: Math.round(persistenceDurationMs)
+          persistenceDurationMs: Math.round(persistenceDurationMs),
+          waveId: persistedWave.waveId,
+          payloadBytes: persistedWave.payloadBytes,
+          rpcLatencyMs: Math.round(persistedWave.rpcLatencyMs),
+          staleDiscarded: persistedWave.summary.staleDiscarded,
+          totalWaveDurationMs: Math.round(performance.now() - waveStartedAt)
         }
       });
       if (stoppedResults.length > 0 || stopSignal?.aborted) {
@@ -849,7 +910,7 @@ async function processClaimedMembers(
 
     const benchmark = buildBenchmarkMetrics(
       claimed.length,
-      config.perWorkerConcurrency,
+      config.erpConcurrency,
       allResults,
       allResults.filter((result) => result.durationMs > 0),
       totalErpDurationMs,
@@ -1014,10 +1075,10 @@ export async function processNextJobBlock(outerDeadline?: number): Promise<Proce
       }
 
       await heartbeatJob(job.id, workerId, executorDeadline);
-      const claimLimit = Math.min(config.perWorkerConcurrency, calculateClaimLimit(
+      const claimLimit = Math.min(config.erpConcurrency, config.maxBufferedResults, calculateClaimLimit(
         remainingBudgetMs(processingDeadline),
         config.claimBatchSize,
-        config.perWorkerConcurrency,
+        config.erpConcurrency,
         config.httpConnectTimeoutMs + config.httpReadTimeoutMs,
         config.persistenceReserveMs,
         config.finalizationReserveMs
@@ -1045,10 +1106,6 @@ export async function processNextJobBlock(outerDeadline?: number): Promise<Proce
           totalSucceeded += wave.succeeded;
           totalFailed += wave.failed;
           totalRetried += wave.retried;
-          await updateJobProgress(job, workerId, {
-            succeeded: totalSucceeded,
-            failed: totalFailed
-          }, processingDeadline);
         },
         stopController.signal
       );
@@ -1079,11 +1136,6 @@ export async function processNextJobBlock(outerDeadline?: number): Promise<Proce
 
     await releaseJob(job.id, workerId, {
       status: finalStatus,
-      // Retries are attempts, not finalized records. Only terminal outcomes
-      // may advance the user-facing processed counter.
-      processed_items: job.success_items + totalSucceeded + job.error_items + totalFailed,
-      success_items: job.success_items + totalSucceeded,
-      error_items: job.error_items + totalFailed,
       finished_at: finalStatus === "completed" || finalStatus === "paused" ? new Date().toISOString() : null,
       next_run_at: finalStatus === "queued"
         ? (remaining.claimable > 0 ? new Date().toISOString() : remaining.nextRunAt)
@@ -1133,7 +1185,7 @@ export async function processNextJobBlock(outerDeadline?: number): Promise<Proce
         totalClaimed > 0
           ? buildBenchmarkMetrics(
               totalClaimed,
-              config.perWorkerConcurrency,
+              config.erpConcurrency,
               allResults,
               allResults.filter((result) => result.durationMs > 0 && result.errorCode !== "MEMBER_ASSOCIATED_CODE_MISSING" && result.errorCode !== "MEMBER_NOT_FOUND"),
               allResults.reduce((sum, result) => sum + result.durationMs, 0),

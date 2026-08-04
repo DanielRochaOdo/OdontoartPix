@@ -30,6 +30,10 @@ describe("processing-config", () => {
     expect(config.workerCount).toBe(10);
     expect(config.claimBatchSize).toBe(60);
     expect(config.perWorkerConcurrency).toBe(15);
+    expect(config.erpConcurrency).toBe(15);
+    expect(config.persistenceConcurrency).toBe(1);
+    expect(config.persistenceBatchSize).toBe(15);
+    expect(config.maxBufferedResults).toBe(15);
     expect(config.httpConnectTimeoutMs).toBe(5000);
     expect(config.httpReadTimeoutMs).toBe(5000);
     expect(config.maxAttemptsPerItem).toBe(3);
@@ -53,6 +57,7 @@ describe("processing-config", () => {
 
     expect(config.claimBatchSize).toBe(45);
     expect(config.perWorkerConcurrency).toBe(7);
+    expect(config.erpConcurrency).toBe(7);
     expect(config.httpConnectTimeoutMs).toBe(20000);
   });
 });

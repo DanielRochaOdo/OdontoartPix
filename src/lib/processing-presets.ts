@@ -7,6 +7,10 @@ export const PROCESSING_PRESETS: Record<ProcessingPresetKey, ProcessingConfig> =
     workerCount: 10,
     claimBatchSize: 40,
     perWorkerConcurrency: 8,
+    erpConcurrency: 8,
+    persistenceConcurrency: 1,
+    persistenceBatchSize: 8,
+    maxBufferedResults: 8,
     httpConnectTimeoutMs: 4000,
     httpReadTimeoutMs: 4000,
     maxAttemptsPerItem: 2,
@@ -24,6 +28,10 @@ export const PROCESSING_PRESETS: Record<ProcessingPresetKey, ProcessingConfig> =
     workerCount: 10,
     claimBatchSize: 60,
     perWorkerConcurrency: 15,
+    erpConcurrency: 15,
+    persistenceConcurrency: 1,
+    persistenceBatchSize: 15,
+    maxBufferedResults: 15,
     httpConnectTimeoutMs: 5000,
     httpReadTimeoutMs: 5000,
     maxAttemptsPerItem: 3,
@@ -41,6 +49,10 @@ export const PROCESSING_PRESETS: Record<ProcessingPresetKey, ProcessingConfig> =
     workerCount: 20,
     claimBatchSize: 120,
     perWorkerConcurrency: 30,
+    erpConcurrency: 30,
+    persistenceConcurrency: 1,
+    persistenceBatchSize: 30,
+    maxBufferedResults: 30,
     httpConnectTimeoutMs: 5000,
     httpReadTimeoutMs: 5000,
     maxAttemptsPerItem: 3,
@@ -63,6 +75,10 @@ export function matchProcessingPreset(config: ProcessingConfig): ProcessingPrese
       preset.workerCount === config.workerCount &&
       preset.claimBatchSize === config.claimBatchSize &&
       preset.perWorkerConcurrency === config.perWorkerConcurrency &&
+      preset.erpConcurrency === config.erpConcurrency &&
+      preset.persistenceConcurrency === config.persistenceConcurrency &&
+      preset.persistenceBatchSize === config.persistenceBatchSize &&
+      preset.maxBufferedResults === config.maxBufferedResults &&
       preset.httpConnectTimeoutMs === config.httpConnectTimeoutMs &&
       preset.httpReadTimeoutMs === config.httpReadTimeoutMs &&
       preset.maxAttemptsPerItem === config.maxAttemptsPerItem &&
