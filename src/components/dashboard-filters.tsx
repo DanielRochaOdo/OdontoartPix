@@ -5,6 +5,7 @@ import { GeneralSyncButton } from "@/components/general-sync-button";
 import { useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { GeneralSyncRunDetail } from "@/lib/general-sync";
+import { ManualDashboardIcon } from "@/components/manual-dashboard-icon";
 
 type CampaignOption = {
   id: string;
@@ -18,11 +19,7 @@ type BatchOption = {
 };
 
 function ChevronIcon() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" aria-hidden="true">
-      <path d="M7 10l5 5 5-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-    </svg>
-  );
+  return <ManualDashboardIcon name="dropdown" className="h-4 w-4" />;
 }
 
 function SearchIcon() {
@@ -32,6 +29,14 @@ function SearchIcon() {
       <path d="M16 16l4 4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
     </svg>
   );
+}
+
+function ResetIcon() {
+  return <ManualDashboardIcon name="reset" className="h-4 w-4 dark:brightness-0 dark:invert" />;
+}
+
+function CheckIcon() {
+  return <ManualDashboardIcon name="apply" className="h-4 w-4 dark:brightness-0 dark:invert" />;
 }
 
 function FilterMenu({
@@ -49,24 +54,24 @@ function FilterMenu({
 }) {
   return (
     <details className="group relative min-w-[240px]">
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 shadow-sm transition hover:border-slate-300">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-xl border border-[#c7d8e6] bg-white px-4 py-3 text-sm text-[#30485d] shadow-sm transition hover:border-[#00a98f] dark:border-[#284665] dark:bg-[#071b34] dark:text-[#d7e5f2] dark:hover:border-[#00E5C3]">
         <span className="truncate">
           {label}
           {selectedCount > 0 ? ` (${selectedCount})` : ""}
         </span>
-        <span className="text-slate-400 transition group-open:rotate-180">
+        <span className="text-[#83a2bc] transition group-open:rotate-180">
           <ChevronIcon />
         </span>
       </summary>
 
-      <div className="absolute right-0 z-20 mt-2 w-[min(92vw,360px)] rounded-2xl border border-slate-200 bg-white p-4 shadow-xl">
-        <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-500">
+      <div className="absolute right-0 z-20 mt-2 w-[min(92vw,360px)] rounded-2xl border border-[#c7d8e6] bg-white p-4 shadow-2xl dark:border-[#284665] dark:bg-[#071b34]">
+        <label className="flex items-center gap-2 rounded-xl border border-[#c7d8e6] bg-[#f1f6fa] px-3 py-2 text-sm text-[#5d7184] dark:border-[#284665] dark:bg-[#0b2540] dark:text-[#9bb2c7]">
           <SearchIcon />
           <input
             value={query}
             onChange={(event) => onQueryChange(event.target.value)}
             placeholder={`Buscar ${label.toLowerCase()}`}
-            className="w-full border-0 bg-transparent p-0 text-sm text-slate-900 outline-none placeholder:text-slate-400"
+            className="w-full border-0 bg-transparent p-0 text-sm text-[#102033] outline-none placeholder:text-[#7893ab] dark:text-white"
           />
         </label>
 
@@ -218,21 +223,21 @@ export function DashboardFilters({
                 onClick={() => toggleCampaign(campaign.id)}
                 className={`flex w-full items-center justify-between rounded-xl border px-3 py-2 text-left text-sm transition ${
                   active
-                    ? "border-emerald-700 bg-emerald-50 text-emerald-900"
-                    : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                    ? "border-[#1ed9ba] bg-[#0a514a] text-[#effffc]"
+                    : "border-[#c7d8e6] bg-[#f7fafc] text-[#30485d] hover:border-[#00a98f] dark:border-[#284665] dark:bg-[#0b2038] dark:text-[#c5d5e3] dark:hover:border-[#00E5C3]"
                 }`}
               >
                 <span className="truncate">{campaign.name}</span>
                 <span
                   className={`ml-3 inline-flex h-4 w-4 rounded border ${
-                    active ? "border-emerald-700 bg-emerald-700" : "border-slate-300"
+                    active ? "border-[#1ed9ba] bg-[#1ed9ba]" : "border-[#52708b]"
                   }`}
                 />
               </button>
             );
           })}
           {visibleCampaigns.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-slate-200 px-3 py-4 text-sm text-slate-500">
+            <div className="rounded-xl border border-dashed border-[#284665] px-3 py-4 text-sm text-[#8da5bb]">
               Nenhuma campanha encontrada.
             </div>
           ) : null}
@@ -253,26 +258,26 @@ export function DashboardFilters({
                 onClick={() => toggleBatch(batch.id)}
                 className={`flex w-full items-start justify-between rounded-xl border px-3 py-2 text-left text-sm transition ${
                   active
-                    ? "border-emerald-700 bg-emerald-50 text-emerald-900"
-                    : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                    ? "border-[#1ed9ba] bg-[#0a514a] text-[#effffc]"
+                    : "border-[#c7d8e6] bg-[#f7fafc] text-[#30485d] hover:border-[#00a98f] dark:border-[#284665] dark:bg-[#0b2038] dark:text-[#c5d5e3] dark:hover:border-[#00E5C3]"
                 }`}
               >
                 <div className="min-w-0">
                   <div className="truncate font-medium">{batch.name}</div>
-                  <div className="truncate text-xs text-slate-500">
+                  <div className="truncate text-xs text-[#89a5bb]">
                     {campaignNameById.get(batch.campaign_id) ?? "Campanha"}
                   </div>
                 </div>
                 <span
                   className={`ml-3 mt-1 inline-flex h-4 w-4 shrink-0 rounded border ${
-                    active ? "border-emerald-700 bg-emerald-700" : "border-slate-300"
+                    active ? "border-[#1ed9ba] bg-[#1ed9ba]" : "border-[#52708b]"
                   }`}
                 />
               </button>
             );
           })}
           {visibleBatches.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-slate-200 px-3 py-4 text-sm text-slate-500">
+            <div className="rounded-xl border border-dashed border-[#284665] px-3 py-4 text-sm text-[#8da5bb]">
               Nenhum lote encontrado.
             </div>
           ) : null}
@@ -280,17 +285,21 @@ export function DashboardFilters({
 
         <button
           type="button"
-          onClick={clearFilters}
-          className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 shadow-sm transition hover:bg-slate-50"
+          onClick={applyFilters}
+          aria-label="Aplicar filtros"
+          title="Aplicar filtros"
+          className="inline-flex h-12 w-12 items-center justify-center rounded-xl bg-[#00c8aa] text-[#03211f] shadow-[0_0_18px_rgba(0,229,195,0.22)] transition hover:bg-[#00b596] dark:bg-[#00E5C3] dark:hover:bg-[#22D5B8]"
         >
-          Limpar
+          <CheckIcon />
         </button>
         <button
           type="button"
-          onClick={applyFilters}
-          className="rounded-xl bg-emerald-700 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-emerald-800"
+          onClick={clearFilters}
+          aria-label="Limpar filtros"
+          title="Limpar filtros"
+          className="inline-flex h-12 w-12 items-center justify-center rounded-xl border border-[#9db5c8] bg-transparent text-[#30485d] shadow-sm transition hover:border-[#00a98f] hover:bg-[#eafaf6] dark:border-[#52708b] dark:text-[#d7e5f2] dark:hover:border-[#00E5C3] dark:hover:bg-[#0b2540]"
         >
-          Aplicar
+          <ResetIcon />
         </button>
       </div>
 
@@ -301,7 +310,7 @@ export function DashboardFilters({
               key={campaignId}
               type="button"
               onClick={() => toggleCampaign(campaignId)}
-              className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800"
+              className="rounded-full border border-[#1aa992] bg-[#0b3e3b] px-3 py-1 text-xs font-medium text-[#a4f5e4]"
             >
               Campanha: {campaignNameById.get(campaignId) ?? campaignId} x
             </button>
@@ -313,18 +322,14 @@ export function DashboardFilters({
                 key={batchId}
                 type="button"
                 onClick={() => toggleBatch(batchId)}
-                className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-medium text-sky-800"
+                className="rounded-full border border-[#326f9d] bg-[#0b2942] px-3 py-1 text-xs font-medium text-[#a9d8f5]"
               >
                 Lote: {batch?.name ?? batchId} x
               </button>
             );
           })}
         </div>
-      ) : (
-        <p className="text-xs text-slate-500 lg:text-right">
-          Sem filtros selecionados: o dashboard exibe os numeros absolutos do sistema.
-        </p>
-      )}
+      ) : null}
     </div>
   );
 }

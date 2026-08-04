@@ -7,6 +7,10 @@ import { DataAccessError } from "@/lib/errors/data-access-error";
 import { getActiveGeneralSyncRun } from "@/lib/general-sync";
 import { getDashboardMetrics } from "@/lib/metrics";
 import { formatCurrencyBR } from "@/lib/money";
+import { ManualDashboardIcon, type ManualDashboardIconName } from "@/components/manual-dashboard-icon";
+import { DashboardMetricCard } from "@/components/dashboard-metric-card";
+import { PageSurface } from "@/components/page-surface";
+import { PageHeader } from "@/components/page-header";
 
 export const dynamic = "force-dynamic";
 
@@ -28,6 +32,31 @@ function buildMembersErrorHref(campaignIds: string[], batchIds: string[]) {
   }
 
   return `/associados?${params.toString()}`;
+}
+
+function MetricIcon({ label }: { label: string }) {
+  const names: Record<string, ManualDashboardIconName> = {
+    "Campanhas consideradas": "campaigns",
+    Associados: "consolidated",
+    "Parcelas consolidadas": "parcels",
+    Pagos: "paid",
+    "Nao pagos": "unpaid",
+    Erros: "errors",
+    "Valor total dos lotes": "totalValue",
+    "Valor pago": "paidValue",
+    Aproveitamento: "utilization",
+    "Valor pendente": "pendingValue"
+  };
+  return <ManualDashboardIcon name={names[label] ?? "pendingValue"} className="h-9 w-9" />;
+}
+
+function metricIconClass(label: string) {
+  if (label === "Associados") return "border-info bg-info-soft text-info";
+  if (label === "Pagos" || label === "Valor pago" || label === "Aproveitamento") {
+    return "border-success bg-success-soft text-success";
+  }
+  if (label === "Erros" || label === "Valor pendente") return "border-danger bg-danger-soft text-danger";
+  return "border-brand bg-brand-soft text-brand";
 }
 
 export default async function DashboardPage({
@@ -68,7 +97,7 @@ export default async function DashboardPage({
   const cards = metrics
     ? [
         { label: "Campanhas consideradas", value: String(metrics.totalCampaigns) },
-        { label: "Campanhas em andamento", value: String(metrics.campaignsInProgress) },
+        { label: "Associados", value: String(metrics.uniqueCpfs) },
         { label: "Parcelas consolidadas", value: String(metrics.totalCpfs) },
         { label: "Pagos", value: String(metrics.paid) },
         { label: "Nao pagos", value: String(metrics.unpaid) },
@@ -97,18 +126,12 @@ export default async function DashboardPage({
   const membersErrorHref = buildMembersErrorHref(selectedCampaignIds, selectedBatchIds);
 
   return (
-    <main className="p-6">
-      <header className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div>
-          <p className="text-sm font-medium uppercase tracking-[0.2em] text-emerald-700">
-            Visao geral
-          </p>
-          <h1 className="mt-2 text-3xl font-semibold">Dashboard operacional</h1>
-          <p className="mt-2 max-w-2xl text-sm text-slate-600">
-            Indicadores consolidados de campanhas, processamento e pendencias financeiras.
-          </p>
-        </div>
-
+    <PageSurface className="p-6 lg:p-7">
+      <PageHeader
+        eyebrow="Operação"
+        title="Dashboard operacional"
+        description="Indicadores consolidados de campanhas, processamento e pendencias financeiras."
+        actions={
         <DashboardFilters
           campaigns={(campaigns ?? []).map((campaign) => ({
             id: campaign.id,
@@ -124,32 +147,48 @@ export default async function DashboardPage({
           canGeneralSync={canAdmin(profile?.role)}
           initialGeneralSyncRun={activeGeneralSyncRun}
         />
-      </header>
+        }
+      />
+
+      {canAdmin(profile?.role) ? <div id="dashboard-processing-slot" className="mt-5 w-full" /> : null}
 
       {errorMessage ? (
-        <div className="mt-6 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+        <div className="mt-6 rounded-2xl border border-red-500/40 bg-red-950/30 p-4 text-sm text-red-200">
           {errorMessage}
         </div>
       ) : (
-        <section className="mt-6 grid gap-6 xl:grid-cols-[560px_minmax(680px,1fr)] xl:items-stretch">
-          <div className="grid max-w-[560px] content-start gap-4 sm:grid-cols-2 xl:grid-cols-2">
+        <section className="mt-6 grid gap-5 xl:grid-cols-[minmax(560px,0.9fr)_minmax(680px,1.4fr)] xl:items-stretch">
+          <div className="grid content-start gap-3 sm:grid-cols-2">
             {cards.map((card) => (
+              ["Pagos", "Valor pago", "Aproveitamento"].includes(card.label) ? (
+                <DashboardMetricCard
+                  key={card.label}
+                  label={card.label}
+                  value={card.value}
+                  numericValue={card.label === "Pagos" ? metrics?.paid ?? 0 : card.label === "Valor pago" ? metrics?.totalPaidAmountCents ?? 0 : metrics?.utilizationPercentage ?? 0}
+                  kind={card.label === "Pagos" ? "count" : card.label === "Valor pago" ? "currency" : "percentage"}
+                  icon={card.label === "Pagos" ? "paid" : card.label === "Valor pago" ? "paidValue" : "utilization"}
+                  detailEndpoint={card.label === "Pagos" ? `/api/dashboard/paid-details?campaignIds=${encodeURIComponent(selectedCampaignIds.join(","))}&batchIds=${encodeURIComponent(selectedBatchIds.join(","))}` : undefined}
+                  scopeKey={`${selectedCampaignIds.slice().sort().join(",") || "all"}|${selectedBatchIds.slice().sort().join(",") || "all"}`}
+                  valueClassName={card.label === "Valor pago" || card.label === "Aproveitamento" ? "text-[#00a98f] dark:text-[#18d8b6]" : undefined}
+                />
+              ) :
               card.label === "Erros" ? (
                 <Link
                   key={card.label}
                   href={membersErrorHref}
-                  className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-red-300 hover:bg-red-50/40"
+                  className="group flex min-h-[112px] items-center gap-4 rounded-2xl border border-[#d6e3ef] bg-white p-4 shadow-sm transition hover:border-[#FF5B5B]/70 hover:bg-[#fff7f7] dark:border-[#284665] dark:bg-[#071b34]/90 dark:shadow-[0_8px_24px_rgba(0,0,0,0.16)] dark:hover:bg-[#10223b]"
                 >
-                  <p className="text-sm text-slate-500">{card.label}</p>
-                  <div className="mt-3 text-2xl font-semibold">{card.value}</div>
+                  <span className={`inline-flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border transition group-hover:shadow-[0_0_18px_rgba(255,91,91,0.22)] ${metricIconClass(card.label)}`}><MetricIcon label={card.label} /></span>
+                  <div className="min-w-0"><p className="text-[13px] leading-4 text-[#5d7184] dark:text-[#c1d0e0]">{card.label}</p><div className="mt-1 text-2xl font-semibold leading-tight text-[#102033] dark:text-[#f4f8ff]">{card.value}</div></div>
                 </Link>
               ) : (
                 <article
                   key={card.label}
-                  className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"
+                  className="group flex min-h-[112px] items-center gap-4 rounded-2xl border border-[#d6e3ef] bg-white p-4 shadow-sm transition hover:border-[#00a98f]/70 hover:bg-[#f4fffc] dark:border-[#284665] dark:bg-[#071b34]/90 dark:shadow-[0_8px_24px_rgba(0,0,0,0.16)] dark:hover:border-[#00E5C3]/70 dark:hover:bg-[#0b2440]"
                 >
-                  <p className="text-sm text-slate-500">{card.label}</p>
-                  <div className="mt-3 text-2xl font-semibold">{card.value}</div>
+                  <span className={`inline-flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border transition group-hover:shadow-[0_0_18px_rgba(0,229,195,0.2)] ${metricIconClass(card.label)}`}><MetricIcon label={card.label} /></span>
+                  <div className="min-w-0"><p className="text-[13px] leading-4 text-[#5d7184] dark:text-[#c1d0e0]">{card.label}</p><div className={`mt-1 text-2xl font-semibold leading-tight tracking-tight ${card.label === "Valor pago" || card.label === "Aproveitamento" ? "text-[#00a98f] dark:text-[#18d8b6]" : card.label === "Valor pendente" ? "text-[#d94352] dark:text-rose-400" : "text-[#102033] dark:text-[#f4f8ff]"}`}>{card.value}</div></div>
                 </article>
               )
             ))}
@@ -162,10 +201,11 @@ export default async function DashboardPage({
               paidAmountCents={metrics.totalPaidAmountCents}
               pendingAmountCents={metrics.totalPendingAmountCents}
               utilizationPercentage={metrics.utilizationPercentage}
+              historyScope={`campaigns:${selectedCampaignIds.slice().sort().join(",") || "all"}|batches:${selectedBatchIds.slice().sort().join(",") || "all"}`}
             />
           ) : null}
         </section>
       )}
-    </main>
+    </PageSurface>
   );
 }

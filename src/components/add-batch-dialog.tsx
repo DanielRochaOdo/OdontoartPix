@@ -37,7 +37,7 @@ export function AddBatchDialog({
                 </svg>
               </button>
             </div>
-            <AddBatchForm campaignId={campaignId} campaignName={campaignName} />
+            <AddBatchForm campaignId={campaignId} campaignName={campaignName} onCompleted={() => setOpen(false)} />
           </div>
         </div>
       ) : null}

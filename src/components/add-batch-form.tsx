@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 
 const STORAGE_KEY = "campaign-import-report";
 
-export function AddBatchForm({ campaignId, campaignName }: { campaignId: string; campaignName: string }) {
+export function AddBatchForm({ campaignId, campaignName, onCompleted }: { campaignId: string; campaignName: string; onCompleted?: () => void }) {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [fileName, setFileName] = useState("");
@@ -56,6 +56,7 @@ export function AddBatchForm({ campaignId, campaignName }: { campaignId: string;
             summary: payload.data?.summary
           })
         );
+        window.dispatchEvent(new Event("campaign-import-report-updated"));
       } catch {}
 
       const skipped = payload.data?.summary?.skipped_duplicate_records ?? 0;
@@ -63,6 +64,7 @@ export function AddBatchForm({ campaignId, campaignName }: { campaignId: string;
       form.reset();
       setBatchName("");
       setFileName("");
+      onCompleted?.();
       router.refresh();
     } catch {
       setMessage("Falha de comunicacao ao adicionar o lote.");

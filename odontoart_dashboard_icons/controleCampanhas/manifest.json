@@ -1,0 +1,162 @@
+[
+  {
+    "file": "01_campanhas",
+    "label": "Campanhas",
+    "fontawesome_class": "fa-bullhorn",
+    "unicode": "U+F0A1",
+    "glyph": "bullhorn",
+    "usage": "Visão geral e campanhas"
+  },
+  {
+    "file": "02_baixar_modelo_xlsx",
+    "label": "Baixar modelo XLSX",
+    "fontawesome_class": "fa-file-excel-o",
+    "unicode": "U+F1C3",
+    "glyph": "_423",
+    "usage": "Download do modelo de importação"
+  },
+  {
+    "file": "03_importar_campanha_lote",
+    "label": "Importar campanha ou lote",
+    "fontawesome_class": "fa-upload",
+    "unicode": "U+F093",
+    "glyph": "upload_alt",
+    "usage": "Início da importação"
+  },
+  {
+    "file": "04_destino_importacao",
+    "label": "Destino da importação",
+    "fontawesome_class": "fa-folder-open-o",
+    "unicode": "U+F115",
+    "glyph": "folder_open_alt",
+    "usage": "Escolha do destino"
+  },
+  {
+    "file": "05_nome_campanha",
+    "label": "Nome da campanha",
+    "fontawesome_class": "fa-tag",
+    "unicode": "U+F02B",
+    "glyph": "tag",
+    "usage": "Identificação da campanha"
+  },
+  {
+    "file": "06_nome_lote",
+    "label": "Nome do lote",
+    "fontawesome_class": "fa-cubes",
+    "unicode": "U+F1B3",
+    "glyph": "_408",
+    "usage": "Identificação do lote"
+  },
+  {
+    "file": "07_descricao",
+    "label": "Descrição",
+    "fontawesome_class": "fa-file-text-o",
+    "unicode": "U+F0F6",
+    "glyph": "file_text_alt",
+    "usage": "Campo de descrição"
+  },
+  {
+    "file": "08_upload_arquivo",
+    "label": "Upload de arquivo",
+    "fontawesome_class": "fa-cloud-upload",
+    "unicode": "U+F0EE",
+    "glyph": "cloud_upload",
+    "usage": "Área de arrastar arquivo"
+  },
+  {
+    "file": "09_importar_base",
+    "label": "Importar base",
+    "fontawesome_class": "fa-sign-in",
+    "unicode": "U+F090",
+    "glyph": "signin",
+    "usage": "Ação principal de importação"
+  },
+  {
+    "file": "10_tabela_listagem",
+    "label": "Tabela / listagem",
+    "fontawesome_class": "fa-table",
+    "unicode": "U+F0CE",
+    "glyph": "table",
+    "usage": "Listagem das campanhas"
+  },
+  {
+    "file": "11_status_concluido",
+    "label": "Status concluído",
+    "fontawesome_class": "fa-check-circle-o",
+    "unicode": "U+F05D",
+    "glyph": "ok_circle",
+    "usage": "Estado concluído"
+  },
+  {
+    "file": "12_cpfs_usuarios",
+    "label": "CPFs / usuários",
+    "fontawesome_class": "fa-users",
+    "unicode": "U+F0C0",
+    "glyph": "group",
+    "usage": "Quantidade de associados"
+  },
+  {
+    "file": "13_progresso",
+    "label": "Progresso",
+    "fontawesome_class": "fa-circle-o-notch",
+    "unicode": "U+F1CE",
+    "glyph": "_434",
+    "usage": "Andamento percentual"
+  },
+  {
+    "file": "14_pagos",
+    "label": "Pagos",
+    "fontawesome_class": "fa-credit-card",
+    "unicode": "U+F09D",
+    "glyph": "credit_card",
+    "usage": "Registros pagos"
+  },
+  {
+    "file": "15_nao_pagos",
+    "label": "Não pagos",
+    "fontawesome_class": "fa-money",
+    "unicode": "U+F0D6",
+    "glyph": "money",
+    "usage": "Registros não pagos"
+  },
+  {
+    "file": "16_pendencia",
+    "label": "Pendência",
+    "fontawesome_class": "fa-clock-o",
+    "unicode": "U+F017",
+    "glyph": "time",
+    "usage": "Valor ou item pendente"
+  },
+  {
+    "file": "17_acao_abrir",
+    "label": "Ação abrir",
+    "fontawesome_class": "fa-external-link",
+    "unicode": "U+F08E",
+    "glyph": "external_link",
+    "usage": "Abrir detalhes"
+  },
+  {
+    "file": "18_filtro_selecao",
+    "label": "Filtro / seleção",
+    "fontawesome_class": "fa-sliders",
+    "unicode": "U+F1DE",
+    "glyph": "_449",
+    "usage": "Refinar resultados"
+  },
+  {
+    "file": "19_nova_campanha",
+    "label": "Nova campanha",
+    "fontawesome_class": "fa-plus-square-o",
+    "unicode": "U+F196",
+    "glyph": "plus_square_o",
+    "usage": "Criar nova campanha"
+  },
+  {
+    "file": "20_lote",
+    "label": "Lote",
+    "fontawesome_class": "fa-cube",
+    "unicode": "U+F1B2",
+    "glyph": "_407",
+    "usage": "Representar um lote"
+  }
+]

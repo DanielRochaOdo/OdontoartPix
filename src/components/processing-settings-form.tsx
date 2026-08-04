@@ -19,14 +19,17 @@ const labels: Record<ProcessingPresetKey, string> = {
 const descriptions: Record<ProcessingPresetKey, string> = {
   conservador: "Menor pressao no ERP, mais tolerancia operacional e menor throughput.",
   mediano: "Perfil padrao balanceado entre velocidade e estabilidade.",
-  agressivo: "Bloco em 120 com ajuste para continuar estavel no processamento."
+  agressivo: "Concorrência dobrada em relação ao perfil mediano, com ondas de até 30 registros."
 };
 
 function rowsForConfig(config: ProcessingConfig) {
   return [
     ["Workers", String(config.workerCount)],
     ["Block size", String(config.claimBatchSize)],
-    ["Concurrency", String(config.perWorkerConcurrency)],
+    ["ERP concurrency", String(config.erpConcurrency)],
+    ["Persistence concurrency", String(config.persistenceConcurrency)],
+    ["Persistence batch", String(config.persistenceBatchSize)],
+    ["Max buffered", String(config.maxBufferedResults)],
     ["Connect timeout", `${config.httpConnectTimeoutMs} ms`],
     ["Read timeout", `${config.httpReadTimeoutMs} ms`],
     ["Max attempts", String(config.maxAttemptsPerItem)],

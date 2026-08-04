@@ -1,24 +1,10 @@
 "use client";
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { ManualDashboardIcon } from "@/components/manual-dashboard-icon";
 
 function EyeIcon({ slashed = false }: { slashed?: boolean }) {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 24 24"
-      className="h-5 w-5"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z" />
-      <circle cx="12" cy="12" r="2.5" />
-      {slashed ? <path d="M4 4l16 16" /> : null}
-    </svg>
-  );
+  return <ManualDashboardIcon name="eye" className={`h-5 w-5 ${slashed ? "opacity-65" : ""}`} />;
 }
 
 export function CampaignFocusToggle() {
@@ -42,7 +28,7 @@ export function CampaignFocusToggle() {
       onClick={toggleFocus}
       aria-label={focused ? "Sair do modo foco" : "Ativar modo foco"}
       title={focused ? "Sair do modo foco" : "Ativar modo foco"}
-      className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:bg-slate-50"
+      className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-[#284665] bg-[#071b34] text-[#edf6ff] shadow-sm transition hover:border-[#00E5C3] hover:bg-[#0b2540] hover:text-[#00E5C3]"
     >
       <EyeIcon slashed={focused} />
     </button>

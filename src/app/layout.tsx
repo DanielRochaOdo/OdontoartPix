@@ -19,8 +19,11 @@ export const metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="pt-BR">
-      <body className="bg-slate-50 text-slate-950 antialiased">{children}</body>
+    <html lang="pt-BR" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: `(() => { const saved = localStorage.getItem("theme"); const dark = saved ? saved === "dark" : matchMedia("(prefers-color-scheme: dark)").matches; document.documentElement.classList.toggle("dark", dark); document.documentElement.dataset.theme = dark ? "dark" : "light"; })()` }} />
+      </head>
+      <body>{children}</body>
     </html>
   );
 }

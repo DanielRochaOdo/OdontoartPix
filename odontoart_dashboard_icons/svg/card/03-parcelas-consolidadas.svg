@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="Parcelas consolidadas">
+  <title>Parcelas consolidadas</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0D1C2F"/>
+      <stop offset="1" stop-color="#081422"/>
+    </linearGradient>
+    <radialGradient id="halo" cx="50%" cy="45%" r="55%">
+      <stop offset="0" stop-color="#5EF2DF" stop-opacity=".22"/>
+      <stop offset="1" stop-color="#5EF2DF" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="8" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect x="18" y="18" width="476" height="476" rx="104" fill="url(#bg)" stroke="#5EF2DF" stroke-opacity=".32" stroke-width="3"/>
+  <circle cx="256" cy="240" r="190" fill="url(#halo)"/>
+  <g transform="translate(112 96) scale(12)" fill="none" stroke="#5EF2DF" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)"><path d="m12 3-9 5 9 5 9-5-9-5Z"/><path d="m3 12 9 5 9-5"/><path d="m3 16 9 5 9-5"/></g>
+</svg>

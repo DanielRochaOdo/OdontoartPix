@@ -9,6 +9,9 @@ import { DataAccessError } from "@/lib/errors/data-access-error";
 import { getEventLogs } from "@/lib/event-logs";
 import { getBatchMetrics } from "@/lib/metrics";
 import { formatCurrencyBR } from "@/lib/money";
+import { PageSurface } from "@/components/page-surface";
+import { PageHeader } from "@/components/page-header";
+import { SemanticAlert } from "@/components/semantic-alert";
 
 export const dynamic = "force-dynamic";
 
@@ -50,33 +53,24 @@ export default async function BatchDetailPage({
   }
 
   return (
-    <main className="p-6">
-      <nav className="text-sm text-slate-500">
-        <Link href="/campanhas" className="hover:text-slate-900">
+    <PageSurface>
+      <nav className="text-sm text-muted">
+        <Link href="/campanhas" className="text-secondary hover:text-brand">
           Campanhas
         </Link>
         {batch ? (
           <>
             <span className="mx-2">/</span>
-            <Link href={`/campanhas/${batch.campaign_id}`} className="hover:text-slate-900">
+            <Link href={`/campanhas/${batch.campaign_id}`} className="text-secondary hover:text-brand">
               Campanha
             </Link>
           </>
         ) : null}
         <span className="mx-2">/</span>
-        <span className="text-slate-700">{batch?.name ?? "Lote"}</span>
+        <span className="text-primary">{batch?.name ?? "Lote"}</span>
       </nav>
 
-      <header className="mt-4 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <p className="text-sm font-medium uppercase tracking-[0.2em] text-emerald-700">Lote</p>
-          <h1 className="mt-2 text-3xl font-semibold">{batch?.name ?? "Lote nao encontrado"}</h1>
-          <p className="mt-2 text-sm text-slate-600">
-            {batch?.description ?? "Sem descricao."}
-          </p>
-        </div>
-
-        {batch && metrics ? (
+      <PageHeader detail eyebrow="Lote" title={batch?.name ?? "Lote nao encontrado"} description={batch?.description ?? "Sem descricao."} actions={batch && metrics ? (
           <div className="flex flex-wrap items-start gap-2">
             <ProcessResourceButton
               endpoint={`/api/lotes/${batch.id}/processar`}
@@ -102,13 +96,12 @@ export default async function BatchDetailPage({
               ]}
             />
           </div>
-        ) : null}
-      </header>
+        ) : null} />
 
       {errorMessage || !batch || !metrics ? (
-        <div className="mt-6 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+        <SemanticAlert>
           {errorMessage ?? "Nao foi possivel carregar o lote."}
-        </div>
+        </SemanticAlert>
       ) : (
         <>
           <CampaignImportReport campaignId={batch.campaign_id} batchId={batch.id} />
@@ -219,6 +212,6 @@ export default async function BatchDetailPage({
           </section>
         </>
       )}
-    </main>
+    </PageSurface>
   );
 }

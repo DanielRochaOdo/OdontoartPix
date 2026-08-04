@@ -2,6 +2,8 @@ import Link from "next/link";
 import { getMemberDetail } from "@/lib/data";
 import { DataAccessError } from "@/lib/errors/data-access-error";
 import { formatCurrencyBR } from "@/lib/money";
+import { PageSurface } from "@/components/page-surface";
+import { PageHeader } from "@/components/page-header";
 
 export const dynamic = "force-dynamic";
 
@@ -48,15 +50,15 @@ export default async function MemberDetailPage({
     : null;
 
   return (
-    <main className="p-6">
-      <nav className="text-sm text-slate-500">
-        <Link href="/campanhas" className="hover:text-slate-900">
+    <PageSurface>
+      <nav className="text-sm text-muted">
+        <Link href="/campanhas" className="text-secondary hover:text-brand">
           Campanhas
         </Link>
         {campaign ? (
           <>
             <span className="mx-2">/</span>
-            <Link href={`/campanhas/${campaign.id}`} className="hover:text-slate-900">
+            <Link href={`/campanhas/${campaign.id}`} className="text-secondary hover:text-brand">
               {campaign.name}
             </Link>
           </>
@@ -64,19 +66,14 @@ export default async function MemberDetailPage({
         {batch ? (
           <>
             <span className="mx-2">/</span>
-            <Link href={`/lotes/${batch.id}`} className="hover:text-slate-900">
+            <Link href={`/lotes/${batch.id}`} className="text-secondary hover:text-brand">
               {batch.name}
             </Link>
           </>
         ) : null}
       </nav>
 
-      <p className="mt-4 text-sm font-medium uppercase tracking-[0.2em] text-emerald-700">
-        Associado
-      </p>
-      <h1 className="mt-2 text-3xl font-semibold">
-        {member?.name ?? "Detalhe do associado"}
-      </h1>
+      <PageHeader detail eyebrow="Associado" title={member?.name ?? "Detalhe do associado"} />
 
       {errorMessage || !detail || !link ? (
         <div className="mt-6 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
@@ -236,6 +233,6 @@ export default async function MemberDetailPage({
           </section>
         </>
       )}
-    </main>
+    </PageSurface>
   );
 }

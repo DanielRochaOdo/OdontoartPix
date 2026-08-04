@@ -13,6 +13,9 @@ import { CampaignDescriptionInfo } from "@/components/campaign-description-info"
 import { CampaignProcessDialog } from "@/components/campaign-process-dialog";
 import { AddBatchDialog } from "@/components/add-batch-dialog";
 import { ProcessResourceButton } from "@/components/process-resource-button";
+import { PageSurface } from "@/components/page-surface";
+import { PageHeader } from "@/components/page-header";
+import { SemanticAlert } from "@/components/semantic-alert";
 
 export const dynamic = "force-dynamic";
 
@@ -60,30 +63,22 @@ export default async function CampaignDetailPage({
   }
 
   return (
-    <main className="p-6">
-      <nav className="text-sm text-slate-500">
-        <Link href="/campanhas" className="hover:text-slate-900">
+    <PageSurface>
+      <nav className="text-sm text-muted">
+        <Link href="/campanhas" className="text-secondary hover:text-brand">
           Campanhas
         </Link>
         <span className="mx-2">/</span>
-        <span className="text-slate-700">{campaign?.name ?? "Campanha"}</span>
+        <span className="text-primary">{campaign?.name ?? "Campanha"}</span>
       </nav>
 
-      <header className="mt-4 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <p className="text-sm font-medium uppercase tracking-[0.2em] text-emerald-700">
-            Campanha
-          </p>
-          <div className="mt-2 flex flex-wrap items-center gap-3">
-            <h1 className="text-3xl font-semibold">
-              {campaign?.name ?? "Campanha nao encontrada"}
-            </h1>
+      <PageHeader detail eyebrow="Campanha" title={
+        <div className="flex flex-wrap items-center gap-3">
+          <span>{campaign?.name ?? "Campanha nao encontrada"}</span>
             {campaign ? <RenameCampaignForm campaignId={campaign.id} initialName={campaign.name} /> : null}
             {campaign ? <CampaignDescriptionInfo description={campaign.description} /> : null}
-          </div>
         </div>
-
-        {campaign && metrics ? (
+        } actions={campaign && metrics ? (
           <div className="flex flex-wrap items-start gap-2">
             <CampaignProcessDialog
               campaignId={campaign.id}
@@ -111,13 +106,12 @@ export default async function CampaignDetailPage({
               ]}
             />
           </div>
-        ) : null}
-      </header>
+        ) : null} />
 
       {errorMessage || !campaign || !metrics ? (
-        <div className="mt-6 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+        <SemanticAlert>
           {errorMessage ?? "Nao foi possivel carregar a campanha."}
-        </div>
+        </SemanticAlert>
       ) : (
         <>
           <CampaignImportReport campaignId={campaign.id} />
@@ -130,6 +124,6 @@ export default async function CampaignDetailPage({
           </div>
         </>
       )}
-    </main>
+    </PageSurface>
   );
 }

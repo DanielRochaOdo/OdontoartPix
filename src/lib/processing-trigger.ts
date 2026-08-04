@@ -1,5 +1,5 @@
-import { processNextJobBlock } from "@/lib/batch-processing";
-import { advanceGeneralSyncRuns } from "@/lib/general-sync";
+import { calculateMinimumEntryBudgetMs, processNextJobBlock } from "@/lib/batch-processing";
+import { advanceGeneralSyncRuns, startScheduledGeneralSync } from "@/lib/general-sync";
 import { dispatchDurableProcessingWorkflowSafely } from "@/lib/durable-processing-dispatch";
 import { getProcessingConfig } from "@/lib/processing-config";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -157,10 +157,6 @@ async function loadActiveProcessingJobs() {
   return (data ?? []) as ActiveProcessingJobRow[];
 }
 
-function readActivityTimestamp(job: ActiveProcessingJobRow) {
-  return job.last_progress_at ?? job.last_heartbeat_at ?? job.updated_at ?? job.next_run_at;
-}
-
 async function recoverStalledProcessingIfNeeded() {
   const config = await getProcessingConfig();
   const [run, jobs] = await Promise.all([
@@ -171,7 +167,7 @@ async function recoverStalledProcessingIfNeeded() {
   const staleThresholdMs = config.staleHeartbeatMs;
   const stalledJobs = jobs.filter((job) => {
     if (job.status !== "running") return false;
-    const activityAt = readActivityTimestamp(job);
+    const activityAt = job.last_heartbeat_at ?? job.updated_at;
     if (!activityAt) return false;
     const activityMs = new Date(activityAt).getTime();
     if (!Number.isFinite(activityMs)) return false;
@@ -201,40 +197,24 @@ async function recoverStalledProcessingIfNeeded() {
     const supabase = createSupabaseAdminClient();
     const recoveredAt = new Date().toISOString();
     const staleBefore = new Date(Date.now() - staleThresholdMs).toISOString();
-    const { data: recoveredJob, error: recoverJobError } = await supabase
-      .from("processing_jobs")
-      .update({
-        status: "queued",
-        locked_by: null,
-        lease_expires_at: null,
-        next_run_at: recoveredAt,
-        last_error: reason,
-        updated_at: recoveredAt
-      })
-      .eq("id", targetJob.id)
-      .eq("status", "running")
-      .eq("locked_by", targetJob.locked_by)
-      .lt("last_heartbeat_at", staleBefore)
-      .select("id")
-      .maybeSingle();
+    const { data: recoveryData, error: recoverJobError } = await supabase.rpc("recover_stalled_processing_job_v1", {
+      p_job_id: targetJob.id,
+      p_expected_worker_id: targetJob.locked_by,
+      p_stale_before: staleBefore,
+      p_reason: reason,
+      p_next_retry_at: recoveredAt
+    });
 
     if (recoverJobError) throw recoverJobError;
 
-    if (recoveredJob) {
-      const { error: releaseMembersError } = await supabase.rpc("release_worker_claims_v2", {
-        p_batch_id: targetJob.batch_id,
-        p_worker_id: targetJob.locked_by,
-        p_reason: reason,
-        p_next_retry_at: recoveredAt
-      });
-
-      if (releaseMembersError) throw releaseMembersError;
-
+    const recoveryRow = Array.isArray(recoveryData) ? recoveryData[0] : recoveryData;
+    if (recoveryRow?.recovered) {
       console.warn("[PROCESSING_STALLED_JOB_RECOVERED]", {
         jobId: targetJob.id,
         batchId: targetJob.batch_id,
         staleBefore,
-        recoveredAt
+        recoveredAt,
+        releasedClaims: recoveryRow.released_claims ?? 0
       });
       recoveredStalledJob = true;
     }
@@ -303,15 +283,20 @@ export async function triggerQueuedProcessing(options?: {
     lastStatus: "idle"
   };
 
-  const supabase = createSupabaseAdminClient();
-  const { error: recheckError } = await supabase.rpc("enqueue_due_normal_recheck_jobs_v1");
-  if (recheckError) throw recheckError;
-
   await recoverStalledProcessingIfNeeded();
+  const config = await getProcessingConfig();
+  const minimumEntryBudgetMs = calculateMinimumEntryBudgetMs(
+    config.shutdownReserveMs,
+    config.httpConnectTimeoutMs + config.httpReadTimeoutMs,
+    config.persistenceReserveMs,
+    config.finalizationReserveMs
+  );
 
   while (summary.runs < maxRuns && Date.now() < deadline) {
+    if (deadline - Date.now() <= minimumEntryBudgetMs) break;
     await advanceGeneralSyncRuns();
-    const result = await processNextJobBlock();
+    if (deadline - Date.now() <= minimumEntryBudgetMs) break;
+    const result = await processNextJobBlock(deadline);
     await advanceGeneralSyncRuns();
     summary.runs += 1;
     summary.claimed += result.claimed;
@@ -323,6 +308,7 @@ export async function triggerQueuedProcessing(options?: {
     if (result.status === "idle") {
       await recoverStalledProcessingIfNeeded();
       await advanceGeneralSyncRuns();
+      await startScheduledGeneralSync();
       summary.lastStatus = await resolveActiveSystemStatus();
       if (summary.lastStatus === "idle") break;
 
