@@ -1,6 +1,8 @@
 import { MembersTable } from "@/components/members-table";
 import { canAdmin, getCurrentProfile } from "@/lib/auth";
 import { getMembers } from "@/lib/data";
+import { PageSurface } from "@/components/page-surface";
+import { PageHeader } from "@/components/page-header";
 
 export const dynamic = "force-dynamic";
 
@@ -38,12 +40,12 @@ export default async function MembersPage({
   ]);
 
   return (
-    <main className="p-6">
-      <h1 className="text-3xl font-semibold">Associados</h1>
-      <p className="mt-2 max-w-3xl text-sm text-slate-600">
-        Consulte CodigoAssociadoEmpresa, parcela, CPF, campanha, lote, status e pendencias.
-        Use os filtros ou clique nos cabecalhos para ordenar.
-      </p>
+    <PageSurface>
+      <PageHeader
+        eyebrow="Cadastros"
+        title="Associados"
+        description="Consulte CodigoAssociadoEmpresa, parcela, CPF, campanha, lote, status e pendencias. Use os filtros ou clique nos cabecalhos para ordenar."
+      />
       <div className="mt-6">
         <MembersTable
           members={members}
@@ -51,6 +53,6 @@ export default async function MembersPage({
           canReprocessErrors={canAdmin(profile?.role)}
         />
       </div>
-    </main>
+    </PageSurface>
   );
 }

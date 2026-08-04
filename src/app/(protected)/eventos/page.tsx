@@ -2,6 +2,9 @@ import Link from "next/link";
 import { getEventLogs, type EventLogItem } from "@/lib/event-logs";
 import { DataAccessError } from "@/lib/errors/data-access-error";
 import { EventDetailsModal } from "@/components/event-details-modal";
+import { PageSurface } from "@/components/page-surface";
+import { PageHeader } from "@/components/page-header";
+import { SemanticAlert } from "@/components/semantic-alert";
 
 export const dynamic = "force-dynamic";
 
@@ -63,8 +66,8 @@ export default async function EventsPage({
   }
 
   return (
-    <main className="p-6">
-      <header className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+    <PageSurface>
+      <PageHeader eyebrow="Auditoria" title="Eventos" description="Historico de processamentos, conclusoes e ocorrencias operacionais." actions={<>
         <div>
           <p className="text-sm font-medium uppercase tracking-[0.2em] text-emerald-700">Auditoria</p>
           <h1 className="mt-2 text-3xl font-semibold">Eventos</h1>
@@ -74,10 +77,10 @@ export default async function EventsPage({
           {campaignId ? <p>Filtro de campanha ativo.</p> : null}
           {batchId ? <p>Filtro de lote ativo.</p> : null}
         </div>
-      </header>
+      </>} />
 
-      {errorMessage ? <div className="mt-6 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{errorMessage}</div> : (
-        <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      {errorMessage ? <SemanticAlert>{errorMessage}</SemanticAlert> : (
+        <section className="mt-6 rounded-2xl border border-default bg-surface-primary p-5 shadow-sm">
           <div>
             <h2 className="text-lg font-semibold">Eventos registrados</h2>
             <p className="mt-1 text-sm text-slate-500">Exibindo {events.length} evento(s) mais recentes.</p>
@@ -114,6 +117,6 @@ export default async function EventsPage({
           </div>
         </section>
       )}
-    </main>
+    </PageSurface>
   );
 }

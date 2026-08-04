@@ -13,6 +13,7 @@ export function ThemeToggle() {
       : window.matchMedia("(prefers-color-scheme: dark)").matches;
 
     document.documentElement.classList.toggle("dark", nextDark);
+    document.documentElement.dataset.theme = nextDark ? "dark" : "light";
     // A hidratação inicial precisa refletir a preferência persistida do navegador.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setDark(nextDark);
@@ -22,11 +23,13 @@ export function ThemeToggle() {
   useEffect(() => {
     if (!mounted) return;
     document.documentElement.classList.toggle("dark", dark);
+    document.documentElement.dataset.theme = dark ? "dark" : "light";
   }, [dark, mounted]);
 
   function toggleTheme() {
     const nextDark = !dark;
     document.documentElement.classList.toggle("dark", nextDark);
+    document.documentElement.dataset.theme = nextDark ? "dark" : "light";
     window.localStorage.setItem("theme", nextDark ? "dark" : "light");
     setDark(nextDark);
   }
@@ -49,7 +52,7 @@ export function ThemeToggle() {
       onClick={toggleTheme}
       aria-label={label}
       title={title}
-      className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-emerald-800 text-emerald-100 transition hover:bg-emerald-900 hover:text-white"
+      className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-default text-secondary transition hover:bg-surface-hover hover:text-primary"
     >
       {mounted && dark ? (
         <svg

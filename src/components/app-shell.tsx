@@ -133,7 +133,7 @@ export function AppShell({
   }, [router]);
 
   return (
-    <div className="min-h-screen bg-[#061719] text-slate-950">
+    <div className="min-h-screen bg-app text-primary">
       <GlobalProcessingIndicator />
       <div
         className={`mx-auto grid min-h-screen max-w-[1600px] grid-cols-1 transition-[grid-template-columns] duration-200 ${

@@ -9,6 +9,8 @@ import { getDashboardMetrics } from "@/lib/metrics";
 import { formatCurrencyBR } from "@/lib/money";
 import { ManualDashboardIcon, type ManualDashboardIconName } from "@/components/manual-dashboard-icon";
 import { DashboardMetricCard } from "@/components/dashboard-metric-card";
+import { PageSurface } from "@/components/page-surface";
+import { PageHeader } from "@/components/page-header";
 
 export const dynamic = "force-dynamic";
 
@@ -49,12 +51,12 @@ function MetricIcon({ label }: { label: string }) {
 }
 
 function metricIconClass(label: string) {
-  if (label === "Associados") return "border-[#00B8FF]/50 bg-[#00B8FF]/10 text-[#00B8FF]";
+  if (label === "Associados") return "border-info bg-info-soft text-info";
   if (label === "Pagos" || label === "Valor pago" || label === "Aproveitamento") {
-    return "border-[#22D58C]/50 bg-[#22D58C]/10 text-[#22D58C]";
+    return "border-success bg-success-soft text-success";
   }
-  if (label === "Erros" || label === "Valor pendente") return "border-[#FF5B5B]/50 bg-[#FF5B5B]/10 text-[#FF5B5B]";
-  return "border-[#00E5C3]/50 bg-[#00E5C3]/10 text-[#00E5C3]";
+  if (label === "Erros" || label === "Valor pendente") return "border-danger bg-danger-soft text-danger";
+  return "border-brand bg-brand-soft text-brand";
 }
 
 export default async function DashboardPage({
@@ -124,20 +126,12 @@ export default async function DashboardPage({
   const membersErrorHref = buildMembersErrorHref(selectedCampaignIds, selectedBatchIds);
 
   return (
-    <main className="min-h-screen bg-[#f5f8fc] p-6 text-[#102033] dark:bg-[#020d1f] dark:text-[#edf6ff] lg:p-7">
-      <header className="flex flex-col gap-5 border-b border-[#162c48] pb-5 lg:flex-row lg:items-start lg:justify-between">
-        <div>
-          <div className="flex items-start gap-4">
-            <span className="mt-1 h-10 w-1 rounded-full bg-[#00a98f] shadow-[0_0_16px_rgba(0,169,143,0.35)] dark:bg-[#16d8bc] dark:shadow-[0_0_16px_rgba(22,216,188,0.7)]" />
-            <div>
-            <h1 className="text-3xl font-semibold tracking-tight text-[#102033] dark:text-[#f5f9ff] lg:text-4xl">Dashboard operacional</h1>
-            <p className="mt-2 text-sm text-[#5d7184] dark:text-[#b7c9dc] lg:max-w-none">
-            Indicadores consolidados de campanhas, processamento e pendencias financeiras.
-            </p>
-            </div>
-          </div>
-        </div>
-
+    <PageSurface className="p-6 lg:p-7">
+      <PageHeader
+        eyebrow="Operação"
+        title="Dashboard operacional"
+        description="Indicadores consolidados de campanhas, processamento e pendencias financeiras."
+        actions={
         <DashboardFilters
           campaigns={(campaigns ?? []).map((campaign) => ({
             id: campaign.id,
@@ -153,7 +147,8 @@ export default async function DashboardPage({
           canGeneralSync={canAdmin(profile?.role)}
           initialGeneralSyncRun={activeGeneralSyncRun}
         />
-      </header>
+        }
+      />
 
       {canAdmin(profile?.role) ? <div id="dashboard-processing-slot" className="mt-5 w-full" /> : null}
 
@@ -211,6 +206,6 @@ export default async function DashboardPage({
           ) : null}
         </section>
       )}
-    </main>
+    </PageSurface>
   );
 }
