@@ -34,12 +34,14 @@ jobs:
   trigger:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    environment: Production
 
     steps:
       - name: Validate scheduler secrets
         env:
           PROCESS_BATCHES_URL: ${{ secrets.PROCESS_BATCHES_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          PROCESSING_SYSTEM_USER_ID: ${{ secrets.PROCESSING_SYSTEM_USER_ID }}
         run: |
           if [ -z "$PROCESS_BATCHES_URL" ]; then
             echo "GitHub secret PROCESS_BATCHES_URL is required."
@@ -51,11 +53,17 @@ jobs:
             exit 1
           fi
 
+          if [ -z "$PROCESSING_SYSTEM_USER_ID" ]; then
+            echo "GitHub secret PROCESSING_SYSTEM_USER_ID is required."
+            exit 1
+          fi
+
       - name: Trigger processing endpoint
         id: trigger_processing
         env:
           PROCESS_BATCHES_URL: ${{ secrets.PROCESS_BATCHES_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          PROCESSING_SYSTEM_USER_ID: ${{ secrets.PROCESSING_SYSTEM_USER_ID }}
         run: |
           python - <<'PY'
           import json
@@ -76,6 +84,7 @@ jobs:
               url,
               headers={
                 "Authorization": f"Bearer {token}",
+                "X-Processing-System-User-Id": os.environ["PROCESSING_SYSTEM_USER_ID"],
                 "Accept": "application/json",
                 "User-Agent": "odontoartpix-process-batches-workflow",
               },
