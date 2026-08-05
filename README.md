@@ -65,12 +65,18 @@ Aplique as migrations em ordem. As migrations `009_processing_pipeline_and_metri
 
 ## Scheduler externo
 
-O workflow `.github/workflows/process-batches.yml` agenda:
+O workflow `.github/workflows/process-batches.yml` usa um pulso de recuperação a cada 5 minutos:
 
 ```text
 GET /api/cron/process-batches
 Authorization: Bearer <CRON_SECRET>
 ```
+
+O pulso não significa que uma sincronização geral será iniciada a cada 5 minutos.
+A função `claim_scheduled_processing_slot_v1` no PostgreSQL controla a janela
+real configurada (`30`, `60` ou `120` minutos) de forma transacional. O pulso
+mais frequente existe para reduzir o impacto de atrasos ou perdas ocasionais do
+agendamento do GitHub Actions.
 
 Configuracao necessaria no GitHub Actions:
 
