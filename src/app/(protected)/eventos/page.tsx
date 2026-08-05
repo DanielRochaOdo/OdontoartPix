@@ -106,7 +106,7 @@ export default async function EventsPage({
                     <td className="whitespace-nowrap px-4 py-3 text-secondary">{formatDate(event.startedAt)}</td>
                     <td className="whitespace-nowrap px-4 py-3 text-secondary">{formatDate(event.finishedAt)}</td>
                     <td className="whitespace-nowrap px-4 py-3 font-semibold text-primary">{formatDuration(event.startedAt, event.finishedAt)}</td>
-                    <td className="px-4 py-3"><span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${resultClass(event.status)}`}>{resultLabel(event.status)}</span></td>
+                    <td className="px-4 py-3"><span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${resultClass(event.status)}`}>{event.result ?? resultLabel(event.status)}</span></td>
                   </tr>
                 ))}
                 {events.length === 0 ? <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-500">Nenhuma operação encontrada para os filtros atuais.</td></tr> : null}
