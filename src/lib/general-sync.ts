@@ -1169,7 +1169,8 @@ async function syncOneRunState(run: GeneralSyncRunRow, workerId: string) {
     campaignId: nextBatch.campaign_id,
     batchId: nextBatch.batch_id,
     requestedBy: run.requested_by,
-    includeErrors: run.sync_mode === "error_reprocess" || run.sync_mode === "full_sync"
+    includeErrors: run.sync_mode === "error_reprocess" || run.sync_mode === "full_sync",
+    scheduledRecheck: isScheduledRecheck
   });
 
   if (!job) {
