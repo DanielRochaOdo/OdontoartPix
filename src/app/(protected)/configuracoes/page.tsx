@@ -43,6 +43,7 @@ export default async function SettingsPage() {
       <ProcessingSettingsForm
         presets={settings.presets}
         selectedPresetKey={settings.selectedPresetKey}
+        scheduledIntervalMinutes={settings.scheduledIntervalMinutes}
       />
     </PageSurface>
   );

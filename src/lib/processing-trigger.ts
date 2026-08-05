@@ -13,6 +13,13 @@ export type ProcessingKickoffResult = {
   lastStatus: "idle" | "queued" | "completed" | "failed" | "paused";
 };
 
+async function claimScheduledProcessingSlot() {
+  const supabase = createSupabaseAdminClient();
+  const { data, error } = await supabase.rpc("claim_scheduled_processing_slot_v1");
+  if (error) throw error;
+  return data === true;
+}
+
 const ACTIVE_JOB_POLL_DELAY_MS = 500;
 
 export function resolveIdleProcessingStatus(activeJobCount: number) {
@@ -270,6 +277,7 @@ export async function triggerQueuedProcessing(options?: {
   maxRuns?: number;
   budgetMs?: number;
   systemUserId?: string | null;
+  allowScheduledSync?: boolean;
 }): Promise<ProcessingKickoffResult> {
   const maxRuns = Math.max(1, options?.maxRuns ?? 10000);
   const budgetMs = Math.max(1000, options?.budgetMs ?? 840000);
@@ -309,7 +317,12 @@ export async function triggerQueuedProcessing(options?: {
     if (result.status === "idle") {
       await recoverStalledProcessingIfNeeded();
       await advanceGeneralSyncRuns();
-      await startScheduledGeneralSync(options?.systemUserId);
+      if (options?.allowScheduledSync) {
+        const slotClaimed = await claimScheduledProcessingSlot();
+        if (slotClaimed) {
+          await startScheduledGeneralSync(options?.systemUserId);
+        }
+      }
       summary.lastStatus = await resolveActiveSystemStatus();
       if (summary.lastStatus === "idle") break;
 

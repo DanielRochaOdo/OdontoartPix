@@ -40,7 +40,8 @@ export async function GET(request: Request) {
     const result = await triggerQueuedProcessing({
       maxRuns: 10000,
       budgetMs: 45000,
-      systemUserId
+      systemUserId,
+      allowScheduledSync: true
     });
     return NextResponse.json({ success: true, data: result });
   } catch (error) {

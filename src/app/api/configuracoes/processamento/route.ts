@@ -7,7 +7,8 @@ import {
 } from "@/lib/processing-settings";
 
 const BodySchema = z.object({
-  presetKey: z.enum(["conservador", "mediano", "agressivo"])
+  presetKey: z.enum(["conservador", "mediano", "agressivo"]),
+  scheduledIntervalMinutes: z.union([z.literal(30), z.literal(60), z.literal(120)]).default(60)
 });
 
 export async function GET() {
@@ -36,10 +37,15 @@ export async function PUT(request: Request) {
   }
 
   try {
-    const config = await applyProcessingPreset(parsed.data.presetKey, auth.profile.id);
+    const config = await applyProcessingPreset(
+      parsed.data.presetKey,
+      auth.profile.id,
+      parsed.data.scheduledIntervalMinutes
+    );
     return ok(
       {
         presetKey: parsed.data.presetKey,
+        scheduledIntervalMinutes: parsed.data.scheduledIntervalMinutes,
         config
       },
       "Configuracao de processamento atualizada."

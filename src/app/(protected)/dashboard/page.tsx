@@ -6,6 +6,7 @@ import { getBatches, getCampaigns } from "@/lib/data";
 import { DataAccessError } from "@/lib/errors/data-access-error";
 import { getActiveGeneralSyncRun } from "@/lib/general-sync";
 import { getDashboardMetrics } from "@/lib/metrics";
+import { getProcessingScheduleView } from "@/lib/processing-settings";
 import { formatCurrencyBR } from "@/lib/money";
 import { ManualDashboardIcon, type ManualDashboardIconName } from "@/components/manual-dashboard-icon";
 import { DashboardMetricCard } from "@/components/dashboard-metric-card";
@@ -73,10 +74,11 @@ export default async function DashboardPage({
   let batches: Awaited<ReturnType<typeof getBatches>> = [];
   let profile: Awaited<ReturnType<typeof getCurrentProfile>> | null = null;
   let activeGeneralSyncRun: Awaited<ReturnType<typeof getActiveGeneralSyncRun>> | null = null;
+  let processingSchedule = await getProcessingScheduleView();
   let errorMessage: string | null = null;
 
   try {
-    [metrics, campaigns, batches, profile, activeGeneralSyncRun] = await Promise.all([
+    [metrics, campaigns, batches, profile, activeGeneralSyncRun, processingSchedule] = await Promise.all([
       getDashboardMetrics({
         campaignIds: selectedCampaignIds,
         batchIds: selectedBatchIds
@@ -84,7 +86,8 @@ export default async function DashboardPage({
       getCampaigns(),
       getBatches(),
       getCurrentProfile(),
-      getActiveGeneralSyncRun()
+      getActiveGeneralSyncRun(),
+      getProcessingScheduleView()
     ]);
   } catch (error) {
     console.error("[DASHBOARD_METRICS_LOAD_FAILED]", {
@@ -146,6 +149,8 @@ export default async function DashboardPage({
           selectedBatchIds={selectedBatchIds}
           canGeneralSync={canAdmin(profile?.role)}
           initialGeneralSyncRun={activeGeneralSyncRun}
+          lastProcessingAt={processingSchedule.lastProcessingAt}
+          nextProcessingAt={processingSchedule.nextProcessingAt}
         />
         }
       />
