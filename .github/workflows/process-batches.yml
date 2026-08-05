@@ -108,6 +108,11 @@ jobs:
                     "note": f"gateway-http-{error.code}"
                   }
                 }
+              response_body = error.read().decode("utf-8", errors="replace")
+              print(json.dumps({
+                "http_status": error.code,
+                "response_body": response_body[:4000]
+              }, ensure_ascii=False))
               raise
             except socket.timeout:
               return {

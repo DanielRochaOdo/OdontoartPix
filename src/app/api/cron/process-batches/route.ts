@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { triggerQueuedProcessing } from "@/lib/processing-trigger";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { DataAccessError } from "@/lib/errors/data-access-error";
 
 export const runtime = "nodejs";
 export const maxDuration = 55;
@@ -32,6 +33,31 @@ function isAuthorized(request: Request) {
   const secret = process.env.CRON_SECRET;
   if (!secret) return false;
   return request.headers.get("authorization") === `Bearer ${secret}`;
+}
+
+function describeProcessingError(error: unknown) {
+  const base = error instanceof Error
+    ? { name: error.name, message: error.message, stack: error.stack ?? null }
+    : { name: "UnknownError", message: String(error), stack: null };
+
+  if (!(error instanceof DataAccessError)) return base;
+
+  const cause = error.cause;
+  if (!cause || typeof cause !== "object") {
+    return { ...base, operation: error.operation, cause: cause ?? null };
+  }
+
+  const causeRecord = cause as Record<string, unknown>;
+  return {
+    ...base,
+    operation: error.operation,
+    cause: {
+      code: causeRecord.code ?? null,
+      message: causeRecord.message ?? null,
+      details: causeRecord.details ?? null,
+      hint: causeRecord.hint ?? null
+    }
+  };
 }
 
 export async function GET(request: Request) {
@@ -82,9 +108,7 @@ export async function GET(request: Request) {
       status: "failed",
       error: error instanceof Error ? error.message : "Erro desconhecido"
     });
-    console.error("[CRON_PROCESSING_FAILED]", {
-      message: error instanceof Error ? error.message : "Erro desconhecido"
-    });
+    console.error("[CRON_PROCESSING_FAILED]", describeProcessingError(error));
     return NextResponse.json(
       {
         success: false,
