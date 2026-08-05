@@ -8,7 +8,9 @@ import {
 
 const BodySchema = z.object({
   presetKey: z.enum(["conservador", "mediano", "agressivo"]),
-  scheduledIntervalMinutes: z.union([z.literal(30), z.literal(60), z.literal(120)]).default(60)
+  scheduledIntervalMinutes: z.union([
+    z.literal(1), z.literal(5), z.literal(30), z.literal(60), z.literal(120)
+  ]).default(60)
 });
 
 export async function GET() {
