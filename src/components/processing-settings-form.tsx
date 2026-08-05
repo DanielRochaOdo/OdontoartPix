@@ -8,7 +8,7 @@ import type { ProcessingPresetKey } from "@/lib/processing-presets";
 type Props = {
   presets: Record<ProcessingPresetKey, ProcessingConfig>;
   selectedPresetKey: ProcessingPresetKey | null;
-  scheduledIntervalMinutes: 30 | 60 | 120;
+  scheduledIntervalMinutes: 1 | 5 | 30 | 60 | 120;
 };
 
 const labels: Record<ProcessingPresetKey, string> = {
@@ -50,7 +50,7 @@ export function ProcessingSettingsForm({
 }: Props) {
   const router = useRouter();
   const [selected, setSelected] = useState<ProcessingPresetKey>(selectedPresetKey ?? "mediano");
-  const [interval, setInterval] = useState<30 | 60 | 120>(scheduledIntervalMinutes);
+  const [interval, setInterval] = useState<1 | 5 | 30 | 60 | 120>(scheduledIntervalMinutes);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -138,10 +138,12 @@ export function ProcessingSettingsForm({
           <span>Frequência automática</span>
           <select
             value={interval}
-            onChange={(event) => setInterval(Number(event.target.value) as 30 | 60 | 120)}
+            onChange={(event) => setInterval(Number(event.target.value) as 1 | 5 | 30 | 60 | 120)}
             disabled={busy}
             className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
           >
+            <option value={1}>A cada 1 minuto</option>
+            <option value={5}>A cada 5 minutos</option>
             <option value={30}>A cada 30 minutos</option>
             <option value={60}>A cada 1 hora</option>
             <option value={120}>A cada 2 horas</option>

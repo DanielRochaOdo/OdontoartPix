@@ -12,13 +12,13 @@ import {
 
 type ProcessingSettingsRow = {
   preset_key: ProcessingPresetKey | null;
-  scheduled_interval_minutes: 30 | 60 | 120 | null;
+  scheduled_interval_minutes: 1 | 5 | 30 | 60 | 120 | null;
 };
 
 export async function getProcessingSettingsView() {
   const effectiveConfig = await getProcessingConfig();
   let storedPresetKey: ProcessingPresetKey | null = null;
-  let scheduledIntervalMinutes: 30 | 60 | 120 = 60;
+  let scheduledIntervalMinutes: 1 | 5 | 30 | 60 | 120 = 60;
 
   try {
     const supabase = createSupabaseAdminClient();
@@ -30,7 +30,7 @@ export async function getProcessingSettingsView() {
 
     storedPresetKey = ((data as ProcessingSettingsRow | null)?.preset_key ?? null);
     const storedInterval = (data as ProcessingSettingsRow | null)?.scheduled_interval_minutes;
-    if (storedInterval === 30 || storedInterval === 60 || storedInterval === 120) {
+    if (storedInterval === 1 || storedInterval === 5 || storedInterval === 30 || storedInterval === 60 || storedInterval === 120) {
       scheduledIntervalMinutes = storedInterval;
     }
   } catch {}
@@ -39,7 +39,7 @@ export async function getProcessingSettingsView() {
     effectiveConfig,
     selectedPresetKey: storedPresetKey ?? matchProcessingPreset(effectiveConfig),
     scheduledIntervalMinutes,
-    scheduledIntervalOptions: [30, 60, 120] as const,
+    scheduledIntervalOptions: [1, 5, 30, 60, 120] as const,
     presets: PROCESSING_PRESETS
   };
 }
@@ -51,7 +51,7 @@ export async function getProcessingScheduleView() {
     lastProcessingAt: null as string | null,
     nextProcessingAt: null as string | null,
     nextProcessingDue: false,
-    intervalMinutes: 60 as 30 | 60 | 120
+    intervalMinutes: 60 as 1 | 5 | 30 | 60 | 120
   };
 
   try {
@@ -71,17 +71,17 @@ export async function getProcessingScheduleView() {
         .from("general_sync_runs")
         .select("started_at,finished_at,created_at")
         .eq("trigger_source", "scheduled")
-        .order("created_at", { ascending: false })
+        .not("finished_at", "is", null)
+        .order("finished_at", { ascending: false })
         .limit(1)
         .maybeSingle()
     ]);
 
     const storedInterval = (settings as { scheduled_interval_minutes?: number } | null)
       ?.scheduled_interval_minutes;
-    const intervalMinutes = storedInterval === 30 || storedInterval === 60 || storedInterval === 120
+    const intervalMinutes = storedInterval === 1 || storedInterval === 5 || storedInterval === 30 || storedInterval === 60 || storedInterval === 120
       ? storedInterval
       : 60;
-    const lastCheckedAt = (state as { last_checked_at?: string | null } | null)?.last_checked_at ?? null;
     const lastPulseAt = (state as {
       last_pulse_started_at?: string | null;
       last_pulse_finished_at?: string | null;
@@ -89,13 +89,10 @@ export async function getProcessingScheduleView() {
       ?? (state as { last_pulse_started_at?: string | null } | null)?.last_pulse_started_at
       ?? null;
     const lastPulseStatus = (state as { last_pulse_status?: string | null } | null)?.last_pulse_status ?? null;
-    const scheduledRunAt = (lastRun as { started_at?: string | null; created_at?: string | null } | null)
-      ?.started_at ?? (lastRun as { created_at?: string | null } | null)?.created_at ?? null;
-    let nextProcessingAt = lastCheckedAt
-      ? new Date(new Date(lastCheckedAt).getTime() + intervalMinutes * 60_000)
-      : scheduledRunAt
-        ? new Date(new Date(scheduledRunAt).getTime() + intervalMinutes * 60_000)
-        : null;
+    const scheduledRunFinishedAt = (lastRun as { finished_at?: string | null } | null)?.finished_at ?? null;
+    let nextProcessingAt = scheduledRunFinishedAt
+      ? new Date(new Date(scheduledRunFinishedAt).getTime() + intervalMinutes * 60_000)
+      : null;
 
     const nextProcessingDue = Boolean(nextProcessingAt && nextProcessingAt.getTime() <= Date.now());
     if (nextProcessingDue) nextProcessingAt = null;
@@ -118,7 +115,7 @@ export async function getProcessingScheduleView() {
 export async function applyProcessingPreset(
   presetKey: ProcessingPresetKey,
   updatedBy: string,
-  scheduledIntervalMinutes: 30 | 60 | 120 = 60
+  scheduledIntervalMinutes: 1 | 5 | 30 | 60 | 120 = 60
 ) {
   const config = PROCESSING_PRESETS[presetKey];
   const supabase = createSupabaseAdminClient();
