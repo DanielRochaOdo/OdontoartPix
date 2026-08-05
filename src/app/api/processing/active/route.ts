@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireApiUser } from "@/lib/auth/require-api-user";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { normalizeProcessingProgress } from "@/lib/processing-progress";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -46,6 +47,12 @@ export async function GET() {
   );
 
   const hasActiveRun = Boolean(activeRun);
+  const progress = normalizeProcessingProgress({
+    totalItems: hasActiveRun ? Number(activeRun?.record_count ?? summary.totalItems) : summary.totalItems,
+    processedItems: hasActiveRun ? Number(activeRun?.processed_count ?? summary.processedItems) : summary.processedItems,
+    successItems: hasActiveRun ? Number(activeRun?.success_count ?? summary.successItems) : summary.successItems,
+    errorItems: hasActiveRun ? Number(activeRun?.error_count ?? summary.errorItems) : summary.errorItems
+  });
   const hasActiveJobs = rows.length > 0;
   return NextResponse.json({
     success: true,
@@ -54,10 +61,10 @@ export async function GET() {
       jobCount: rows.length,
       campaignCount: hasActiveRun ? Number(activeRun?.campaign_count ?? summary.campaigns.size) : summary.campaigns.size,
       batchCount: hasActiveRun ? Number(activeRun?.batch_count ?? summary.batches.size) : summary.batches.size,
-      totalItems: hasActiveRun ? Number(activeRun?.record_count ?? summary.totalItems) : summary.totalItems,
-      processedItems: hasActiveRun ? Number(activeRun?.processed_count ?? summary.processedItems) : summary.processedItems,
-      successItems: hasActiveRun ? Number(activeRun?.success_count ?? summary.successItems) : summary.successItems,
-      errorItems: hasActiveRun ? Number(activeRun?.error_count ?? summary.errorItems) : summary.errorItems,
+      totalItems: progress.totalItems,
+      processedItems: progress.processedItems,
+      successItems: progress.successItems,
+      errorItems: progress.errorItems,
       jobs: rows.map((job) => ({
         id: job.id,
         status: job.status,

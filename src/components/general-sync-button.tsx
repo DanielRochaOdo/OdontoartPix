@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { emitMetricsSync } from "@/lib/metrics-sync";
 import { formatDateTime } from "@/lib/date-time";
 import type { GeneralSyncPreview, GeneralSyncRunDetail } from "@/lib/general-sync";
+import { normalizeProcessingProgress } from "@/lib/processing-progress";
 import { ManualDashboardIcon, type ManualDashboardIconName } from "@/components/manual-dashboard-icon";
 
 type ApiSuccess<T> = {
@@ -178,13 +179,24 @@ function percentage(processed: number, total: number) {
 }
 
 function progressPercentage(run: GeneralSyncRunDetail) {
-  if (run.recordCount <= 0) return 0;
-  return Math.min(100, Math.max(0, (run.processedCount / run.recordCount) * 100));
+  const progress = normalizeProcessingProgress({
+    totalItems: run.recordCount,
+    processedItems: run.processedCount,
+    successItems: run.successCount,
+    errorItems: run.errorCount
+  });
+  return progress.totalItems <= 0 ? 0 : (progress.processedItems / progress.totalItems) * 100;
 }
 
 function batchProgressPercentage(run: GeneralSyncRunDetail | null) {
   if (!run?.currentBatch || run.currentBatch.recordCount <= 0) return 0;
-  return Math.min(100, Math.max(0, (run.currentBatch.processedCount / run.currentBatch.recordCount) * 100));
+  const progress = normalizeProcessingProgress({
+    totalItems: run.currentBatch.recordCount,
+    processedItems: run.currentBatch.processedCount,
+    successItems: run.currentBatch.successCount,
+    errorItems: run.currentBatch.errorCount
+  });
+  return progress.totalItems <= 0 ? 0 : (progress.processedItems / progress.totalItems) * 100;
 }
 
 function baseProgressPercentage(run: GeneralSyncRunDetail | null) {
@@ -399,6 +411,22 @@ export function GeneralSyncButton({
   const currentBatchProgress = batchProgressPercentage(run);
   const baseProgress = baseProgressPercentage(run);
   const currentBatch = run?.currentBatch ?? null;
+  const runCounters = run
+    ? normalizeProcessingProgress({
+        totalItems: run.recordCount,
+        processedItems: run.processedCount,
+        successItems: run.successCount,
+        errorItems: run.errorCount
+      })
+    : null;
+  const currentBatchCounters = currentBatch
+    ? normalizeProcessingProgress({
+        totalItems: currentBatch.recordCount,
+        processedItems: currentBatch.processedCount,
+        successItems: currentBatch.successCount,
+        errorItems: currentBatch.errorCount
+      })
+    : null;
   const lastUpdate = run?.lastHeartbeatAt ?? run?.startedAt;
   const processingSlot = typeof document === "undefined"
     ? null
@@ -484,7 +512,7 @@ export function GeneralSyncButton({
               <ProcessingIcon type="records" tone="sky" />
               <div>
               <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Registros</p>
-              <p className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-50"><AnimatedNumber value={run.processedCount} /> / <AnimatedNumber value={run.recordCount} /></p>
+              <p className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-50"><AnimatedNumber value={runCounters?.processedItems ?? 0} /> / <AnimatedNumber value={runCounters?.totalItems ?? 0} /></p>
               <p className="text-xs text-slate-500 dark:text-slate-400"><AnimatedNumber value={runProgress} formatter={formatPercent} /> processados</p>
               </div>
             </div>
@@ -512,7 +540,7 @@ export function GeneralSyncButton({
                   <div className="processing-progress-track mt-3 h-2.5 overflow-hidden rounded-full bg-white/80 dark:bg-slate-900/80">
                     <div className={`processing-progress-fill h-full rounded-full bg-sky-500 transition-[width] duration-700 ease-out ${currentBatchProgress >= 100 ? "bg-emerald-500" : ""}`} style={{ width: `${currentBatchProgress}%` }} />
                   </div>
-                  <p className="mt-2 text-sm text-slate-600 dark:text-slate-300"><strong className="text-slate-900 dark:text-slate-50"><AnimatedNumber value={currentBatch.processedCount} /></strong> / <AnimatedNumber value={currentBatch.recordCount} /> registros processados</p>
+                  <p className="mt-2 text-sm text-slate-600 dark:text-slate-300"><strong className="text-slate-900 dark:text-slate-50"><AnimatedNumber value={currentBatchCounters?.processedItems ?? 0} /></strong> / <AnimatedNumber value={currentBatchCounters?.totalItems ?? 0} /> registros processados</p>
                 </div>
                 <div className="grid gap-3 sm:grid-cols-3">
                   <ProcessingMetricCard label="Sucessos" icon="success" value={<AnimatedNumber value={currentBatch.successCount} />} selected={selectedMetric === "success"} tone="emerald" onSelect={() => setSelectedMetric(selectedMetric === "success" ? null : "success")} />
@@ -658,7 +686,7 @@ export function GeneralSyncButton({
                     <article className="rounded-xl bg-white p-3">
                       <p className="text-xs uppercase tracking-wide text-slate-500">Registros</p>
                       <p className="mt-1 text-sm font-semibold text-slate-900">
-                        {formatInteger(run.processedCount)}/{formatInteger(run.recordCount)}
+                        {formatInteger(runCounters?.processedItems ?? 0)}/{formatInteger(runCounters?.totalItems ?? 0)}
                       </p>
                     </article>
                     <article className="rounded-xl bg-white p-3">
@@ -694,8 +722,8 @@ export function GeneralSyncButton({
                       <div className="mb-2 flex items-center justify-between gap-3 text-xs text-slate-500">
                         <span className="uppercase tracking-wide">Progresso do lote atual</span>
                         <span>
-                          {formatInteger(run.currentBatch.processedCount)}/
-                          {formatInteger(run.currentBatch.recordCount)}
+                          {formatInteger(currentBatchCounters?.processedItems ?? 0)}/
+                          {formatInteger(currentBatchCounters?.totalItems ?? 0)}
                         </span>
                       </div>
                       <div className="h-2 overflow-hidden rounded-full bg-slate-100">
@@ -714,7 +742,7 @@ export function GeneralSyncButton({
                     <div className="mb-2 flex items-center justify-between gap-3 text-xs text-slate-500">
                       <span className="uppercase tracking-wide">Progresso fino</span>
                       <span>
-                        {formatInteger(run.processedCount)}/{formatInteger(run.recordCount)}
+                        {formatInteger(runCounters?.processedItems ?? 0)}/{formatInteger(runCounters?.totalItems ?? 0)}
                       </span>
                     </div>
                     <div className="h-2 overflow-hidden rounded-full bg-slate-100">
