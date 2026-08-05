@@ -180,6 +180,33 @@ export async function getDashboardMetrics(filters: DashboardMetricsFilters = {})
   return parsed.data;
 }
 
+export async function recordDashboardPaidMetric(input: {
+  scopeKey: string;
+  paidCount: number;
+  paidAmountCents: number;
+}) {
+  const supabase = createSupabaseAdminClient();
+  const { data, error } = await supabase.rpc("record_dashboard_paid_metric_v1", {
+    p_scope_key: input.scopeKey,
+    p_paid_count: input.paidCount,
+    p_paid_amount_cents: input.paidAmountCents
+  });
+
+  if (error) {
+    throw new DataAccessError(
+      "Nao foi possivel registrar a alteracao do card Pagos.",
+      "recordDashboardPaidMetric",
+      error
+    );
+  }
+
+  const row = Array.isArray(data) ? data[0] : data;
+  return {
+    changed: row?.changed === true,
+    eventId: row?.event_id ?? null
+  };
+}
+
 export async function listCampaignsWithMetrics() {
   const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase.rpc("list_campaigns_with_metrics");
