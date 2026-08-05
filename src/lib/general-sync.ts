@@ -1329,22 +1329,21 @@ export async function startScheduledGeneralSync(systemUserIdOverride?: string | 
   if (!data) return null;
 
   const rawRun = data as GeneralSyncRunRow;
-  const run = await getGeneralSyncRun(rawRun.id);
   if (rawRun.request_key === requestKey && rawRun.trigger_source === "scheduled") {
     await logGeneralSyncEvent({
       eventType: "scheduled_general_sync_started",
       createdBy: systemUserId,
-      runId: run.id,
+      runId: rawRun.id,
       details: {
         source: "scheduled",
         syncMode: "scheduled_recheck",
         requestKey,
-        recordCount: run.recordCount,
-        batchCount: run.batchCount
+        recordCount: rawRun.record_count,
+        batchCount: rawRun.batch_count
       }
     });
   }
-  return run;
+  return rawRun;
 }
 
 export async function getGeneralSyncRun(runId: string): Promise<GeneralSyncRunDetail> {
