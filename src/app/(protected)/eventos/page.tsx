@@ -9,7 +9,13 @@ export const dynamic = "force-dynamic";
 function formatDate(value: string | null) {
   if (!value) return "—";
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString("pt-BR");
+  return Number.isNaN(date.getTime())
+    ? "—"
+    : new Intl.DateTimeFormat("pt-BR", {
+        dateStyle: "short",
+        timeStyle: "medium",
+        timeZone: "America/Fortaleza"
+      }).format(date);
 }
 
 function formatDuration(startedAt: string | null, finishedAt: string | null) {
