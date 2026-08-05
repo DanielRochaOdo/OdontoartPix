@@ -75,7 +75,7 @@ async function normalizeExhaustedMembers(batchId: string, maxAttempts: number) {
   if (error) throw error;
 }
 
-async function reopenUnpaidMembersForManualProcessing(batchId: string) {
+async function reopenUnpaidMembersForManualProcessing(batchId: string, resetAttempts = false) {
   const supabase = createSupabaseAdminClient();
   const { error } = await supabase
     .from("campaign_batch_members")
@@ -90,12 +90,13 @@ async function reopenUnpaidMembersForManualProcessing(batchId: string) {
       processing_owner: null,
       processing_started_at: null,
       processing_heartbeat_at: null,
+      ...(resetAttempts ? { processing_attempts: 0 } : {}),
       updated_at: new Date().toISOString()
     })
     .eq("batch_id", batchId)
     .is("deleted_at", null)
-    .eq("processing_status", "completed")
-    .eq("payment_status", "unpaid");
+    .neq("processing_status", "processing")
+    .or("payment_status.is.null,payment_status.eq.unpaid");
 
   if (error) throw error;
 }
@@ -131,9 +132,11 @@ export async function enqueueBatchJob(input: {
   batchId: string;
   requestedBy: string;
   includeErrors?: boolean;
+  scheduledRecheck?: boolean;
 }): Promise<EnqueuedJob | null> {
   const supabase = createSupabaseAdminClient();
   const includeErrors = input.includeErrors ?? false;
+  const scheduledRecheck = input.scheduledRecheck ?? false;
   const config = await getProcessingConfig();
 
   const { data: activeJob, error: activeJobError } = await supabase
@@ -194,7 +197,7 @@ export async function enqueueBatchJob(input: {
   }
 
   if (!includeErrors) {
-    await reopenUnpaidMembersForManualProcessing(input.batchId);
+    await reopenUnpaidMembersForManualProcessing(input.batchId, scheduledRecheck);
     await normalizeExhaustedMembers(input.batchId, config.maxAttemptsPerItem);
   } else {
     const requestedAt = new Date().toISOString();
