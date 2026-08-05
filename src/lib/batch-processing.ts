@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { logProcessingEvent } from "@/lib/event-logs";
+import { logInfrastructureHealthEvent, logProcessingEvent } from "@/lib/event-logs";
 import {
   consultMonthlyByAssociatedCode,
   ErpError,
@@ -917,6 +917,42 @@ async function processClaimedMembers(
       totalPersistenceDurationMs
     );
     console.info("[ERP_BENCHMARK_COMPLETED]", benchmark);
+
+    if (benchmark.timeouts > 0 || benchmark.http5xx > 0 || benchmark.invalidResponses > 0 || benchmark.p95DurationMs >= 3000) {
+      await logInfrastructureHealthEvent({
+        eventType: "erp_instability_detected",
+        severity: benchmark.timeouts > 0 || benchmark.http5xx > 0 ? "error" : "warning",
+        campaignId: job.campaign_id,
+        batchId: job.batch_id,
+        reason: "ERP apresentando instabilidade ou latencia elevada.",
+        details: {
+          source: "erp",
+          p95DurationMs: benchmark.p95DurationMs,
+          p99DurationMs: benchmark.p99DurationMs,
+          timeouts: benchmark.timeouts,
+          http5xx: benchmark.http5xx,
+          invalidResponses: benchmark.invalidResponses,
+          failedRequests: benchmark.failedRequests,
+          totalRequests: benchmark.totalRequests
+        }
+      });
+    }
+
+    if (benchmark.persistenceDurationMs >= 1000) {
+      await logInfrastructureHealthEvent({
+        eventType: "supabase_latency_detected",
+        severity: benchmark.persistenceDurationMs >= 3000 ? "error" : "warning",
+        campaignId: job.campaign_id,
+        batchId: job.batch_id,
+        reason: "Supabase apresentando latencia elevada na persistencia.",
+        details: {
+          source: "supabase",
+          persistenceDurationMs: benchmark.persistenceDurationMs,
+          totalDurationMs: benchmark.totalDurationMs,
+          totalRequests: benchmark.totalRequests
+        }
+      });
+    }
 
     return {
       claimed: claimed.length,

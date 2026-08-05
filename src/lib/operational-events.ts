@@ -1,7 +1,7 @@
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { DataAccessError } from "@/lib/errors/data-access-error";
 
-export type OperationalEventStatus = "queued" | "running" | "completed" | "completed_with_errors" | "failed" | "cancelled" | "cancelling" | "paused" | "waiting_active_job";
+export type OperationalEventStatus = "queued" | "running" | "completed" | "completed_with_errors" | "failed" | "cancelled" | "cancelling" | "paused" | "waiting_active_job" | "warning" | "error";
 
 export type OperationalEvent = {
   id: string;
@@ -29,7 +29,7 @@ type OperationalEventRow = {
   success_items: number | string | null; error_items: number | string | null; last_error: string | null; result: string | null;
 };
 
-const STATUSES = new Set<OperationalEventStatus>(["queued", "running", "completed", "completed_with_errors", "failed", "cancelled", "cancelling", "paused", "waiting_active_job"]);
+const STATUSES = new Set<OperationalEventStatus>(["queued", "running", "completed", "completed_with_errors", "failed", "cancelled", "cancelling", "paused", "waiting_active_job", "warning", "error"]);
 const counter = (value: number | string | null) => Number.isFinite(Number(value ?? 0)) ? Number(value ?? 0) : 0;
 
 export async function getOperationalEvents(filters?: { campaignId?: string; batchId?: string; limit?: number; offset?: number }) {
