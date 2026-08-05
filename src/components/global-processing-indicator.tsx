@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { normalizeProcessingProgress } from "@/lib/processing-progress";
 
 type ActiveProcessing = {
   active: boolean;
@@ -53,8 +54,9 @@ export function GlobalProcessingIndicator() {
 
   if (!processing.active) return null;
 
-  const percentage = processing.totalItems > 0
-    ? Math.min(100, (processing.processedItems / processing.totalItems) * 100)
+  const progress = normalizeProcessingProgress(processing);
+  const percentage = progress.totalItems > 0
+    ? (progress.processedItems / progress.totalItems) * 100
     : 0;
 
   return (
@@ -80,11 +82,11 @@ export function GlobalProcessingIndicator() {
             <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
               <Metric label="Campanhas" value={integer(processing.campaignCount)} />
               <Metric label="Lotes" value={integer(processing.batchCount)} />
-              <Metric label="Processados" value={`${integer(processing.processedItems)}/${integer(processing.totalItems)}`} />
+              <Metric label="Processados" value={`${integer(progress.processedItems)}/${integer(progress.totalItems)}`} />
               <Metric label="Jobs" value={integer(processing.jobCount)} />
             </div>
             <div className="mt-5"><div className="flex justify-between text-sm"><span>Progresso geral</span><strong>{percentage.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%</strong></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-[#dce8ef] dark:bg-[#182433]"><div className="h-full rounded-full bg-[#00E5C3] transition-[width] duration-700" style={{ width: `${percentage}%` }} /></div></div>
-            <div className="mt-5 grid grid-cols-2 gap-3 text-sm"><Metric label="Sucessos" value={integer(processing.successItems)} /><Metric label="Erros" value={integer(processing.errorItems)} /></div>
+            <div className="mt-5 grid grid-cols-2 gap-3 text-sm"><Metric label="Sucessos" value={integer(progress.successItems)} /><Metric label="Erros" value={integer(progress.errorItems)} /></div>
           </section>
         </div>
       ) : null}
