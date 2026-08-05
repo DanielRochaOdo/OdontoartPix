@@ -149,8 +149,11 @@ export default async function DashboardPage({
           selectedBatchIds={selectedBatchIds}
           canGeneralSync={canAdmin(profile?.role)}
           initialGeneralSyncRun={activeGeneralSyncRun}
+          lastPulseAt={processingSchedule.lastPulseAt}
+          lastPulseStatus={processingSchedule.lastPulseStatus}
           lastProcessingAt={processingSchedule.lastProcessingAt}
           nextProcessingAt={processingSchedule.nextProcessingAt}
+          nextProcessingDue={processingSchedule.nextProcessingDue}
         />
         }
       />

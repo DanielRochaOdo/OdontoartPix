@@ -46,8 +46,11 @@ export async function getProcessingSettingsView() {
 
 export async function getProcessingScheduleView() {
   const fallback = {
+    lastPulseAt: null as string | null,
+    lastPulseStatus: null as string | null,
     lastProcessingAt: null as string | null,
     nextProcessingAt: null as string | null,
+    nextProcessingDue: false,
     intervalMinutes: 60 as 30 | 60 | 120
   };
 
@@ -61,7 +64,7 @@ export async function getProcessingScheduleView() {
         .maybeSingle(),
       supabase
         .from("processing_scheduler_state")
-        .select("last_checked_at")
+        .select("last_checked_at,last_pulse_started_at,last_pulse_finished_at,last_pulse_status")
         .eq("settings_key", "default")
         .maybeSingle(),
       supabase
@@ -79,6 +82,13 @@ export async function getProcessingScheduleView() {
       ? storedInterval
       : 60;
     const lastCheckedAt = (state as { last_checked_at?: string | null } | null)?.last_checked_at ?? null;
+    const lastPulseAt = (state as {
+      last_pulse_started_at?: string | null;
+      last_pulse_finished_at?: string | null;
+    } | null)?.last_pulse_finished_at
+      ?? (state as { last_pulse_started_at?: string | null } | null)?.last_pulse_started_at
+      ?? null;
+    const lastPulseStatus = (state as { last_pulse_status?: string | null } | null)?.last_pulse_status ?? null;
     const scheduledRunAt = (lastRun as { started_at?: string | null; created_at?: string | null } | null)
       ?.started_at ?? (lastRun as { created_at?: string | null } | null)?.created_at ?? null;
     let nextProcessingAt = lastCheckedAt
@@ -87,18 +97,17 @@ export async function getProcessingScheduleView() {
         ? new Date(new Date(scheduledRunAt).getTime() + intervalMinutes * 60_000)
         : null;
 
-    if (nextProcessingAt) {
-      const intervalMs = intervalMinutes * 60_000;
-      while (nextProcessingAt.getTime() <= Date.now()) {
-        nextProcessingAt = new Date(nextProcessingAt.getTime() + intervalMs);
-      }
-    }
+    const nextProcessingDue = Boolean(nextProcessingAt && nextProcessingAt.getTime() <= Date.now());
+    if (nextProcessingDue) nextProcessingAt = null;
 
     return {
+      lastPulseAt,
+      lastPulseStatus,
       lastProcessingAt: (lastRun as { started_at?: string | null; finished_at?: string | null; created_at?: string | null } | null)
         ?.finished_at ?? (lastRun as { started_at?: string | null } | null)?.started_at
         ?? (lastRun as { created_at?: string | null } | null)?.created_at ?? null,
       nextProcessingAt: nextProcessingAt?.toISOString() ?? null,
+      nextProcessingDue,
       intervalMinutes
     };
   } catch {

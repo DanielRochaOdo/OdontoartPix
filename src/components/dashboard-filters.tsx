@@ -88,8 +88,11 @@ export function DashboardFilters({
   selectedBatchIds,
   canGeneralSync = false,
   initialGeneralSyncRun = null,
+  lastPulseAt = null,
+  lastPulseStatus = null,
   lastProcessingAt = null,
-  nextProcessingAt = null
+  nextProcessingAt = null,
+  nextProcessingDue = false
 }: {
   campaigns: CampaignOption[];
   batches: BatchOption[];
@@ -97,8 +100,11 @@ export function DashboardFilters({
   selectedBatchIds: string[];
   canGeneralSync?: boolean;
   initialGeneralSyncRun?: GeneralSyncRunDetail | null;
+  lastPulseAt?: string | null;
+  lastPulseStatus?: string | null;
   lastProcessingAt?: string | null;
   nextProcessingAt?: string | null;
+  nextProcessingDue?: boolean;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -214,6 +220,17 @@ export function DashboardFilters({
   return (
     <div className="flex flex-col gap-2 lg:items-end">
       <div className="flex flex-wrap items-center justify-end gap-x-5 gap-y-1 text-xs text-[#7893ab] dark:text-[#9bb2c7]">
+        <span>
+          Último pulso: <strong title={lastPulseStatus ?? undefined} className="font-medium text-[#30485d] dark:text-[#d7e5f2]">{formatScheduleDate(lastPulseAt)}</strong>
+        </span>
+        <span>
+          Última sincronização: <strong className="font-medium text-[#30485d] dark:text-[#d7e5f2]">{formatScheduleDate(lastProcessingAt)}</strong>
+        </span>
+        <span>
+          Próxima janela: <strong className="font-medium text-[#30485d] dark:text-[#d7e5f2]">{nextProcessingDue ? "Liberada no próximo pulso" : formatScheduleDate(nextProcessingAt)}</strong>
+        </span>
+      </div>
+      <div className="hidden">
         <span>
           Último processamento: <strong className="font-medium text-[#30485d] dark:text-[#d7e5f2]">{formatScheduleDate(lastProcessingAt)}</strong>
         </span>
