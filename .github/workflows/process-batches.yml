@@ -20,7 +20,11 @@ on:
         required: false
         default: ""
   schedule:
-    - cron: "*/30 * * * *"
+    # Pulso de recuperação. A frequência efetiva da sincronização agendada
+    # continua sendo controlada por processing_scheduler_state no banco.
+    # Pulsos mais frequentes reduzem o impacto de atrasos/perdas do scheduler
+    # do GitHub sem iniciar uma nova sincronização antes da janela configurada.
+    - cron: "*/5 * * * *"
 
 permissions:
   actions: write
