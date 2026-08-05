@@ -46,6 +46,15 @@ export type ProcessingEventInput = {
   details: Record<string, unknown>;
 };
 
+export type InfrastructureHealthEventInput = {
+  eventType: "erp_instability_detected" | "supabase_latency_detected";
+  severity: "warning" | "error";
+  campaignId: string;
+  batchId: string;
+  reason: string;
+  details: Record<string, unknown>;
+};
+
 export async function logProcessingEvent(input: ProcessingEventInput) {
   const supabase = createSupabaseAdminClient();
   const { error } = await supabase.from("event_logs").insert({
@@ -58,6 +67,36 @@ export async function logProcessingEvent(input: ProcessingEventInput) {
     details: input.details
   });
   if (error) throw new DataAccessError("Nao foi possivel registrar o evento de processamento.", "logProcessingEvent", error);
+}
+
+export async function logInfrastructureHealthEvent(input: InfrastructureHealthEventInput) {
+  const supabase = createSupabaseAdminClient();
+  const dedupeSince = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+  const { data: recent, error: recentError } = await supabase
+    .from("event_logs")
+    .select("id")
+    .eq("event_type", input.eventType)
+    .gte("created_at", dedupeSince)
+    .limit(1)
+    .maybeSingle();
+
+  if (recentError) {
+    throw new DataAccessError("Nao foi possivel verificar a deduplicacao do alerta de infraestrutura.", "logInfrastructureHealthEvent.check", recentError);
+  }
+  if (recent) return;
+
+  const { error } = await supabase.from("event_logs").insert({
+    event_type: input.eventType,
+    category: "infrastructure",
+    severity: input.severity,
+    campaign_id: input.campaignId,
+    batch_id: input.batchId,
+    reason: input.reason,
+    details: input.details
+  });
+  if (error) {
+    throw new DataAccessError("Nao foi possivel registrar o alerta de infraestrutura.", "logInfrastructureHealthEvent.insert", error);
+  }
 }
 
 export async function logIgnoredImportEvents(input: IgnoredImportEventInput) {

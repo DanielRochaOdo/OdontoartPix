@@ -43,13 +43,17 @@ function resultLabel(status: string) {
     cancelled: "Cancelado",
     cancelling: "Cancelando",
     paused: "Pausado",
-    waiting_active_job: "Aguardando"
+    waiting_active_job: "Aguardando",
+    warning: "Alerta",
+    error: "Erro de infraestrutura"
   }[status] ?? "—";
 }
 
 function resultClass(status: string) {
   if (status === "completed") return "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300";
   if (status === "completed_with_errors" || status === "failed") return "bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-300";
+  if (status === "error") return "bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-300";
+  if (status === "warning") return "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300";
   if (status === "cancelled") return "bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300";
   return "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300";
 }
