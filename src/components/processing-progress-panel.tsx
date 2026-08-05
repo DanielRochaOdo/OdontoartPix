@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { formatCurrencyBR } from "@/lib/money";
+import { formatDateTime } from "@/lib/date-time";
 
 type Metrics = {
   total: number;
@@ -317,7 +318,7 @@ export function ProcessingProgressPanel({
             <span>Restante: <strong>{metrics.latestJob.remainingItems}</strong></span>
           </div>
           {metrics.latestJob.finishedAt ? (
-            <p className="mt-2 text-xs text-slate-500">Finalizado em {new Date(metrics.latestJob.finishedAt).toLocaleString("pt-BR")}</p>
+              <p className="mt-2 text-xs text-slate-500">Finalizado em {formatDateTime(metrics.latestJob.finishedAt)}</p>
           ) : null}
         </div>
       ) : null}

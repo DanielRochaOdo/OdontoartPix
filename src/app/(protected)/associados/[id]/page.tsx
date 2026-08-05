@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getMemberDetail } from "@/lib/data";
 import { DataAccessError } from "@/lib/errors/data-access-error";
 import { formatCurrencyBR } from "@/lib/money";
+import { formatDateTime } from "@/lib/date-time";
 import { PageSurface } from "@/components/page-surface";
 import { PageHeader } from "@/components/page-header";
 
@@ -114,7 +115,7 @@ export default async function MemberDetailPage({
               <p className="text-sm text-slate-500">Última consulta</p>
               <p className="mt-2 text-base font-semibold">
                 {link.last_checked_at
-                  ? new Date(link.last_checked_at).toLocaleString("pt-BR")
+                  ? formatDateTime(link.last_checked_at)
                   : "Ainda não consultado"}
               </p>
             </article>
@@ -207,7 +208,7 @@ export default async function MemberDetailPage({
                   {detail.logs.map((log) => (
                     <tr key={log.id} className="border-t">
                       <td className="px-4 py-3">
-                        {new Date(log.consulted_at).toLocaleString("pt-BR")}
+                        {formatDateTime(log.consulted_at)}
                       </td>
                       <td className="px-4 py-3">{log.request_status}</td>
                       <td className="px-4 py-3">{log.http_status ?? "-"}</td>

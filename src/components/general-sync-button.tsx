@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { emitMetricsSync } from "@/lib/metrics-sync";
+import { formatDateTime } from "@/lib/date-time";
 import type { GeneralSyncPreview, GeneralSyncRunDetail } from "@/lib/general-sync";
 import { ManualDashboardIcon, type ManualDashboardIconName } from "@/components/manual-dashboard-icon";
 
@@ -144,7 +145,7 @@ function ProcessingIcon({
 
 function formatDate(value: string | null | undefined) {
   if (!value) return "N/A";
-  return new Date(value).toLocaleString("pt-BR");
+  return formatDateTime(value);
 }
 
 function formatElapsed(value: string | null | undefined) {

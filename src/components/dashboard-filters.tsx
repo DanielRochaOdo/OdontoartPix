@@ -213,7 +213,8 @@ export function DashboardFilters({
     if (Number.isNaN(date.getTime())) return "—";
     return new Intl.DateTimeFormat("pt-BR", {
       dateStyle: "short",
-      timeStyle: "short"
+      timeStyle: "short",
+      timeZone: "America/Fortaleza"
     }).format(date);
   }
 
