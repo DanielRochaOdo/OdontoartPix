@@ -12,33 +12,104 @@ import {
 
 type ProcessingSettingsRow = {
   preset_key: ProcessingPresetKey | null;
+  scheduled_interval_minutes: 30 | 60 | 120 | null;
 };
 
 export async function getProcessingSettingsView() {
   const effectiveConfig = await getProcessingConfig();
   let storedPresetKey: ProcessingPresetKey | null = null;
+  let scheduledIntervalMinutes: 30 | 60 | 120 = 60;
 
   try {
     const supabase = createSupabaseAdminClient();
     const { data } = await supabase
       .from("processing_settings")
-      .select("preset_key")
+      .select("preset_key,scheduled_interval_minutes")
       .eq("settings_key", "default")
       .maybeSingle();
 
     storedPresetKey = ((data as ProcessingSettingsRow | null)?.preset_key ?? null);
+    const storedInterval = (data as ProcessingSettingsRow | null)?.scheduled_interval_minutes;
+    if (storedInterval === 30 || storedInterval === 60 || storedInterval === 120) {
+      scheduledIntervalMinutes = storedInterval;
+    }
   } catch {}
 
   return {
     effectiveConfig,
     selectedPresetKey: storedPresetKey ?? matchProcessingPreset(effectiveConfig),
+    scheduledIntervalMinutes,
+    scheduledIntervalOptions: [30, 60, 120] as const,
     presets: PROCESSING_PRESETS
   };
 }
 
+export async function getProcessingScheduleView() {
+  const fallback = {
+    lastProcessingAt: null as string | null,
+    nextProcessingAt: null as string | null,
+    intervalMinutes: 60 as 30 | 60 | 120
+  };
+
+  try {
+    const supabase = createSupabaseAdminClient();
+    const [{ data: settings }, { data: state }, { data: lastRun }] = await Promise.all([
+      supabase
+        .from("processing_settings")
+        .select("scheduled_interval_minutes")
+        .eq("settings_key", "default")
+        .maybeSingle(),
+      supabase
+        .from("processing_scheduler_state")
+        .select("last_checked_at")
+        .eq("settings_key", "default")
+        .maybeSingle(),
+      supabase
+        .from("general_sync_runs")
+        .select("started_at,finished_at,created_at")
+        .eq("trigger_source", "scheduled")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle()
+    ]);
+
+    const storedInterval = (settings as { scheduled_interval_minutes?: number } | null)
+      ?.scheduled_interval_minutes;
+    const intervalMinutes = storedInterval === 30 || storedInterval === 60 || storedInterval === 120
+      ? storedInterval
+      : 60;
+    const lastCheckedAt = (state as { last_checked_at?: string | null } | null)?.last_checked_at ?? null;
+    const scheduledRunAt = (lastRun as { started_at?: string | null; created_at?: string | null } | null)
+      ?.started_at ?? (lastRun as { created_at?: string | null } | null)?.created_at ?? null;
+    let nextProcessingAt = lastCheckedAt
+      ? new Date(new Date(lastCheckedAt).getTime() + intervalMinutes * 60_000)
+      : scheduledRunAt
+        ? new Date(new Date(scheduledRunAt).getTime() + intervalMinutes * 60_000)
+        : null;
+
+    if (nextProcessingAt) {
+      const intervalMs = intervalMinutes * 60_000;
+      while (nextProcessingAt.getTime() <= Date.now()) {
+        nextProcessingAt = new Date(nextProcessingAt.getTime() + intervalMs);
+      }
+    }
+
+    return {
+      lastProcessingAt: (lastRun as { started_at?: string | null; finished_at?: string | null; created_at?: string | null } | null)
+        ?.finished_at ?? (lastRun as { started_at?: string | null } | null)?.started_at
+        ?? (lastRun as { created_at?: string | null } | null)?.created_at ?? null,
+      nextProcessingAt: nextProcessingAt?.toISOString() ?? null,
+      intervalMinutes
+    };
+  } catch {
+    return fallback;
+  }
+}
+
 export async function applyProcessingPreset(
   presetKey: ProcessingPresetKey,
-  updatedBy: string
+  updatedBy: string,
+  scheduledIntervalMinutes: 30 | 60 | 120 = 60
 ) {
   const config = PROCESSING_PRESETS[presetKey];
   const supabase = createSupabaseAdminClient();
@@ -48,6 +119,7 @@ export async function applyProcessingPreset(
     .upsert({
       settings_key: "default",
       preset_key: presetKey,
+      scheduled_interval_minutes: scheduledIntervalMinutes,
       worker_count: config.workerCount,
       processing_block_size: config.claimBatchSize,
       processing_concurrency: config.perWorkerConcurrency,

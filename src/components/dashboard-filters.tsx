@@ -87,7 +87,9 @@ export function DashboardFilters({
   selectedCampaignIds,
   selectedBatchIds,
   canGeneralSync = false,
-  initialGeneralSyncRun = null
+  initialGeneralSyncRun = null,
+  lastProcessingAt = null,
+  nextProcessingAt = null
 }: {
   campaigns: CampaignOption[];
   batches: BatchOption[];
@@ -95,6 +97,8 @@ export function DashboardFilters({
   selectedBatchIds: string[];
   canGeneralSync?: boolean;
   initialGeneralSyncRun?: GeneralSyncRunDetail | null;
+  lastProcessingAt?: string | null;
+  nextProcessingAt?: string | null;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -197,8 +201,26 @@ export function DashboardFilters({
     );
   }
 
+  function formatScheduleDate(value: string | null) {
+    if (!value) return "—";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "—";
+    return new Intl.DateTimeFormat("pt-BR", {
+      dateStyle: "short",
+      timeStyle: "short"
+    }).format(date);
+  }
+
   return (
     <div className="flex flex-col gap-2 lg:items-end">
+      <div className="flex flex-wrap items-center justify-end gap-x-5 gap-y-1 text-xs text-[#7893ab] dark:text-[#9bb2c7]">
+        <span>
+          Último processamento: <strong className="font-medium text-[#30485d] dark:text-[#d7e5f2]">{formatScheduleDate(lastProcessingAt)}</strong>
+        </span>
+        <span>
+          Próximo processamento: <strong className="font-medium text-[#30485d] dark:text-[#d7e5f2]">{formatScheduleDate(nextProcessingAt)}</strong>
+        </span>
+      </div>
       <div className="flex flex-wrap gap-2 lg:justify-end">
         <CampaignFocusToggle />
         {canGeneralSync ? (

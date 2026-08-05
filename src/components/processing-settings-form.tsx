@@ -8,6 +8,7 @@ import type { ProcessingPresetKey } from "@/lib/processing-presets";
 type Props = {
   presets: Record<ProcessingPresetKey, ProcessingConfig>;
   selectedPresetKey: ProcessingPresetKey | null;
+  scheduledIntervalMinutes: 30 | 60 | 120;
 };
 
 const labels: Record<ProcessingPresetKey, string> = {
@@ -44,10 +45,12 @@ function rowsForConfig(config: ProcessingConfig) {
 
 export function ProcessingSettingsForm({
   presets,
-  selectedPresetKey
+  selectedPresetKey,
+  scheduledIntervalMinutes
 }: Props) {
   const router = useRouter();
   const [selected, setSelected] = useState<ProcessingPresetKey>(selectedPresetKey ?? "mediano");
+  const [interval, setInterval] = useState<30 | 60 | 120>(scheduledIntervalMinutes);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -62,7 +65,7 @@ export function ProcessingSettingsForm({
           "Content-Type": "application/json",
           Accept: "application/json"
         },
-        body: JSON.stringify({ presetKey: selected })
+        body: JSON.stringify({ presetKey: selected, scheduledIntervalMinutes: interval })
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok || !payload?.success) {
@@ -131,6 +134,19 @@ export function ProcessingSettingsForm({
       </div>
 
       <div className="mt-5 flex items-center gap-3">
+        <label className="flex items-center gap-2 text-sm text-slate-600">
+          <span>Frequência automática</span>
+          <select
+            value={interval}
+            onChange={(event) => setInterval(Number(event.target.value) as 30 | 60 | 120)}
+            disabled={busy}
+            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+          >
+            <option value={30}>A cada 30 minutos</option>
+            <option value={60}>A cada 1 hora</option>
+            <option value={120}>A cada 2 horas</option>
+          </select>
+        </label>
         <button
           type="button"
           onClick={apply}
