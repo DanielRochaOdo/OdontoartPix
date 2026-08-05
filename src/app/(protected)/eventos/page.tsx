@@ -1,44 +1,51 @@
-import Link from "next/link";
-import { getEventLogs, type EventLogItem } from "@/lib/event-logs";
+import { getOperationalEvents } from "@/lib/operational-events";
 import { DataAccessError } from "@/lib/errors/data-access-error";
-import { EventDetailsModal } from "@/components/event-details-modal";
 import { PageSurface } from "@/components/page-surface";
 import { PageHeader } from "@/components/page-header";
 import { SemanticAlert } from "@/components/semantic-alert";
 
 export const dynamic = "force-dynamic";
 
-function detailValue(event: EventLogItem, key: string) {
-  return event.details?.[key];
-}
-
-function eventLabel(eventType: string) {
-  const labels: Record<string, string> = {
-    processing_job_completed: "Processamento concluído",
-    processing_block_completed: "Bloco concluído",
-    processing_job_failed: "Processamento com falha",
-    ignored_installment_import: "Importação ignorada",
-    ignored_installment_import_batch: "Importação com registros não cadastrados"
-  };
-  return labels[eventType] ?? eventType.replaceAll("_", " ");
-}
-
-function formatDuration(value: unknown) {
-  const milliseconds = typeof value === "number" ? value : Number(value);
-  if (!Number.isFinite(milliseconds)) return "-";
-  const totalSeconds = Math.max(0, Math.round(milliseconds / 1000));
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-  if (hours > 0) return `${hours}h ${minutes}min ${seconds}s`;
-  if (minutes > 0) return `${minutes}min ${seconds}s`;
-  return `${seconds}s`;
-}
-
-function formatEventDate(value: unknown) {
-  if (typeof value !== "string") return "-";
+function formatDate(value: string | null) {
+  if (!value) return "—";
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? "-" : date.toLocaleString("pt-BR");
+  return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString("pt-BR");
+}
+
+function formatDuration(startedAt: string | null, finishedAt: string | null) {
+  if (!startedAt) return "Aguardando";
+  const started = new Date(startedAt).getTime();
+  if (!Number.isFinite(started)) return "—";
+  if (!finishedAt) return "Em andamento";
+  const finished = new Date(finishedAt).getTime();
+  if (!Number.isFinite(finished)) return "—";
+  const totalSeconds = Math.max(0, Math.round((finished - started) / 1000));
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes < 60) return `${minutes}min ${seconds}s`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}min`;
+}
+
+function resultLabel(status: string) {
+  return {
+    queued: "Aguardando",
+    running: "Em andamento",
+    completed: "Concluído",
+    completed_with_errors: "Concluído com erros",
+    failed: "Falhou",
+    cancelled: "Cancelado",
+    cancelling: "Cancelando",
+    paused: "Pausado",
+    waiting_active_job: "Aguardando"
+  }[status] ?? "—";
+}
+
+function resultClass(status: string) {
+  if (status === "completed") return "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300";
+  if (status === "completed_with_errors" || status === "failed") return "bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-300";
+  if (status === "cancelled") return "bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300";
+  return "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300";
 }
 
 export default async function EventsPage({
@@ -47,14 +54,13 @@ export default async function EventsPage({
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const params = searchParams ? await searchParams : {};
-  const campaignId = typeof params?.campaign === "string" ? params.campaign : undefined;
-  const batchId = typeof params?.batch === "string" ? params.batch : undefined;
-
-  let events: Awaited<ReturnType<typeof getEventLogs>> = [];
+  const campaignId = typeof params.campaign === "string" ? params.campaign : undefined;
+  const batchId = typeof params.batch === "string" ? params.batch : undefined;
+  let events: Awaited<ReturnType<typeof getOperationalEvents>> = [];
   let errorMessage: string | null = null;
 
   try {
-    events = await getEventLogs({ campaignId, batchId, limit: 200 });
+    events = await getOperationalEvents({ campaignId, batchId, limit: 100 });
   } catch (error) {
     console.error("[EVENTS_PAGE_LOAD_FAILED]", {
       campaignId: campaignId ?? null,
@@ -67,32 +73,20 @@ export default async function EventsPage({
 
   return (
     <PageSurface>
-      <PageHeader eyebrow="Auditoria" title="Eventos" description="Historico de processamentos, conclusoes e ocorrencias operacionais." actions={<>
-        <div>
-          <p className="text-sm font-medium uppercase tracking-[0.2em] text-emerald-700">Auditoria</p>
-          <h1 className="mt-2 text-3xl font-semibold">Eventos</h1>
-          <p className="mt-2 text-sm text-slate-600">Histórico de processamentos, conclusões e ocorrências operacionais.</p>
-        </div>
-        <div className="text-sm text-slate-500">
-          {campaignId ? <p>Filtro de campanha ativo.</p> : null}
-          {batchId ? <p>Filtro de lote ativo.</p> : null}
-        </div>
-      </>} />
+      <PageHeader eyebrow="AUDITORIA" title="Eventos" description="Histórico de processamentos, conclusões e ocorrências operacionais." />
 
       {errorMessage ? <SemanticAlert>{errorMessage}</SemanticAlert> : (
         <section className="mt-6 rounded-2xl border border-default bg-surface-primary p-5 shadow-sm">
           <div>
-            <h2 className="text-lg font-semibold">Eventos registrados</h2>
-            <p className="mt-1 text-sm text-slate-500">Exibindo {events.length} evento(s) mais recentes.</p>
+            <h2 className="text-lg font-semibold">Operações recentes</h2>
+            <p className="mt-1 text-sm text-slate-500">Exibindo {events.length} operação(ões) mais recentes.</p>
           </div>
 
-          <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200">
-            <table className="min-w-[900px] w-full text-sm">
-              <thead className="bg-slate-50 text-left text-slate-600">
+          <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-700">
+            <table className="min-w-[720px] w-full text-sm">
+              <thead className="bg-slate-50 text-left text-slate-600 dark:bg-slate-900/60 dark:text-slate-300">
                 <tr>
                   <th className="px-4 py-3 font-medium">Evento</th>
-                  <th className="px-4 py-3 font-medium">Campanha</th>
-                  <th className="px-4 py-3 font-medium">Lote</th>
                   <th className="px-4 py-3 font-medium">Início</th>
                   <th className="px-4 py-3 font-medium">Fim</th>
                   <th className="px-4 py-3 font-medium">Tempo corrido</th>
@@ -101,17 +95,15 @@ export default async function EventsPage({
               </thead>
               <tbody>
                 {events.map((event) => (
-                  <tr key={event.id} className="border-t">
-                    <td className="px-4 py-3 font-medium">{eventLabel(event.event_type)}</td>
-                    <td className="px-4 py-3">{event.campaign_id ? <Link href={`/campanhas/${event.campaign_id}`} className="underline">{event.campaign_name ?? event.campaign_id}</Link> : event.campaign_name ?? "-"}</td>
-                    <td className="px-4 py-3">{event.batch_id ? <Link href={`/lotes/${event.batch_id}`} className="underline">{event.batch_name ?? event.batch_id}</Link> : event.batch_name ?? "-"}</td>
-                    <td className="whitespace-nowrap px-4 py-3">{formatEventDate(detailValue(event, "startedAt"))}</td>
-                    <td className="whitespace-nowrap px-4 py-3">{formatEventDate(detailValue(event, "finishedAt") ?? event.created_at)}</td>
-                    <td className="whitespace-nowrap px-4 py-3 font-semibold">{formatDuration(detailValue(event, "durationMs"))}</td>
-                    <td className="px-4 py-3"><div>{String(detailValue(event, "status") ?? event.reason ?? "-")}</div>{Array.isArray(detailValue(event, "issues")) ? <div className="mt-2"><EventDetailsModal issues={detailValue(event, "issues") as Array<{ line?: number; associatedCode?: string; targetInstallmentId?: string; installmentAmountCents?: number | null; reason?: string }>} /></div> : null}</td>
+                  <tr key={`${event.operationType}-${event.id}`} className="border-t border-slate-200 dark:border-slate-800">
+                    <td className="px-4 py-3 font-medium text-primary">{event.title}</td>
+                    <td className="whitespace-nowrap px-4 py-3 text-secondary">{formatDate(event.startedAt)}</td>
+                    <td className="whitespace-nowrap px-4 py-3 text-secondary">{formatDate(event.finishedAt)}</td>
+                    <td className="whitespace-nowrap px-4 py-3 font-semibold text-primary">{formatDuration(event.startedAt, event.finishedAt)}</td>
+                    <td className="px-4 py-3"><span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${resultClass(event.status)}`}>{resultLabel(event.status)}</span></td>
                   </tr>
                 ))}
-                {events.length === 0 ? <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-500">Nenhum evento encontrado para os filtros atuais.</td></tr> : null}
+                {events.length === 0 ? <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-500">Nenhuma operação encontrada para os filtros atuais.</td></tr> : null}
               </tbody>
             </table>
           </div>

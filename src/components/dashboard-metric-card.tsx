@@ -43,6 +43,7 @@ export function DashboardMetricCard({
 }) {
   const storageKey = `dashboard-metric-last:${label}:${scopeKey}`;
   const committedValueRef = useRef<number | null>(null);
+  const initializedStorageKeyRef = useRef<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [previous, setPrevious] = useState<number | null>(null);
   const [previousReadAt, setPreviousReadAt] = useState<string | null>(null);
@@ -52,19 +53,48 @@ export function DashboardMetricCard({
 
   useEffect(() => {
     try {
-      if (committedValueRef.current === numericValue) return;
       const storedValue = Number(window.localStorage.getItem(storageKey));
       const legacyValue = Number(window.localStorage.getItem(`dashboard-metric-last:${label}`));
       const readAtKey = `${storageKey}:read-at`;
+      const previousKey = `${storageKey}:previous`;
+      const previousReadAtKey = `${previousKey}:read-at`;
       const storedReadAt = window.localStorage.getItem(readAtKey);
-      const oldValue = Number.isFinite(storedValue) ? storedValue : Number.isFinite(legacyValue) ? legacyValue : null;
-      setPrevious(oldValue);
+      const storedPrevious = Number(window.localStorage.getItem(previousKey));
+      const storedPreviousReadAt = window.localStorage.getItem(previousReadAtKey);
+
+      if (initializedStorageKeyRef.current !== storageKey) {
+        const oldValue = Number.isFinite(storedValue) ? storedValue : Number.isFinite(legacyValue) ? legacyValue : null;
+        const hasStoredValue = oldValue !== null;
+        const valueChanged = hasStoredValue && oldValue !== numericValue;
+        initializedStorageKeyRef.current = storageKey;
+        committedValueRef.current = numericValue;
+        setPrevious(valueChanged ? oldValue : Number.isFinite(storedPrevious) ? storedPrevious : null);
+        setPreviousReadAt(valueChanged ? storedReadAt : storedPreviousReadAt);
+
+        if (valueChanged) {
+          window.localStorage.setItem(previousKey, String(oldValue));
+          if (storedReadAt) window.localStorage.setItem(previousReadAtKey, storedReadAt);
+        }
+        if (!hasStoredValue || valueChanged) {
+          window.localStorage.setItem(storageKey, String(numericValue));
+          window.localStorage.setItem(readAtKey, new Date().toISOString());
+        }
+        return;
+      }
+
+      if (committedValueRef.current === numericValue) return;
+
+      // Preserve the previous reading from this card instance. Dashboard
+      // refreshes may rerender the card without representing a new reading.
+      setPrevious(committedValueRef.current);
       setPreviousReadAt(storedReadAt);
+      window.localStorage.setItem(previousKey, String(committedValueRef.current));
+      if (storedReadAt) window.localStorage.setItem(previousReadAtKey, storedReadAt);
       committedValueRef.current = numericValue;
       window.localStorage.setItem(storageKey, String(numericValue));
       window.localStorage.setItem(readAtKey, new Date().toISOString());
     } catch {
-      setPrevious(null);
+      // Keep the last valid variation if storage is temporarily unavailable.
     }
   }, [label, numericValue, storageKey]);
 
