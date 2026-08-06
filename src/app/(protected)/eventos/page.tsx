@@ -66,11 +66,12 @@ export default async function EventsPage({
   const params = searchParams ? await searchParams : {};
   const campaignId = typeof params.campaign === "string" ? params.campaign : undefined;
   const batchId = typeof params.batch === "string" ? params.batch : undefined;
+  const infrastructureOnly = params.tipo === "infraestrutura";
   let events: Awaited<ReturnType<typeof getOperationalEvents>> = [];
   let errorMessage: string | null = null;
 
   try {
-    events = await getOperationalEvents({ campaignId, batchId, limit: 100 });
+    events = await getOperationalEvents({ campaignId, batchId, infrastructureOnly, limit: 100 });
   } catch (error) {
     console.error("[EVENTS_PAGE_LOAD_FAILED]", {
       campaignId: campaignId ?? null,
@@ -91,6 +92,20 @@ export default async function EventsPage({
             <h2 className="text-lg font-semibold">Operações recentes</h2>
             <p className="mt-1 text-sm text-slate-500">Exibindo {events.length} operação(ões) mais recentes.</p>
           </div>
+
+          <form method="get" className="mt-4 flex flex-wrap items-end gap-3">
+            {campaignId ? <input type="hidden" name="campaign" value={campaignId} /> : null}
+            {batchId ? <input type="hidden" name="batch" value={batchId} /> : null}
+            <label className="flex min-w-64 flex-col gap-1 text-sm font-medium text-secondary">
+              Tipo de evento
+              <select name="tipo" defaultValue={infrastructureOnly ? "infraestrutura" : "todos"} className="rounded-lg border border-default bg-surface-primary px-3 py-2 text-primary">
+                <option value="todos">Todos os eventos</option>
+                <option value="infraestrutura">Alertas de infraestrutura</option>
+              </select>
+            </label>
+            <button type="submit" className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white">Filtrar</button>
+            {infrastructureOnly ? <a href="/eventos" className="rounded-lg border border-default px-4 py-2 text-sm font-semibold text-secondary">Limpar</a> : null}
+          </form>
 
           <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-700">
             <table className="min-w-[720px] w-full text-sm">
