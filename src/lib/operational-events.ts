@@ -32,13 +32,14 @@ type OperationalEventRow = {
 const STATUSES = new Set<OperationalEventStatus>(["queued", "running", "completed", "completed_with_errors", "failed", "cancelled", "cancelling", "paused", "waiting_active_job", "warning", "error"]);
 const counter = (value: number | string | null) => Number.isFinite(Number(value ?? 0)) ? Number(value ?? 0) : 0;
 
-export async function getOperationalEvents(filters?: { campaignId?: string; batchId?: string; limit?: number; offset?: number }) {
+export async function getOperationalEvents(filters?: { campaignId?: string; batchId?: string; limit?: number; offset?: number; infrastructureOnly?: boolean }) {
   const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase.rpc("list_operational_events_v1", {
     p_campaign_id: filters?.campaignId ?? null,
     p_batch_id: filters?.batchId ?? null,
     p_limit: filters?.limit ?? 100,
-    p_offset: filters?.offset ?? 0
+    p_offset: filters?.offset ?? 0,
+    p_infrastructure_only: filters?.infrastructureOnly ?? false
   });
   if (error) throw new DataAccessError("Nao foi possivel carregar os eventos operacionais.", "getOperationalEvents", error);
   return ((data ?? []) as OperationalEventRow[]).map((row): OperationalEvent => ({

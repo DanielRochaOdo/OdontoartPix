@@ -1,12 +1,14 @@
 -- Exibe alertas objetivos de ERP e Supabase no modulo Eventos.
 
 drop function if exists public.list_operational_events_v1(uuid, uuid, integer, integer);
+drop function if exists public.list_operational_events_v1(uuid, uuid, integer, integer, boolean);
 
 create function public.list_operational_events_v1(
   p_campaign_id uuid default null,
   p_batch_id uuid default null,
   p_limit integer default 100,
-  p_offset integer default 0
+  p_offset integer default 0,
+  p_infrastructure_only boolean default false
 )
 returns table(
   id uuid, operation_type text, title text, source text, status text,
@@ -113,6 +115,7 @@ as $$
   )
   select *
   from operational_events events
+  where not p_infrastructure_only or events.operation_type = 'infrastructure_health'
   order by coalesce(events.started_at, events.created_at) desc, events.created_at desc, events.id desc
   limit greatest(1, least(coalesce(p_limit, 100), 200))
   offset greatest(coalesce(p_offset, 0), 0);
