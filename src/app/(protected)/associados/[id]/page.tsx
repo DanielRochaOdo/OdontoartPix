@@ -6,6 +6,35 @@ import { formatDateTime } from "@/lib/date-time";
 import { PageSurface } from "@/components/page-surface";
 import { PageHeader } from "@/components/page-header";
 
+const STATUS_LABELS: Record<string, string> = {
+  aguardando: "Aguardando",
+  completed: "Concluído",
+  concluido: "Concluído",
+  concluída: "Concluída",
+  erro: "Erro",
+  error: "Erro",
+  em_aberto: "Em aberto",
+  emaberto: "Em aberto",
+  open: "Em aberto",
+  opened: "Em aberto",
+  paid: "Pago",
+  pago: "Pago",
+  pending: "Pendente",
+  pendente: "Pendente",
+  processing: "Processando",
+  processando: "Processando",
+  retrying: "Reprocessando",
+  unpaid: "Não pago",
+  "nao pago": "Não pago",
+  "não pago": "Não pago"
+};
+
+function translateStatus(value: string | null | undefined) {
+  if (!value) return "-";
+  const normalized = value.trim().toLowerCase();
+  return STATUS_LABELS[normalized] ?? value;
+}
+
 export const dynamic = "force-dynamic";
 
 export default async function MemberDetailPage({
@@ -82,7 +111,7 @@ export default async function MemberDetailPage({
         </div>
       ) : (
         <>
-          <section className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <section className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2">
             <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
               <p className="text-sm text-slate-500">CPF</p>
               <p className="mt-2 text-xl font-semibold">
@@ -91,11 +120,11 @@ export default async function MemberDetailPage({
             </article>
             <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
               <p className="text-sm text-slate-500">Processamento</p>
-              <p className="mt-2 text-xl font-semibold">{link.processing_status}</p>
+              <p className="mt-2 text-xl font-semibold">{translateStatus(link.processing_status)}</p>
             </article>
             <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
               <p className="text-sm text-slate-500">Pagamento</p>
-              <p className="mt-2 text-xl font-semibold">{link.payment_status ?? "-"}</p>
+              <p className="mt-2 text-xl font-semibold">{translateStatus(link.payment_status)}</p>
             </article>
             <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
               <p className="text-sm text-slate-500">Valor pendente</p>
@@ -115,7 +144,7 @@ export default async function MemberDetailPage({
               <p className="text-sm text-slate-500">Tentativas</p>
               <p className="mt-2 text-xl font-semibold">{link.processing_attempts}</p>
             </article>
-            <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:col-span-2">
+            <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
               <p className="text-sm text-slate-500">Última consulta</p>
               <p className="mt-2 text-base font-semibold">
                 {link.last_checked_at
@@ -142,8 +171,11 @@ export default async function MemberDetailPage({
                       <th className="px-4 py-3 text-left font-medium">Vencimento</th>
                       <th className="px-4 py-3 text-left font-medium">Tipo</th>
                       <th className="px-4 py-3 text-left font-medium">Plano</th>
-                      <th className="px-4 py-3 text-left font-medium">Valor final</th>
                       <th className="px-4 py-3 text-left font-medium">Situação</th>
+                      <th className="px-4 py-3 text-left font-medium">Valor base</th>
+                      <th className="px-4 py-3 text-left font-medium">Encargos</th>
+                      <th className="px-4 py-3 text-left font-medium">Desconto</th>
+                      <th className="px-4 py-3 text-left font-medium">Valor final</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -153,16 +185,29 @@ export default async function MemberDetailPage({
                         <td className="px-4 py-3">{installment.due_date_text ?? "-"}</td>
                         <td className="px-4 py-3">{installment.installment_type ?? "-"}</td>
                         <td className="px-4 py-3">{installment.plan_type}</td>
+                        <td className="px-4 py-3">{translateStatus(installment.situation)}</td>
+                        <td className="px-4 py-3">
+                          {formatCurrencyBR(installment.base_amount_cents)}
+                        </td>
+                        <td className="px-4 py-3">
+                          {formatCurrencyBR(
+                            installment.fine_amount_cents +
+                              installment.interest_amount_cents +
+                              installment.additional_amount_cents
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          {formatCurrencyBR(installment.discount_amount_cents)}
+                        </td>
                         <td className="px-4 py-3">
                           {formatCurrencyBR(installment.final_amount_cents)}
                         </td>
-                        <td className="px-4 py-3">{installment.situation ?? "-"}</td>
                       </tr>
                     ))}
                     {detail.installments.length === 0 ? (
                       <tr>
-                        <td colSpan={6} className="px-4 py-8 text-center text-slate-500">
-                          Nenhuma parcela financeira persistida.
+                        <td colSpan={10} className="px-4 py-8 text-center text-slate-500">
+                          Nenhuma parcela financeira cadastrada para este associado.
                         </td>
                       </tr>
                     ) : null}
@@ -194,48 +239,6 @@ export default async function MemberDetailPage({
             </article>
           </section>
 
-          <section className="mt-8 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h2 className="text-lg font-semibold">Histórico de consultas</h2>
-            <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200">
-              <table className="min-w-full text-sm">
-                <thead className="bg-slate-50 text-slate-600">
-                  <tr>
-                    <th className="px-4 py-3 text-left font-medium">Data</th>
-                    <th className="px-4 py-3 text-left font-medium">Resultado</th>
-                    <th className="px-4 py-3 text-left font-medium">HTTP</th>
-                    <th className="px-4 py-3 text-left font-medium">Duração</th>
-                    <th className="px-4 py-3 text-left font-medium">Tentativa</th>
-                    <th className="px-4 py-3 text-left font-medium">Erro</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {detail.logs.map((log) => (
-                    <tr key={log.id} className="border-t">
-                      <td className="px-4 py-3">
-                        {formatDateTime(log.consulted_at)}
-                      </td>
-                      <td className="px-4 py-3">{log.request_status}</td>
-                      <td className="px-4 py-3">{log.http_status ?? "-"}</td>
-                      <td className="px-4 py-3">
-                        {log.duration_ms == null ? "-" : `${log.duration_ms} ms`}
-                      </td>
-                      <td className="px-4 py-3">{log.attempt_number}</td>
-                      <td className="px-4 py-3">
-                        {log.error_code ? `${log.error_code}: ${log.error_message ?? ""}` : "-"}
-                      </td>
-                    </tr>
-                  ))}
-                  {detail.logs.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} className="px-4 py-8 text-center text-slate-500">
-                        Nenhuma consulta registrada.
-                      </td>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </table>
-            </div>
-          </section>
         </>
       )}
     </PageSurface>
