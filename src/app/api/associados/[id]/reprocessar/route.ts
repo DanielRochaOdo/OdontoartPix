@@ -10,6 +10,7 @@ type MemberLink = {
   id: string;
   member_id: string;
   target_installment_id: string | null;
+  due_date_text: string | null;
   processing_attempts: number | null;
   member:
     | {
@@ -43,7 +44,7 @@ export async function POST(
   const { data: link, error: linkError } = await supabase
     .from("campaign_batch_members")
     .select(
-      "id,member_id,target_installment_id,processing_attempts,member:members(id,external_user_code)"
+      "id,member_id,target_installment_id,due_date_text,processing_attempts,member:members(id,external_user_code)"
     )
     .eq("id", parsed.data.id)
     .is("deleted_at", null)
@@ -99,7 +100,11 @@ export async function POST(
   }
 
   try {
-    const result = await consultMonthlyByAssociatedCode(associatedCode, targetInstallmentId);
+    const result = await consultMonthlyByAssociatedCode(
+      associatedCode,
+      targetInstallmentId,
+      memberLink.due_date_text ?? undefined
+    );
     const { error: persistError } = await supabase.rpc("persist_member_processing_success", {
       p_campaign_batch_member_id: memberLink.id,
       p_http_status: result.httpStatus,

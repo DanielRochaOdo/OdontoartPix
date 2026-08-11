@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { getCurrentProfile } from "@/lib/auth";
 import { enqueueBatchJob } from "@/lib/batch-job-service";
 import { getProcessingConfig } from "@/lib/processing-config";
+import { isProcessingPaused, pauseProcessing, resumeProcessing } from "@/lib/processing-control";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { DataAccessError } from "@/lib/errors/data-access-error";
 
@@ -1250,6 +1251,7 @@ export async function getGeneralSyncPreview(input: ScopeInput): Promise<GeneralS
 }
 
 export async function startGeneralSync(input: ScopeInput & { requestedBy: string; confirmationToken?: string | null }): Promise<GeneralSyncStartResult> {
+  await resumeProcessing();
   const scope = await resolveScope(input);
   if (scope.emptyReason) {
     throw new Error(scope.emptyReason);
@@ -1315,6 +1317,8 @@ export async function startGeneralSync(input: ScopeInput & { requestedBy: string
 }
 
 export async function startScheduledGeneralSync(systemUserIdOverride?: string | null) {
+  if (await isProcessingPaused()) return null;
+
   const requestKey = `scheduled:${new Date().toISOString().slice(0, 16)}`;
   const systemUserId = systemUserIdOverride?.trim() || process.env.PROCESSING_SYSTEM_USER_ID?.trim() || null;
   const supabase = createSupabaseAdminClient();
@@ -1366,6 +1370,8 @@ export async function cancelGeneralSyncRun(runId: string, reason: string, reques
   if (!run) throw new Error("Sincronizacao geral nao encontrada.");
   if (isFinalRunStatus(run.status)) return buildRunDetail(run);
 
+  await pauseProcessing(reason, requestedBy);
+
   await updateRun(run.id, {
     status: "cancelling",
     cancel_reason: reason,
@@ -1407,6 +1413,11 @@ export async function advanceGeneralSyncRuns() {
 
   const run = ((data ?? []) as GeneralSyncRunRow[])[0];
   if (!run) return { claimed: false as const };
+
+  if (await isProcessingPaused() && run.status !== "cancelling") {
+    await releaseRunLock(run.id, workerId);
+    return { claimed: false as const, paused: true as const };
+  }
 
   try {
     await syncOneRunState(run, workerId);

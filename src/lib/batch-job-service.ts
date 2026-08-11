@@ -1,5 +1,6 @@
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getProcessingConfig } from "@/lib/processing-config";
+import { isProcessingPaused } from "@/lib/processing-control";
 
 export type ProcessingJobStatus =
   | "queued"
@@ -134,6 +135,10 @@ export async function enqueueBatchJob(input: {
   includeErrors?: boolean;
   scheduledRecheck?: boolean;
 }): Promise<EnqueuedJob | null> {
+  if (await isProcessingPaused()) {
+    throw new Error("O processamento esta pausado. Clique em Sincronizar geral para retomar.");
+  }
+
   const supabase = createSupabaseAdminClient();
   const includeErrors = input.includeErrors ?? false;
   const scheduledRecheck = input.scheduledRecheck ?? false;

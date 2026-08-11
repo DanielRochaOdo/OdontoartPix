@@ -7,6 +7,7 @@ export type ImportRow = {
   installmentAmountCents: number;
   cpf?: string;
   name?: string;
+  dueDate?: string;
   line: number;
 };
 
@@ -17,6 +18,7 @@ export type ImportIssue = {
   installmentAmountCents?: number | null;
   cpf?: string;
   name?: string;
+  dueDate?: string;
   reason: string;
 };
 
@@ -27,6 +29,23 @@ export type ImportInspectionRow = {
   installmentAmountCents?: number | null;
   cpf?: string;
   name?: string;
+  dueDate?: string;
+};
+
+export type MemberUpdateRow = {
+  associatedCode: string;
+  name?: string;
+  cpf?: string;
+  targetInstallmentId: string;
+  installmentAmountCents?: number;
+  dueDate?: string;
+  line: number;
+};
+
+export type MemberUpdateIssue = {
+  line: number;
+  associatedCode?: string;
+  reason: string;
 };
 
 function normalizeHeader(value: unknown) {
@@ -66,6 +85,11 @@ function normalizeCpf(value: unknown) {
   return digits.length < 11 ? digits.padStart(11, "0") : digits;
 }
 
+function normalizeDueDate(value: unknown) {
+  const normalized = String(value ?? "").trim();
+  return normalized || undefined;
+}
+
 export async function parseMemberFile(file: File) {
   const buffer = Buffer.from(await file.arrayBuffer());
   const extension = file.name.split(".").pop()?.toLowerCase();
@@ -95,6 +119,7 @@ export async function parseMemberFile(file: File) {
           parcela: String(values[2] ?? ""),
           valor_parcela: String(values[3] ?? ""),
           cpf: String(values[4] ?? ""),
+          vencimento: String(values[5] ?? ""),
           __line: index + 1
         });
       }
@@ -117,6 +142,7 @@ export async function parseMemberFile(file: File) {
         parcela: tokens[2] ?? "",
         valor_parcela: tokens[3] ?? "",
         cpf: tokens[4] ?? "",
+        vencimento: tokens[5] ?? "",
         __line: index + 1
       });
     }
@@ -157,6 +183,9 @@ export async function parseMemberFile(file: File) {
     const name = String(
       readColumn(row, ["nome", "nome completo", "name", "associado"]) ?? ""
     ).trim() || undefined;
+    const dueDate = normalizeDueDate(
+      readColumn(row, ["data de vencimento", "data_vencimento", "vencimento", "due_date", "dueDate"])
+    );
 
     inspectedRows.push({
       line,
@@ -164,7 +193,8 @@ export async function parseMemberFile(file: File) {
       targetInstallmentId: targetInstallmentId || undefined,
       installmentAmountCents: installmentAmount.valid ? installmentAmount.cents : null,
       cpf,
-      name
+      name,
+      dueDate
     });
 
     if (!associatedCode) {
@@ -174,6 +204,7 @@ export async function parseMemberFile(file: File) {
         installmentAmountCents: installmentAmount.valid ? installmentAmount.cents : null,
         cpf,
         name,
+        dueDate,
         reason: "CodigoAssociadoEmpresa ausente."
       });
       continue;
@@ -186,6 +217,7 @@ export async function parseMemberFile(file: File) {
         installmentAmountCents: installmentAmount.valid ? installmentAmount.cents : null,
         cpf,
         name,
+        dueDate,
         reason: "Parcela ausente."
       });
       continue;
@@ -198,6 +230,7 @@ export async function parseMemberFile(file: File) {
         targetInstallmentId,
         cpf,
         name,
+        dueDate,
         reason: "Valor da Parcela ausente ou invalido."
       });
       continue;
@@ -211,6 +244,7 @@ export async function parseMemberFile(file: File) {
         installmentAmountCents: installmentAmount.cents,
         cpf,
         name,
+        dueDate,
         reason: "Parcela duplicada no arquivo."
       });
       continue;
@@ -223,9 +257,100 @@ export async function parseMemberFile(file: File) {
       installmentAmountCents: installmentAmount.cents,
       cpf,
       name,
+      dueDate,
       line
     });
   }
 
   return { imports, issues, inspectedRows };
+}
+
+export async function parseMemberUpdateFile(file: File) {
+  const buffer = Buffer.from(await file.arrayBuffer());
+  const extension = file.name.split(".").pop()?.toLowerCase();
+  const text = buffer.toString("utf8");
+  const rows: Array<Record<string, unknown>> = [];
+
+  if (extension === "xlsx" || extension === "xls") {
+    const workbook = XLSX.read(buffer, { type: "buffer" });
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const json = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
+      defval: "",
+      raw: false
+    });
+    rows.push(...json);
+  } else {
+    const lines = text
+      .split(/\r?\n/)
+      .map((line) => line.replace(/^\uFEFF/, "").trim())
+      .filter(Boolean);
+    for (const [index, line] of lines.entries()) {
+      const tokens = line.split(/[;,|\t]/).map((value) => value.trim());
+      if (index === 0 && normalizeHeader(tokens[0]) === normalizeHeader("CodigoAssociadoEmpresa")) {
+        continue;
+      }
+      rows.push({
+        codigo_associado_empresa: tokens[0] ?? "",
+        nome: tokens[1] ?? "",
+        parcela: tokens[2] ?? "",
+        valor_parcela: tokens[3] ?? "",
+        cpf: tokens[4] ?? "",
+        vencimento: tokens[5] ?? ""
+      });
+    }
+  }
+
+  const updates: MemberUpdateRow[] = [];
+  const issues: MemberUpdateIssue[] = [];
+
+  for (const [index, row] of rows.entries()) {
+    const line = index + 2;
+    const associatedCode = normalizeAssociatedCode(
+      readColumn(row, ["codigo_associado_empresa", "CodigoAssociadoEmpresa", "codigo_associado", "codigo", "external_user_code"])
+    );
+    const nameValue = readColumn(row, ["nome", "nome completo", "name", "associado"]);
+    const name = nameValue == null ? undefined : String(nameValue).trim() || undefined;
+    const cpf = normalizeCpf(readColumn(row, ["cpf", "cpf_usuario", "CpfUsuario", "cpf/cnpj"]));
+    const targetInstallmentId = normalizeInstallmentId(
+      readColumn(row, ["parcela", "id", "installment_id", "target_installment_id"])
+    ) || undefined;
+    const rawAmount = readColumn(row, ["valor da parcela", "valor_parcela", "valorparcela", "valor", "amount"]);
+    const hasAmount = rawAmount != null && String(rawAmount).trim() !== "";
+    const installmentAmount = hasAmount ? normalizeInstallmentAmount(rawAmount) : null;
+    const dueDate = normalizeDueDate(
+      readColumn(row, ["data de vencimento", "data_vencimento", "vencimento", "due_date", "dueDate"])
+    );
+
+    if (!associatedCode) {
+      issues.push({ line, reason: "CodigoAssociadoEmpresa ausente." });
+      continue;
+    }
+
+    if (!targetInstallmentId) {
+      issues.push({ line, associatedCode, reason: "Parcela ausente." });
+      continue;
+    }
+
+    if (installmentAmount && !installmentAmount.valid) {
+      issues.push({ line, associatedCode, reason: "Valor da Parcela invalido." });
+      continue;
+    }
+
+    if (!name && !cpf && !dueDate && !installmentAmount) {
+      issues.push({ line, associatedCode, reason: "Nenhum dado foi informado para atualizacao." });
+      continue;
+    }
+
+    updates.push({
+      associatedCode,
+      name,
+      cpf,
+      targetInstallmentId,
+      installmentAmountCents: installmentAmount?.cents,
+      dueDate,
+      line
+    });
+  }
+
+  return { updates, issues };
 }

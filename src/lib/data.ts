@@ -159,12 +159,12 @@ export async function getMembers(filters: {
   const pageSize = 1000;
   const rows: MembersListItem[] = [];
 
-  for (let from = 0; from < 5000; from += pageSize) {
+  for (let from = 0; ; from += pageSize) {
     const to = from + pageSize - 1;
     let query = supabase
       .from("campaign_batch_members")
       .select(
-        "id,campaign_id,batch_id,target_installment_id,processing_status,payment_status,total_pending_amount_cents,installments_count,last_checked_at,processing_attempts,last_error,member:members(id,cpf,cpf_hash,name,external_user_code),batch:campaign_batches(id,name),campaign:campaigns(id,name)"
+      "id,campaign_id,batch_id,target_installment_id,due_date_text,processing_status,payment_status,total_pending_amount_cents,installments_count,last_checked_at,processing_attempts,last_error,member:members(id,cpf,cpf_hash,name,external_user_code),batch:campaign_batches(id,name),campaign:campaigns(id,name)"
       )
       .is("deleted_at", null);
 
@@ -194,7 +194,7 @@ export async function getMemberDetail(campaignBatchMemberId: string) {
   const { data: link, error: linkError } = await supabase
     .from("campaign_batch_members")
     .select(
-      "id,campaign_id,batch_id,member_id,target_installment_id,installment_amount_cents,processing_status,payment_status,total_pending_amount_cents,installments_count,last_checked_at,processing_attempts,last_error,member:members(id,cpf,name,external_user_code),batch:campaign_batches(id,name),campaign:campaigns(id,name)"
+      "id,campaign_id,batch_id,member_id,target_installment_id,due_date_text,installment_amount_cents,processing_status,payment_status,total_pending_amount_cents,installments_count,last_checked_at,processing_attempts,last_error,member:members(id,cpf,name,external_user_code),batch:campaign_batches(id,name),campaign:campaigns(id,name)"
     )
     .eq("id", campaignBatchMemberId)
     .is("deleted_at", null)

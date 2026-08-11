@@ -13,19 +13,21 @@ export async function GET() {
     "CodigoAssociadoEmpresa",
     "Parcela",
     "Valor da Parcela",
-    "CPF"
+    "CPF",
+    "Vencimento"
   ]]);
-  modelSheet["!cols"] = [{ wch: 38 }, { wch: 28 }, { wch: 18 }, { wch: 18 }, { wch: 18 }];
+  modelSheet["!cols"] = [{ wch: 38 }, { wch: 28 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 22 }];
   modelSheet["!autofilter"] = { ref: "A1:E1" };
   modelSheet["!freeze"] = { xSplit: 0, ySplit: 1 };
 
   const instructionsSheet = XLSX.utils.aoa_to_sheet([
     ["Instrucoes para importacao"],
     ["Preencha uma linha por associado na aba Modelo."],
-    ["Use exatamente as colunas Nome, CodigoAssociadoEmpresa, Parcela, Valor da Parcela e CPF."],
+    ["Use as colunas Nome, CodigoAssociadoEmpresa, Parcela, Valor da Parcela, CPF e Vencimento."],
     ["CodigoAssociadoEmpresa, Parcela e Valor da Parcela sao obrigatorios."],
     ["CPF e opcional e serve apenas para conferencia interna."],
     ["Nome e opcional e serve apenas para conferencia interna."],
+    ["Vencimento e opcional; se vazio, sera usada a data vencimento retornada pela API."],
     ["CodigoAssociadoEmpresa e o identificador usado pela API externa."],
     ["Parcela sera comparada com o campo Id retornado pela API."],
     ["Valor da Parcela sera usado quando a API indicar que a parcela esta paga."],

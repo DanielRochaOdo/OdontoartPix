@@ -108,6 +108,10 @@ export default async function MemberDetailPage({
               <p className="mt-2 text-xl font-semibold">{link.installments_count}</p>
             </article>
             <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <p className="text-sm text-slate-500">Data de Vencimento</p>
+              <p className="mt-2 text-xl font-semibold">{link.due_date_text ?? "-"}</p>
+            </article>
+            <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
               <p className="text-sm text-slate-500">Tentativas</p>
               <p className="mt-2 text-xl font-semibold">{link.processing_attempts}</p>
             </article>
