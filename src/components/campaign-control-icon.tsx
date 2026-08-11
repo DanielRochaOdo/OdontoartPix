@@ -1,5 +1,7 @@
 "use client";
 
+import Image from "next/image";
+
 const ICONS = {
   campaigns: "01_campanhas.svg",
   download: "02_baixar_modelo_xlsx.svg",
@@ -35,10 +37,12 @@ export function CampaignControlIcon({
   alt?: string;
 }) {
   return (
-    <img
+    <Image
       src={`/icons/campaigns/${ICONS[name]}`}
       alt={alt}
       aria-hidden={alt ? undefined : true}
+      width={24}
+      height={24}
       className={className}
     />
   );

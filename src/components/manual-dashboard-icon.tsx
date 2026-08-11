@@ -1,5 +1,7 @@
 "use client";
 
+import Image from "next/image";
+
 const ICONS = {
   campaigns: "01-campanhas-consideradas.svg",
   running: "02-campanhas-em-andamento.svg",
@@ -36,10 +38,12 @@ export function ManualDashboardIcon({
   alt?: string;
 }) {
   return (
-    <img
+    <Image
       src={`/icons/dashboard/${ICONS[name]}`}
       alt={alt}
       aria-hidden={alt ? undefined : true}
+      width={24}
+      height={24}
       className={className}
     />
   );

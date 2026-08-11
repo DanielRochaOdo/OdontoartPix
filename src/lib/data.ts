@@ -210,27 +210,38 @@ export async function getMemberDetail(campaignBatchMemberId: string) {
   }
   if (!link) return null;
 
-  const [installmentsResult, totalsResult, logsResult] = await Promise.all([
+  const { data: relatedLinks, error: relatedLinksError } = await supabase
+    .from("campaign_batch_members")
+    .select("id,target_installment_id,due_date_text,installment_amount_cents,processing_status,payment_status")
+    .eq("member_id", link.member_id)
+    .is("deleted_at", null);
+
+  if (relatedLinksError) {
+    throw new DataAccessError(
+      "Nao foi possivel localizar os vinculos do associado.",
+      "getMemberDetail.relatedLinks",
+      relatedLinksError
+    );
+  }
+
+  const relatedLinkIds = Array.from(
+    new Set([campaignBatchMemberId, ...(relatedLinks ?? []).map((item) => item.id)])
+  );
+
+  const [installmentsResult, totalsResult] = await Promise.all([
     supabase
       .from("member_installments")
       .select(
         "id,cod_usuario,cod_parcela,due_date_text,installment_type,boleto_code,pix_code,card_payment_link,situation,base_amount_cents,fine_amount_cents,interest_amount_cents,additional_amount_cents,discount_amount_cents,final_amount_cents,plan_type,observation,created_at"
       )
-      .eq("campaign_batch_member_id", campaignBatchMemberId)
-      .order("due_date_text", { ascending: true }),
+      .in("campaign_batch_member_id", relatedLinkIds)
+      .order("due_date_text", { ascending: true })
+      .order("created_at", { ascending: false }),
     supabase
       .from("member_plan_totals")
       .select("id,plan_type,installments_count,total_amount_cents")
       .eq("campaign_batch_member_id", campaignBatchMemberId)
       .order("plan_type", { ascending: true }),
-    supabase
-      .from("consultation_logs")
-      .select(
-        "id,request_status,http_status,duration_ms,attempt_number,error_code,error_message,consulted_at"
-      )
-      .eq("campaign_batch_member_id", campaignBatchMemberId)
-      .order("consulted_at", { ascending: false })
-      .limit(20)
   ]);
 
   if (installmentsResult.error) {
@@ -247,18 +258,52 @@ export async function getMemberDetail(campaignBatchMemberId: string) {
       totalsResult.error
     );
   }
-  if (logsResult.error) {
-    throw new DataAccessError(
-      "Nao foi possivel carregar o historico de consultas.",
-      "getMemberDetail.logs",
-      logsResult.error
-    );
-  }
+
+  const persistedInstallments = installmentsResult.data ?? [];
+  const persistedCodes = new Set(
+    persistedInstallments
+      .map((installment) => String(installment.cod_parcela ?? "").trim())
+      .filter(Boolean)
+  );
+  const targetInstallmentsWithoutDetails = (relatedLinks ?? [])
+    .filter((item) => {
+      const code = String(item.target_installment_id ?? "").trim();
+      return code && !persistedCodes.has(code);
+    })
+    .map((item) => ({
+      id: `target-${item.id}`,
+      cod_usuario: null,
+      cod_parcela: item.target_installment_id,
+      due_date_text: item.due_date_text,
+      installment_type: null,
+      boleto_code: null,
+      pix_code: null,
+      card_payment_link: null,
+      situation:
+        item.payment_status === "unpaid"
+          ? "open"
+          : item.payment_status ?? item.processing_status,
+      base_amount_cents: item.installment_amount_cents ?? 0,
+      fine_amount_cents: 0,
+      interest_amount_cents: 0,
+      additional_amount_cents: 0,
+      discount_amount_cents: 0,
+      final_amount_cents: item.installment_amount_cents ?? 0,
+      plan_type: "Não informado",
+      observation: "Parcela de destino cadastrada para o associado.",
+      created_at: null
+    }));
+
+  const installments = [...persistedInstallments, ...targetInstallmentsWithoutDetails].sort(
+    (left, right) =>
+      String(left.due_date_text ?? "9999-99-99").localeCompare(
+        String(right.due_date_text ?? "9999-99-99")
+      )
+  );
 
   return {
     link,
-    installments: installmentsResult.data ?? [],
-    planTotals: totalsResult.data ?? [],
-    logs: logsResult.data ?? []
+    installments,
+    planTotals: totalsResult.data ?? []
   };
 }
