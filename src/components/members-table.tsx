@@ -61,7 +61,9 @@ const STATUS_LABELS: Record<string, string> = {
   error: "Erro",
   erro: "Erro",
   failed: "Falhou",
-  falhou: "Falhou"
+  falhou: "Falhou",
+  retrying: "Tentando novamente",
+  retry: "Tentando novamente"
 };
 
 const PAYMENT_LABELS: Record<string, string> = {
@@ -78,19 +80,47 @@ function normalizePayment(value: string) {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .trim()
-    .toLowerCase();
+    .toLowerCase()
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ");
 
   if (normalized === "paid" || normalized === "pago") return "paid";
-  if (["unpaid", "nao pago", "nao pagos"].includes(normalized)) return "unpaid";
-  return normalized;
+  if (["unpaid", "nao pago", "nao pagos", "not paid"].includes(normalized)) return "unpaid";
+  if (normalized === "pending" || normalized === "pendente") return "pending";
+  return normalized || "-";
+}
+
+function normalizeStatus(value: string) {
+  const normalized = value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ");
+  const aliases: Record<string, string> = {
+    pendente: "pending",
+    pending: "pending",
+    processando: "processing",
+    processing: "processing",
+    concluido: "completed",
+    completed: "completed",
+    erro: "error",
+    error: "error",
+    falhou: "failed",
+    failed: "failed",
+    retry: "retrying",
+    retrying: "retrying"
+  };
+  return aliases[normalized] ?? (normalized || "-");
 }
 
 function statusLabel(value: string) {
-  return STATUS_LABELS[value.toLowerCase()] ?? value;
+  return STATUS_LABELS[normalizeStatus(value)] ?? value;
 }
 
 function paymentLabel(value: string) {
-  return PAYMENT_LABELS[value.toLowerCase()] ?? value;
+  return PAYMENT_LABELS[normalizePayment(value)] ?? value;
 }
 
 function dueDateKey(value: string) {
@@ -98,6 +128,11 @@ function dueDateKey(value: string) {
   const brazilian = normalized.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
   if (brazilian) {
     return `${brazilian[3]}-${brazilian[2].padStart(2, "0")}-${brazilian[1].padStart(2, "0")}`;
+  }
+
+  const excelDate = normalized.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2})$/);
+  if (excelDate) {
+    return `20${excelDate[3]}-${excelDate[1].padStart(2, "0")}-${excelDate[2].padStart(2, "0")}`;
   }
 
   const iso = normalized.match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -113,6 +148,12 @@ function parseDateKey(value: string) {
 function formatDateKey(value: string) {
   const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   return match ? `${match[3]}/${match[2]}/${match[1]}` : "";
+}
+
+function formatDueDate(value: string) {
+  const normalized = value.trim();
+  const key = dueDateKey(normalized);
+  return key ? formatDateKey(key) : normalized;
 }
 
 export function MembersTable({
@@ -156,7 +197,7 @@ export function MembersTable({
     initialFilters?.batch && initialFilters.batch.length > 1 ? initialFilters.batch : []
   );
   const [filters, setFilters] = useState({
-    status: initialFilters?.status ?? "all",
+    status: initialFilters?.status ? normalizeStatus(initialFilters.status) : "all",
     payment: normalizePayment(initialFilters?.payment ?? "all"),
     campaign:
       initialFilters?.campaign && initialFilters.campaign.length === 1
@@ -187,17 +228,17 @@ export function MembersTable({
 
         return {
           id: item.id,
-          campaignId: item.campaign_id,
-          batchId: item.batch_id,
+          campaignId: String(item.campaign_id ?? "").trim(),
+          batchId: String(item.batch_id ?? "").trim(),
           name: member?.name ?? "Sem nome",
           cpf: member?.cpf ?? "",
-          associatedCode: member?.external_user_code ?? "",
-          installment: String(item.target_installment_id ?? ""),
-          dueDate: item.due_date_text ?? "",
+          associatedCode: String(member?.external_user_code ?? "").trim(),
+          installment: String(item.target_installment_id ?? "").trim(),
+          dueDate: formatDueDate(item.due_date_text ?? ""),
           campaign: campaign?.name ?? "-",
           batch: batch?.name ?? "-",
-          status: item.processing_status,
-          payment: item.payment_status ?? "-",
+          status: normalizeStatus(item.processing_status),
+          payment: normalizePayment(item.payment_status ?? "-"),
           pending: item.total_pending_amount_cents ?? 0
         };
       }),
@@ -207,7 +248,7 @@ export function MembersTable({
   const options = useMemo(
     () => ({
       status: [...new Set(rows.map((row) => row.status))].sort(),
-      payment: [...new Set(rows.map((row) => normalizePayment(row.payment)))].sort(),
+      payment: [...new Set(rows.map((row) => row.payment))].sort(),
       campaign: [...new Map(rows.map((row) => [row.campaignId, row.campaign])).entries()],
       batch: [...new Map(rows.map((row) => [row.batchId, row.batch])).entries()]
     }),
@@ -235,9 +276,9 @@ export function MembersTable({
           return (
             (!query.trim() || search.includes(query.trim().toLowerCase())) &&
             (!codeFilter.trim() ||
-              row.associatedCode.toLowerCase().includes(codeFilter.trim().toLowerCase())) &&
+              row.associatedCode.trim() === codeFilter.trim()) &&
             (!installmentFilter.trim() ||
-              row.installment.toLowerCase().includes(installmentFilter.trim().toLowerCase())) &&
+              row.installment.trim() === installmentFilter.trim()) &&
             (() => {
               if (!dueDateFrom && !dueDateTo) return true;
               const rowDate = dueDateKey(row.dueDate);
@@ -247,7 +288,7 @@ export function MembersTable({
                 (!dueDateTo || rowDate <= dueDateTo);
             })() &&
             (filters.status === "all" || row.status === filters.status) &&
-            (filters.payment === "all" || normalizePayment(row.payment) === filters.payment) &&
+            (filters.payment === "all" || row.payment === filters.payment) &&
             (
               seededCampaignIds.length > 0
                 ? seededCampaignIds.includes(row.campaignId)
@@ -306,7 +347,6 @@ export function MembersTable({
     setDraftDueDateTo("");
     setDueDateFrom("");
     setDueDateTo("");
-    setCalendarOpen(false);
     setCalendarOpen(false);
     setPage(1);
   }
@@ -487,7 +527,9 @@ export function MembersTable({
     if (key === "batch") {
       setSeededBatchIds([]);
     }
-    setFilters((current) => ({ ...current, [key]: value }));
+    const normalizedValue =
+      key === "status" ? normalizeStatus(value) : key === "payment" ? normalizePayment(value) : value;
+    setFilters((current) => ({ ...current, [key]: normalizedValue }));
     setPage(1);
   }
 
@@ -761,6 +803,12 @@ export function MembersTable({
       <div className="mb-2 text-sm text-slate-500">
         Pagina {currentPage} de {pageCount} · ate {PAGE_SIZE} registros por pagina.
       </div>
+
+      {filteredRows.length === 0 ? (
+        <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          Nenhum associado encontrado com os filtros aplicados. Confira os valores informados e tente novamente.
+        </div>
+      ) : null}
 
       <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
         <table className="min-w-[1300px] divide-y divide-slate-200 text-sm">

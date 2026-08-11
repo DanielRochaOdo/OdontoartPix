@@ -174,6 +174,7 @@ export async function getMembers(filters: {
 
     const { data, error } = await query
       .order("created_at", { ascending: false })
+      .order("id", { ascending: true })
       .range(from, to);
 
     if (error) {
