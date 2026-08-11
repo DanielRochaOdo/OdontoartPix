@@ -3,7 +3,6 @@ import { canAdmin, getCurrentProfile } from "@/lib/auth";
 import { getMembers } from "@/lib/data";
 import { PageSurface } from "@/components/page-surface";
 import { PageHeader } from "@/components/page-header";
-import { MemberUpdateForm } from "@/components/member-update-form";
 
 export const dynamic = "force-dynamic";
 
@@ -25,9 +24,13 @@ export default async function MembersPage({
       typeof resolvedSearchParams.installment === "string"
         ? resolvedSearchParams.installment
         : "",
-    dueDate:
-      typeof resolvedSearchParams.dueDate === "string"
-        ? resolvedSearchParams.dueDate
+    dueDateFrom:
+      typeof resolvedSearchParams.dueDateFrom === "string"
+        ? resolvedSearchParams.dueDateFrom
+        : "",
+    dueDateTo:
+      typeof resolvedSearchParams.dueDateTo === "string"
+        ? resolvedSearchParams.dueDateTo
         : "",
     status: typeof resolvedSearchParams.status === "string" ? resolvedSearchParams.status : "all",
     payment:
@@ -52,11 +55,6 @@ export default async function MembersPage({
         description="Consulte CodigoAssociadoEmpresa, parcela, CPF, campanha, lote, status e pendencias. Use os filtros ou clique nos cabecalhos para ordenar."
       />
       <div className="mt-6">
-        {profile?.role === "administrador" || profile?.role === "operador" ? (
-          <div className="mb-5">
-            <MemberUpdateForm />
-          </div>
-        ) : null}
         <MembersTable
           members={members}
           initialFilters={initialFilters}

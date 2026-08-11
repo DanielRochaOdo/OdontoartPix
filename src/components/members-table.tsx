@@ -93,6 +93,28 @@ function paymentLabel(value: string) {
   return PAYMENT_LABELS[value.toLowerCase()] ?? value;
 }
 
+function dueDateKey(value: string) {
+  const normalized = value.trim();
+  const brazilian = normalized.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
+  if (brazilian) {
+    return `${brazilian[3]}-${brazilian[2].padStart(2, "0")}-${brazilian[1].padStart(2, "0")}`;
+  }
+
+  const iso = normalized.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return iso ? iso[0] : "";
+}
+
+function parseDateKey(value: string) {
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12);
+}
+
+function formatDateKey(value: string) {
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return match ? `${match[3]}/${match[2]}/${match[1]}` : "";
+}
+
 export function MembersTable({
   members,
   initialFilters,
@@ -104,7 +126,8 @@ export function MembersTable({
     query?: string;
     code?: string;
     installment?: string;
-    dueDate?: string;
+    dueDateFrom?: string;
+    dueDateTo?: string;
     status?: string;
     payment?: string;
     campaign?: string[];
@@ -115,7 +138,17 @@ export function MembersTable({
   const [query, setQuery] = useState(initialFilters?.query ?? "");
   const [codeFilter, setCodeFilter] = useState(initialFilters?.code ?? "");
   const [installmentFilter, setInstallmentFilter] = useState(initialFilters?.installment ?? "");
-  const [dueDateFilter, setDueDateFilter] = useState(initialFilters?.dueDate ?? "");
+  const [dueDateFrom, setDueDateFrom] = useState(initialFilters?.dueDateFrom ?? "");
+  const [dueDateTo, setDueDateTo] = useState(initialFilters?.dueDateTo ?? "");
+  const [draftDueDateFrom, setDraftDueDateFrom] = useState(initialFilters?.dueDateFrom ?? "");
+  const [draftDueDateTo, setDraftDueDateTo] = useState(initialFilters?.dueDateTo ?? "");
+  const [calendarOpen, setCalendarOpen] = useState(false);
+  const initialCalendarDate = dueDateKey(initialFilters?.dueDateFrom ?? "") || dueDateKey(initialFilters?.dueDateTo ?? "");
+  const [calendarMonth, setCalendarMonth] = useState(() => {
+    const selectedDate = parseDateKey(initialCalendarDate);
+    const date = selectedDate ?? new Date();
+    return new Date(date.getFullYear(), date.getMonth(), 1, 12);
+  });
   const [seededCampaignIds, setSeededCampaignIds] = useState<string[]>(
     initialFilters?.campaign && initialFilters.campaign.length > 1 ? initialFilters.campaign : []
   );
@@ -181,16 +214,6 @@ export function MembersTable({
     [rows]
   );
 
-  const dueDateOptions = useMemo(() => {
-    const values = [...new Set(rows.map((row) => row.dueDate).filter(Boolean))].sort((a, b) =>
-      a.localeCompare(b, "pt-BR", { numeric: true })
-    );
-    if (dueDateFilter && dueDateFilter !== "__blank__" && !values.includes(dueDateFilter)) {
-      values.unshift(dueDateFilter);
-    }
-    return values;
-  }, [dueDateFilter, rows]);
-
   const filteredRows = useMemo(
     () =>
       rows
@@ -215,10 +238,14 @@ export function MembersTable({
               row.associatedCode.toLowerCase().includes(codeFilter.trim().toLowerCase())) &&
             (!installmentFilter.trim() ||
               row.installment.toLowerCase().includes(installmentFilter.trim().toLowerCase())) &&
-            (dueDateFilter === "__blank__"
-              ? !row.dueDate.trim()
-              : !dueDateFilter.trim() ||
-                row.dueDate.toLowerCase().includes(dueDateFilter.trim().toLowerCase())) &&
+            (() => {
+              if (!dueDateFrom && !dueDateTo) return true;
+              const rowDate = dueDateKey(row.dueDate);
+              if (!rowDate) return false;
+              if (dueDateFrom && !dueDateTo) return rowDate === dueDateFrom;
+              return (!dueDateFrom || rowDate >= dueDateFrom) &&
+                (!dueDateTo || rowDate <= dueDateTo);
+            })() &&
             (filters.status === "all" || row.status === filters.status) &&
             (filters.payment === "all" || normalizePayment(row.payment) === filters.payment) &&
             (
@@ -245,8 +272,68 @@ export function MembersTable({
                 });
           return ascending ? result : -result;
         }),
-    [ascending, codeFilter, dueDateFilter, filters, installmentFilter, query, rows, seededBatchIds, seededCampaignIds, sortKey]
+    [ascending, codeFilter, dueDateFrom, dueDateTo, filters, installmentFilter, query, rows, seededBatchIds, seededCampaignIds, sortKey]
   );
+
+  const calendarDays = useMemo(() => {
+    const year = calendarMonth.getFullYear();
+    const month = calendarMonth.getMonth();
+    const leadingDays = new Date(year, month, 1).getDay();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    return Array.from({ length: leadingDays + daysInMonth }, (_, index) =>
+      index < leadingDays
+        ? null
+        : dueDateKey(
+            `${year}-${String(month + 1).padStart(2, "0")}-${String(index - leadingDays + 1).padStart(2, "0")}`
+          )
+    );
+  }, [calendarMonth]);
+
+  function selectDueDate(value: string) {
+    if (!draftDueDateFrom || draftDueDateTo) {
+      setDraftDueDateFrom(value);
+      setDraftDueDateTo("");
+    } else if (value < draftDueDateFrom) {
+      setDraftDueDateFrom(value);
+      setDraftDueDateTo("");
+    } else {
+      setDraftDueDateTo(value);
+    }
+  }
+
+  function clearDueDateRange() {
+    setDraftDueDateFrom("");
+    setDraftDueDateTo("");
+    setDueDateFrom("");
+    setDueDateTo("");
+    setCalendarOpen(false);
+    setCalendarOpen(false);
+    setPage(1);
+  }
+
+  function applyDueDateRange() {
+    if (!draftDueDateFrom) return;
+    setDueDateFrom(draftDueDateFrom);
+    setDueDateTo(draftDueDateTo || draftDueDateFrom);
+    setCalendarOpen(false);
+    setPage(1);
+  }
+
+  function openDueDateCalendar() {
+    setDraftDueDateFrom(dueDateFrom);
+    setDraftDueDateTo(dueDateTo);
+    const selectedDate = parseDateKey(dueDateFrom || dueDateTo);
+    if (selectedDate) {
+      setCalendarMonth(new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1, 12));
+    }
+    setCalendarOpen(true);
+  }
+
+  function moveCalendarMonth(offset: number) {
+    setCalendarMonth((current) =>
+      new Date(current.getFullYear(), current.getMonth() + offset, 1, 12)
+    );
+  }
 
   const pageCount = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE));
   const currentPage = Math.min(page, pageCount);
@@ -342,7 +429,10 @@ export function MembersTable({
     setQuery("");
     setCodeFilter("");
     setInstallmentFilter("");
-    setDueDateFilter("");
+    setDraftDueDateFrom("");
+    setDraftDueDateTo("");
+    setDueDateFrom("");
+    setDueDateTo("");
     setSeededCampaignIds([]);
     setSeededBatchIds([]);
     setFilters({
@@ -400,6 +490,14 @@ export function MembersTable({
     setFilters((current) => ({ ...current, [key]: value }));
     setPage(1);
   }
+
+  const dueDateRangeLabel = dueDateFrom && dueDateTo
+    ? dueDateFrom === dueDateTo
+      ? formatDateKey(dueDateFrom)
+      : `${formatDateKey(dueDateFrom)} - ${formatDateKey(dueDateTo)}`
+    : dueDateFrom
+      ? `A partir de ${formatDateKey(dueDateFrom)}`
+      : "Todos os vencimentos";
 
   return (
     <>
@@ -502,23 +600,124 @@ export function MembersTable({
           placeholder="Filtrar por parcela"
           className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
         />
-        <select
-          value={dueDateFilter}
-          onChange={(event) => {
-            setDueDateFilter(event.target.value);
-            setPage(1);
-          }}
-          aria-label="Filtrar por vencimento"
-          className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
-        >
-          <option value="">Todos os vencimentos</option>
-          <option value="__blank__">Em branco</option>
-          {dueDateOptions.map((dueDate) => (
-            <option key={dueDate} value={dueDate}>
-              {dueDate}
-            </option>
-          ))}
-        </select>
+        <div className="relative min-w-0 xl:col-span-2">
+          <button
+            type="button"
+            onClick={() => (calendarOpen ? setCalendarOpen(false) : openDueDateCalendar())}
+            aria-expanded={calendarOpen}
+            aria-label="Selecionar intervalo de vencimento"
+            className="flex w-full items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-sm text-slate-700 transition hover:border-slate-300"
+          >
+            <span className="truncate">Vencimento: {dueDateRangeLabel}</span>
+            <span aria-hidden="true" className="text-slate-400">▾</span>
+          </button>
+          {calendarOpen ? (
+            <div className="absolute left-0 top-full z-50 mt-2 w-[320px] rounded-xl border border-slate-200 bg-white p-3 shadow-xl">
+              <div className="mb-3 flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => moveCalendarMonth(-1)}
+                  aria-label="Mes anterior"
+                  className="rounded-md px-2 py-1 text-slate-600 hover:bg-slate-100"
+                >
+                  ‹
+                </button>
+                <p className="font-semibold capitalize text-slate-800">
+                  {calendarMonth.toLocaleDateString("pt-BR", { month: "long", year: "numeric" })}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => moveCalendarMonth(1)}
+                  aria-label="Proximo mes"
+                  className="rounded-md px-2 py-1 text-slate-600 hover:bg-slate-100"
+                >
+                  ›
+                </button>
+              </div>
+              <div className="grid grid-cols-7 gap-1 text-center text-xs text-slate-400">
+                {["D", "S", "T", "Q", "Q", "S", "S"].map((day, index) => (
+                  <span key={`${day}-${index}`} className="py-1 font-medium">{day}</span>
+                ))}
+                {calendarDays.map((day, index) => {
+                  if (!day) return <span key={`empty-${index}`} />;
+                  const isStart = day === draftDueDateFrom;
+                  const isEnd = day === draftDueDateTo;
+                  const isInRange = Boolean(draftDueDateFrom && draftDueDateTo && day >= draftDueDateFrom && day <= draftDueDateTo);
+                  return (
+                    <button
+                      key={day}
+                      type="button"
+                      onClick={() => selectDueDate(day)}
+                      className={`rounded-md py-1.5 text-sm transition ${
+                        isStart || isEnd
+                          ? "bg-sky-700 font-semibold text-white"
+                          : isInRange
+                            ? "bg-sky-100 text-sky-900"
+                            : "text-slate-700 hover:bg-slate-100"
+                      }`}
+                    >
+                      {parseDateKey(day)?.getDate()}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3 text-xs text-slate-500">
+                <span>
+                  {draftDueDateFrom && !draftDueDateTo
+                    ? `Data: ${formatDateKey(draftDueDateFrom)} — clique OK ou selecione o fim`
+                    : draftDueDateFrom && draftDueDateTo
+                      ? draftDueDateFrom === draftDueDateTo
+                        ? formatDateKey(draftDueDateFrom)
+                        : `${formatDateKey(draftDueDateFrom)} - ${formatDateKey(draftDueDateTo)}`
+                      : "Selecione o período"}
+                </span>
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={clearDueDateRange}
+                    className="font-medium text-slate-500 hover:underline"
+                  >
+                    Limpar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={applyDueDateRange}
+                    disabled={!draftDueDateFrom}
+                    className="rounded-md bg-sky-700 px-3 py-1.5 font-semibold text-white hover:bg-sky-800 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    OK
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </div>
+        <div className="hidden flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm">
+          <span className="whitespace-nowrap text-slate-500">Vencimento:</span>
+          <input
+            type="date"
+            value={dueDateFrom}
+            max={dueDateTo || undefined}
+            onChange={(event) => {
+              setDueDateFrom(event.target.value);
+              setPage(1);
+            }}
+            aria-label="Vencimento inicial"
+            className="min-w-0 bg-transparent text-sm outline-none"
+          />
+          <span className="text-slate-400">até</span>
+          <input
+            type="date"
+            value={dueDateTo}
+            min={dueDateFrom || undefined}
+            onChange={(event) => {
+              setDueDateTo(event.target.value);
+              setPage(1);
+            }}
+            aria-label="Vencimento final"
+            className="min-w-0 bg-transparent text-sm outline-none"
+          />
+        </div>
         {(["status", "payment", "campaign", "batch"] as const).map((key) => (
           <select
             key={key}
