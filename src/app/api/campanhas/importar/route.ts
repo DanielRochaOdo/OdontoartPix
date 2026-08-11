@@ -256,6 +256,7 @@ export async function POST(request: Request) {
         member_id: memberId,
         target_installment_id: item.targetInstallmentId,
         installment_amount_cents: item.installmentAmountCents,
+        due_date_text: item.dueDate ?? null,
         processing_status: "pending",
         payment_status: null,
         total_pending_amount_cents: 0,

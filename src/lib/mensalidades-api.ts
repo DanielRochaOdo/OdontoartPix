@@ -104,6 +104,7 @@ async function readResponseBody(response: Response, controller: AbortController)
 export async function consultMonthlyByAssociatedCode(
   associatedCode: string,
   targetInstallmentId?: string,
+  fallbackDueDate?: string,
   externalSignal?: AbortSignal
 ): Promise<MonthlyConsultationResult> {
   const baseUrl = process.env.MENSALIDADES_API_BASE_URL;
@@ -157,7 +158,7 @@ export async function consultMonthlyByAssociatedCode(
       return {
         httpStatus: response.status,
         durationMs: performance.now() - startedAt,
-        analysis: analyzeMonthlyResponse(payload, targetInstallmentId)
+        analysis: analyzeMonthlyResponse(payload, targetInstallmentId, fallbackDueDate)
       };
     } catch (error) {
       if (error instanceof MonthlyResponseError) {

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import * as XLSX from "xlsx";
 import { MemberActions } from "@/components/member-actions";
 import { emitMetricsSync } from "@/lib/metrics-sync";
 
@@ -12,6 +13,7 @@ type MemberItem = {
   campaign_id: string;
   batch_id: string;
   target_installment_id?: string | null;
+  due_date_text?: string | null;
   processing_status: string;
   payment_status: string | null;
   total_pending_amount_cents: number;
@@ -32,6 +34,7 @@ type Row = {
   cpf: string;
   associatedCode: string;
   installment: string;
+  dueDate: string;
   campaign: string;
   batch: string;
   status: string;
@@ -70,6 +73,18 @@ const PAYMENT_LABELS: Record<string, string> = {
   pendente: "Pendente"
 };
 
+function normalizePayment(value: string) {
+  const normalized = value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+
+  if (normalized === "paid" || normalized === "pago") return "paid";
+  if (["unpaid", "nao pago", "nao pagos"].includes(normalized)) return "unpaid";
+  return normalized;
+}
+
 function statusLabel(value: string) {
   return STATUS_LABELS[value.toLowerCase()] ?? value;
 }
@@ -89,6 +104,7 @@ export function MembersTable({
     query?: string;
     code?: string;
     installment?: string;
+    dueDate?: string;
     status?: string;
     payment?: string;
     campaign?: string[];
@@ -99,6 +115,7 @@ export function MembersTable({
   const [query, setQuery] = useState(initialFilters?.query ?? "");
   const [codeFilter, setCodeFilter] = useState(initialFilters?.code ?? "");
   const [installmentFilter, setInstallmentFilter] = useState(initialFilters?.installment ?? "");
+  const [dueDateFilter, setDueDateFilter] = useState(initialFilters?.dueDate ?? "");
   const [seededCampaignIds, setSeededCampaignIds] = useState<string[]>(
     initialFilters?.campaign && initialFilters.campaign.length > 1 ? initialFilters.campaign : []
   );
@@ -107,7 +124,7 @@ export function MembersTable({
   );
   const [filters, setFilters] = useState({
     status: initialFilters?.status ?? "all",
-    payment: initialFilters?.payment ?? "all",
+    payment: normalizePayment(initialFilters?.payment ?? "all"),
     campaign:
       initialFilters?.campaign && initialFilters.campaign.length === 1
         ? initialFilters.campaign[0]
@@ -143,6 +160,7 @@ export function MembersTable({
           cpf: member?.cpf ?? "",
           associatedCode: member?.external_user_code ?? "",
           installment: String(item.target_installment_id ?? ""),
+          dueDate: item.due_date_text ?? "",
           campaign: campaign?.name ?? "-",
           batch: batch?.name ?? "-",
           status: item.processing_status,
@@ -156,12 +174,22 @@ export function MembersTable({
   const options = useMemo(
     () => ({
       status: [...new Set(rows.map((row) => row.status))].sort(),
-      payment: [...new Set(rows.map((row) => row.payment))].sort(),
+      payment: [...new Set(rows.map((row) => normalizePayment(row.payment)))].sort(),
       campaign: [...new Map(rows.map((row) => [row.campaignId, row.campaign])).entries()],
       batch: [...new Map(rows.map((row) => [row.batchId, row.batch])).entries()]
     }),
     [rows]
   );
+
+  const dueDateOptions = useMemo(() => {
+    const values = [...new Set(rows.map((row) => row.dueDate).filter(Boolean))].sort((a, b) =>
+      a.localeCompare(b, "pt-BR", { numeric: true })
+    );
+    if (dueDateFilter && dueDateFilter !== "__blank__" && !values.includes(dueDateFilter)) {
+      values.unshift(dueDateFilter);
+    }
+    return values;
+  }, [dueDateFilter, rows]);
 
   const filteredRows = useMemo(
     () =>
@@ -172,6 +200,7 @@ export function MembersTable({
             row.cpf,
             row.associatedCode,
             row.installment,
+            row.dueDate,
             row.campaign,
             row.batch,
             row.status,
@@ -186,8 +215,12 @@ export function MembersTable({
               row.associatedCode.toLowerCase().includes(codeFilter.trim().toLowerCase())) &&
             (!installmentFilter.trim() ||
               row.installment.toLowerCase().includes(installmentFilter.trim().toLowerCase())) &&
+            (dueDateFilter === "__blank__"
+              ? !row.dueDate.trim()
+              : !dueDateFilter.trim() ||
+                row.dueDate.toLowerCase().includes(dueDateFilter.trim().toLowerCase())) &&
             (filters.status === "all" || row.status === filters.status) &&
-            (filters.payment === "all" || row.payment === filters.payment) &&
+            (filters.payment === "all" || normalizePayment(row.payment) === filters.payment) &&
             (
               seededCampaignIds.length > 0
                 ? seededCampaignIds.includes(row.campaignId)
@@ -212,7 +245,7 @@ export function MembersTable({
                 });
           return ascending ? result : -result;
         }),
-    [ascending, codeFilter, filters, installmentFilter, query, rows, seededBatchIds, seededCampaignIds, sortKey]
+    [ascending, codeFilter, dueDateFilter, filters, installmentFilter, query, rows, seededBatchIds, seededCampaignIds, sortKey]
   );
 
   const pageCount = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE));
@@ -236,6 +269,7 @@ export function MembersTable({
     ["name", "Nome"],
     ["associatedCode", "Codigo"],
     ["installment", "Parcela"],
+    ["dueDate", "Vencimento"],
     ["cpf", "CPF"],
     ["campaign", "Campanha"],
     ["batch", "Lote"],
@@ -308,6 +342,7 @@ export function MembersTable({
     setQuery("");
     setCodeFilter("");
     setInstallmentFilter("");
+    setDueDateFilter("");
     setSeededCampaignIds([]);
     setSeededBatchIds([]);
     setFilters({
@@ -318,6 +353,41 @@ export function MembersTable({
     });
     setPage(1);
     router.replace("/associados");
+  }
+
+  function exportFilteredRows() {
+    if (filteredRows.length === 0) return;
+
+    const worksheet = XLSX.utils.json_to_sheet(
+      filteredRows.map((row) => ({
+        Nome: row.name,
+        CodigoAssociadoEmpresa: row.associatedCode,
+        Parcela: row.installment,
+        Vencimento: row.dueDate || "",
+        CPF: row.cpf ? `***.***.***-${row.cpf.slice(-2)}` : "",
+        Campanha: row.campaign,
+        Lote: row.batch,
+        Status: statusLabel(row.status),
+        Pagamento: paymentLabel(row.payment),
+        Pendencia: `R$ ${(row.pending / 100).toFixed(2).replace(".", ",")}`
+      }))
+    );
+    worksheet["!cols"] = [
+      { wch: 32 },
+      { wch: 28 },
+      { wch: 18 },
+      { wch: 16 },
+      { wch: 18 },
+      { wch: 28 },
+      { wch: 28 },
+      { wch: 16 },
+      { wch: 16 },
+      { wch: 16 }
+    ];
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Associados");
+    XLSX.writeFile(workbook, `associados-filtrados-${new Date().toISOString().slice(0, 10)}.xlsx`);
   }
 
   function updateSelectFilter(key: "status" | "payment" | "campaign" | "batch", value: string) {
@@ -385,13 +455,23 @@ export function MembersTable({
               ? "Filtros aplicados via atalho. Use Limpar para voltar a visualizar todos os lotes."
               : "Use os filtros para localizar associados, campanhas, lotes e erros."}
           </div>
-          <button
-            type="button"
-            onClick={clearAllFilters}
-            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
-          >
-            Limpar
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={exportFilteredRows}
+              disabled={filteredRows.length === 0}
+              className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Exportar XLSX ({filteredRows.length})
+            </button>
+            <button
+              type="button"
+              onClick={clearAllFilters}
+              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+            >
+              Limpar
+            </button>
+          </div>
         </div>
 
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-7">
@@ -422,6 +502,23 @@ export function MembersTable({
           placeholder="Filtrar por parcela"
           className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
         />
+        <select
+          value={dueDateFilter}
+          onChange={(event) => {
+            setDueDateFilter(event.target.value);
+            setPage(1);
+          }}
+          aria-label="Filtrar por vencimento"
+          className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+        >
+          <option value="">Todos os vencimentos</option>
+          <option value="__blank__">Em branco</option>
+          {dueDateOptions.map((dueDate) => (
+            <option key={dueDate} value={dueDate}>
+              {dueDate}
+            </option>
+          ))}
+        </select>
         {(["status", "payment", "campaign", "batch"] as const).map((key) => (
           <select
             key={key}
@@ -447,7 +544,7 @@ export function MembersTable({
                 {key === "status"
                   ? statusLabel(String(option))
                   : key === "payment"
-                    ? paymentLabel(String(option))
+                  ? paymentLabel(String(option))
                     : Array.isArray(option)
                       ? option[1]
                       : option}
@@ -495,6 +592,7 @@ export function MembersTable({
                   <td className="px-4 py-3 font-medium">{row.name}</td>
                   <td className="px-4 py-3">{row.associatedCode || "-"}</td>
                   <td className="px-4 py-3">{row.installment || "-"}</td>
+                  <td className="px-4 py-3">{row.dueDate || "-"}</td>
                   <td className="px-4 py-3">
                     {row.cpf ? `***.***.***-${row.cpf.slice(-2)}` : "-"}
                   </td>

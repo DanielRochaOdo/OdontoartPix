@@ -121,7 +121,7 @@ as $$
   offset greatest(coalesce(p_offset, 0), 0);
 $$;
 
-revoke all on function public.list_operational_events_v1(uuid, uuid, integer, integer)
+revoke all on function public.list_operational_events_v1(uuid, uuid, integer, integer, boolean)
   from public, anon, authenticated;
-grant execute on function public.list_operational_events_v1(uuid, uuid, integer, integer)
+grant execute on function public.list_operational_events_v1(uuid, uuid, integer, integer, boolean)
   to service_role;

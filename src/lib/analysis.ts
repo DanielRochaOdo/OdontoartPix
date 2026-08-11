@@ -35,7 +35,9 @@ const MonthlyLegacyResponseSchema = z
 const MonthlyApiDataItemSchema = z
   .object({
     Id: NullableStringOrNumberSchema,
-    ValorFinal: NullableStringOrNumberSchema
+    ValorFinal: NullableStringOrNumberSchema,
+    vencimento: z.string().nullish(),
+    DataVencimento: z.string().nullish()
   })
   .passthrough();
 
@@ -260,7 +262,7 @@ function normalizeMonthlyPayload(input: unknown): NormalizedLegacyPayload | Norm
   );
 }
 
-function analyzeLegacyPayload(payload: NormalizedLegacyPayload): MonthlyAnalysis {
+function analyzeLegacyPayload(payload: NormalizedLegacyPayload, targetInstallmentId?: string, fallbackDueDate?: string): MonthlyAnalysis {
   const warnings: string[] = [];
   const seen = new Set<string>();
   const installments: MonthlyInstallment[] = [];
@@ -292,7 +294,7 @@ function analyzeLegacyPayload(payload: NormalizedLegacyPayload): MonthlyAnalysis
     installments.push({
       userCode,
       installmentCode,
-      dueDate: optionalText(item.vencimento),
+      dueDate: optionalText(item.vencimento) ?? (installmentCode === targetInstallmentId ? optionalText(fallbackDueDate) : undefined),
       installmentType,
       boletoCode: optionalText(item.cod_boleto),
       pixCode: optionalText(item.cod_pix),
@@ -357,7 +359,8 @@ function analyzeLegacyPayload(payload: NormalizedLegacyPayload): MonthlyAnalysis
 
 function analyzePaginatedPayload(
   payload: NormalizedPaginatedPayload,
-  targetInstallmentId?: string
+  targetInstallmentId?: string,
+  fallbackDueDate?: string
 ): MonthlyAnalysis {
   if (!targetInstallmentId) {
     throw new MonthlyResponseError(
@@ -414,6 +417,7 @@ function analyzePaginatedPayload(
     installments: [
       {
         installmentCode: targetInstallmentId,
+        dueDate: optionalText(matched.vencimento) ?? optionalText(matched.DataVencimento) ?? optionalText(fallbackDueDate),
         baseAmountCents: finalAmount.cents,
         fineAmountCents: 0,
         interestAmountCents: 0,
@@ -434,11 +438,12 @@ function analyzePaginatedPayload(
 
 export function analyzeMonthlyResponse(
   input: unknown,
-  targetInstallmentId?: string
+  targetInstallmentId?: string,
+  fallbackDueDate?: string
 ): MonthlyAnalysis {
   const normalized = normalizeMonthlyPayload(input);
   if (normalized.source === "paginated") {
-    return analyzePaginatedPayload(normalized, targetInstallmentId);
+    return analyzePaginatedPayload(normalized, targetInstallmentId, fallbackDueDate);
   }
-  return analyzeLegacyPayload(normalized);
+  return analyzeLegacyPayload(normalized, targetInstallmentId, fallbackDueDate);
 }

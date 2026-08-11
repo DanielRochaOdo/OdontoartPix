@@ -5,7 +5,7 @@ import {
   MonthlyResponseError
 } from "@/lib/analysis";
 
- describe("analyzeMonthlyResponse", () => {
+describe("analyzeMonthlyResponse", () => {
   it("classifica como pago quando parcelas é um array sem cod_parcela", () => {
     const result = analyzeMonthlyResponse({
       mensagem: "Usuário sem mensalidades em aberto.",
@@ -140,6 +140,38 @@ import {
     expect(result.paymentStatus).toBe("paid");
     expect(result.installmentsCount).toBe(0);
     expect(result.totalPendingAmountCents).toBe(0);
+  });
+
+  it("usa o vencimento do upload quando a API paginada nao informa vencimento", () => {
+    const result = analyzeMonthlyResponse({
+      codigo: 1,
+      dados: {
+        CurrentPage: 1,
+        TotalPages: 1,
+        TotalCount: 1,
+        PageSize: 10,
+        Data: [{ Id: "55", ValorFinal: 87.42 }]
+      },
+      erros: []
+    }, "55", "15/08/2026");
+
+    expect(result.installments[0].dueDate).toBe("15/08/2026");
+  });
+
+  it("normaliza DataVencimento da resposta paginada como vencimento", () => {
+    const result = analyzeMonthlyResponse({
+      codigo: 1,
+      dados: {
+        CurrentPage: 1,
+        TotalPages: 1,
+        TotalCount: 1,
+        PageSize: 10,
+        Data: [{ Id: "55", ValorFinal: 87.42, DataVencimento: "06/08/2026" }]
+      },
+      erros: []
+    }, "55");
+
+    expect(result.installments[0].dueDate).toBe("06/08/2026");
   });
 
   it("no novo contrato considera unpaid quando a parcela alvo é localizada por Id", () => {

@@ -3,6 +3,7 @@ import { advanceGeneralSyncRuns, startScheduledGeneralSync } from "@/lib/general
 import { dispatchDurableProcessingWorkflowSafely } from "@/lib/durable-processing-dispatch";
 import { getProcessingConfig } from "@/lib/processing-config";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { isProcessingPaused } from "@/lib/processing-control";
 
 export type ProcessingKickoffResult = {
   runs: number;
@@ -42,6 +43,8 @@ async function countActiveGeneralSyncRuns() {
 }
 
 async function resolveActiveSystemStatus() {
+  if (await isProcessingPaused()) return "paused" as const;
+
   const [activeJobCount, activeGeneralSyncCount] = await Promise.all([
     countActiveProcessingJobs(),
     countActiveGeneralSyncRuns()
@@ -284,6 +287,11 @@ export async function triggerQueuedProcessing(options?: {
     retried: 0,
     lastStatus: "idle"
   };
+
+  if (await isProcessingPaused()) {
+    summary.lastStatus = "paused";
+    return summary;
+  }
 
   await recoverStalledProcessingIfNeeded();
   const config = await getProcessingConfig();

@@ -8,6 +8,7 @@ import {
 } from "@/lib/mensalidades-api";
 import { getProcessingConfig } from "@/lib/processing-config";
 import type { MonthlyAnalysis } from "@/lib/analysis";
+import { isProcessingPaused } from "@/lib/processing-control";
 
 export type ErpBenchmarkMetrics = {
   totalAssociatedCodeCount: number;
@@ -62,6 +63,7 @@ type ClaimedMember = {
   batch_id: string;
   member_id: string;
   target_installment_id: string | null;
+  due_date_text: string | null;
   processing_attempts: number;
   processing_owner: string | null;
   claim_token: string | null;
@@ -76,6 +78,7 @@ type PreparedMember = {
   claimed: ClaimedMember;
   associatedCode: string;
   targetInstallmentId: string;
+  fallbackDueDate?: string;
 };
 
 type ConsultationResult = {
@@ -637,7 +640,7 @@ function prepareMember(
     };
   }
 
-  return { claimed, associatedCode, targetInstallmentId };
+  return { claimed, associatedCode, targetInstallmentId, fallbackDueDate: claimed.due_date_text ?? undefined };
 }
 
 async function consultPreparedMember(
@@ -663,6 +666,7 @@ async function consultPreparedMember(
     const consultation = await consultMonthlyByAssociatedCode(
       member.associatedCode,
       member.targetInstallmentId,
+      member.fallbackDueDate,
       stopSignal
     );
     return {
@@ -1031,6 +1035,18 @@ export async function processNextJobBlock(outerDeadline?: number): Promise<Proce
     config.persistenceReserveMs,
     config.finalizationReserveMs
   );
+  if (await isProcessingPaused()) {
+    return {
+      workerId,
+      jobId: null,
+      claimed: 0,
+      succeeded: 0,
+      failed: 0,
+      retried: 0,
+      status: "paused"
+    };
+  }
+
   if (remainingBudgetMs(executorDeadline) <= minimumEntryBudgetMs) {
     return {
       workerId,
