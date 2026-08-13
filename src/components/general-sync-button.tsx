@@ -207,11 +207,13 @@ function baseProgressPercentage(run: GeneralSyncRunDetail | null) {
 export function GeneralSyncButton({
   selectedCampaignIds,
   selectedBatchIds,
-  initialRun
+  initialRun,
+  processingCardCollapsed = false
 }: {
   selectedCampaignIds: string[];
   selectedBatchIds: string[];
   initialRun: GeneralSyncRunDetail | null;
+  processingCardCollapsed?: boolean;
 }) {
   // A execução ativa deve ser acompanhada no card persistente do dashboard.
   // O modal só abre por ação explícita do usuário, evitando cobrir a tela
@@ -459,7 +461,7 @@ export function GeneralSyncButton({
         <SyncIcon spinning={loadingPreview || starting} />
       </button>
 
-      {activeRun && run && processingSlot ? createPortal((
+      {activeRun && run && processingSlot && !processingCardCollapsed ? createPortal((
         <section className="processing-active-card mt-5 w-full rounded-2xl border border-slate-200 bg-white p-5 shadow-sm ring-1 ring-emerald-100 transition duration-300 hover:border-emerald-300 hover:shadow-lg hover:shadow-emerald-100/60 dark:border-[#22324a] dark:bg-[#0d1728] dark:ring-emerald-950 dark:hover:border-emerald-700 dark:hover:shadow-emerald-950/40">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div>
@@ -543,9 +545,9 @@ export function GeneralSyncButton({
                   <p className="mt-2 text-sm text-slate-600 dark:text-slate-300"><strong className="text-slate-900 dark:text-slate-50"><AnimatedNumber value={currentBatchCounters?.processedItems ?? 0} /></strong> / <AnimatedNumber value={currentBatchCounters?.totalItems ?? 0} /> registros processados</p>
                 </div>
                 <div className="grid gap-3 sm:grid-cols-3">
-                  <ProcessingMetricCard label="Sucessos" icon="success" value={<AnimatedNumber value={currentBatch.successCount} />} selected={selectedMetric === "success"} tone="emerald" onSelect={() => setSelectedMetric(selectedMetric === "success" ? null : "success")} />
-                  <ProcessingMetricCard label="Erros" icon="error" value={<AnimatedNumber value={currentBatch.errorCount} />} selected={selectedMetric === "error"} tone="red" onSelect={() => setSelectedMetric(selectedMetric === "error" ? null : "error")} />
-                  <ProcessingMetricCard label="Em processamento" icon="processing" value={<AnimatedNumber value={currentBatch.processingCount} />} selected={selectedMetric === "processing"} tone="sky" onSelect={() => setSelectedMetric(selectedMetric === "processing" ? null : "processing")} />
+                  <ProcessingMetricCard label="Sucessos" icon="success" value={<AnimatedNumber value={runCounters?.successItems ?? 0} />} selected={selectedMetric === "success"} tone="emerald" onSelect={() => setSelectedMetric(selectedMetric === "success" ? null : "success")} />
+                  <ProcessingMetricCard label="Erros" icon="error" value={<AnimatedNumber value={runCounters?.errorItems ?? 0} />} selected={selectedMetric === "error"} tone="red" onSelect={() => setSelectedMetric(selectedMetric === "error" ? null : "error")} />
+                  <ProcessingMetricCard label="Em processamento" icon="processing" value={<AnimatedNumber value={run?.processingCount ?? 0} />} selected={selectedMetric === "processing"} tone="sky" onSelect={() => setSelectedMetric(selectedMetric === "processing" ? null : "processing")} />
                 </div>
               </div>
               {currentBatch.processedCount === 0 && currentBatch.processingCount > 0 ? (

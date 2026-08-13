@@ -158,6 +158,7 @@ export type GeneralSyncRunDetail = {
   processedCount: number;
   successCount: number;
   errorCount: number;
+  processingCount: number;
   startedAt: string | null;
   finishedAt: string | null;
   currentBatch: {
@@ -581,6 +582,7 @@ async function buildRunDetail(run: GeneralSyncRunRow): Promise<GeneralSyncRunDet
   let processedCount = 0;
   let successCount = 0;
   let errorCount = 0;
+  let processingCount = 0;
   const completedBatchCount = batches.filter((item) => FINAL_BATCH_STATUSES.includes(item.status)).length;
   let enrichedActiveBatch: GeneralSyncRunDetail["currentBatch"] = null;
 
@@ -609,18 +611,30 @@ async function buildRunDetail(run: GeneralSyncRunRow): Promise<GeneralSyncRunDet
   }
 
   const filters = parseGeneralSyncFilters(run.filters);
-  if (enrichedActiveBatch) {
+  if (batches.length > 0) {
     const supabase = createSupabaseAdminClient();
     const { count, error } = await supabase
       .from("campaign_batch_members")
       .select("id", { count: "exact", head: true })
-      .eq("batch_id", enrichedActiveBatch.id)
+      .in("batch_id", batches.map((batch) => batch.batch_id))
       .eq("processing_status", "processing")
       .is("deleted_at", null);
     if (error) {
       throw new DataAccessError("Nao foi possivel carregar o progresso em processamento.", "generalSync.getProcessingCount", error);
     }
-    enrichedActiveBatch.processingCount = count ?? 0;
+    processingCount = count ?? 0;
+    if (enrichedActiveBatch) {
+      const { count: activeBatchCount, error: activeBatchError } = await supabase
+        .from("campaign_batch_members")
+        .select("id", { count: "exact", head: true })
+        .eq("batch_id", enrichedActiveBatch.id)
+        .eq("processing_status", "processing")
+        .is("deleted_at", null);
+      if (activeBatchError) {
+        throw new DataAccessError("Nao foi possivel carregar o progresso em processamento.", "generalSync.getProcessingCount", activeBatchError);
+      }
+      enrichedActiveBatch.processingCount = activeBatchCount ?? 0;
+    }
   }
   return {
     id: run.id,
@@ -635,6 +649,7 @@ async function buildRunDetail(run: GeneralSyncRunRow): Promise<GeneralSyncRunDet
     processedCount,
     successCount,
     errorCount,
+    processingCount,
     startedAt: run.started_at,
     finishedAt: run.finished_at,
     currentBatch: enrichedActiveBatch,
