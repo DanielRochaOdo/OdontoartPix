@@ -2,7 +2,7 @@
 
 import { CampaignFocusToggle } from "@/components/campaign-focus-toggle";
 import { GeneralSyncButton } from "@/components/general-sync-button";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { GeneralSyncRunDetail } from "@/lib/general-sync";
 import { ManualDashboardIcon } from "@/components/manual-dashboard-icon";
@@ -37,6 +37,73 @@ function ResetIcon() {
 
 function CheckIcon() {
   return <ManualDashboardIcon name="apply" className="h-4 w-4 dark:brightness-0 dark:invert" />;
+}
+
+const PROCESSING_CARD_COLLAPSED_STORAGE_KEY = "dashboard-processing-card-collapsed";
+let processingCardCollapsedFallback = false;
+const processingCardPreferenceListeners = new Set<() => void>();
+
+function subscribeToProcessingCardPreference(onStoreChange: () => void) {
+  if (typeof window === "undefined") return () => undefined;
+
+  const handleStorageChange = (event: StorageEvent) => {
+    if (event.key === PROCESSING_CARD_COLLAPSED_STORAGE_KEY) onStoreChange();
+  };
+
+  processingCardPreferenceListeners.add(onStoreChange);
+  window.addEventListener("storage", handleStorageChange);
+
+  return () => {
+    processingCardPreferenceListeners.delete(onStoreChange);
+    window.removeEventListener("storage", handleStorageChange);
+  };
+}
+
+function getProcessingCardCollapsed() {
+  try {
+    processingCardCollapsedFallback = window.localStorage.getItem(PROCESSING_CARD_COLLAPSED_STORAGE_KEY) === "true";
+  } catch {
+    // Mantém a preferência da sessão quando o armazenamento não estiver disponível.
+  }
+  return processingCardCollapsedFallback;
+}
+
+function getServerProcessingCardCollapsed() {
+  return false;
+}
+
+function notifyProcessingCardPreferenceChanged() {
+  processingCardPreferenceListeners.forEach((listener) => listener());
+}
+
+function ProcessingCardVisibilityToggle({
+  collapsed,
+  onToggle
+}: {
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-controls="dashboard-processing-slot"
+      aria-expanded={!collapsed}
+      aria-label={collapsed ? "Mostrar sincronização em andamento" : "Ocultar sincronização em andamento"}
+      title={collapsed ? "Mostrar sincronização em andamento" : "Ocultar sincronização em andamento"}
+      className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-[#284665] bg-[#071b34] text-[#edf6ff] shadow-sm transition hover:border-[#00E5C3] hover:bg-[#0b2540] hover:text-[#00E5C3]"
+    >
+      <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
+        <path
+          d={collapsed ? "m6 9 6 6 6-6" : "m6 15 6-6 6 6"}
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    </button>
+  );
 }
 
 function FilterMenu({
@@ -114,6 +181,11 @@ export function DashboardFilters({
   const [batchIds, setBatchIds] = useState<string[]>(selectedBatchIds);
   const [campaignQuery, setCampaignQuery] = useState("");
   const [batchQuery, setBatchQuery] = useState("");
+  const processingCardCollapsed = useSyncExternalStore(
+    subscribeToProcessingCardPreference,
+    getProcessingCardCollapsed,
+    getServerProcessingCardCollapsed
+  );
 
   const selectedBatchCampaignIds = useMemo(
     () =>
@@ -207,6 +279,17 @@ export function DashboardFilters({
     );
   }
 
+  function toggleProcessingCard() {
+    const nextCollapsed = !processingCardCollapsed;
+    processingCardCollapsedFallback = nextCollapsed;
+    try {
+      window.localStorage.setItem(PROCESSING_CARD_COLLAPSED_STORAGE_KEY, String(nextCollapsed));
+    } catch {
+      // A preferência continua válida durante a sessão mesmo sem armazenamento persistente.
+    }
+    notifyProcessingCardPreferenceChanged();
+  }
+
   function formatScheduleDate(value: string | null) {
     if (!value) return "—";
     const date = new Date(value);
@@ -240,12 +323,19 @@ export function DashboardFilters({
         </span>
       </div>
       <div className="flex flex-wrap gap-2 lg:justify-end">
+        {canGeneralSync ? (
+          <ProcessingCardVisibilityToggle
+            collapsed={processingCardCollapsed}
+            onToggle={toggleProcessingCard}
+          />
+        ) : null}
         <CampaignFocusToggle />
         {canGeneralSync ? (
           <GeneralSyncButton
             selectedCampaignIds={campaignIds}
             selectedBatchIds={batchIds}
             initialRun={initialGeneralSyncRun}
+            processingCardCollapsed={processingCardCollapsed}
           />
         ) : null}
         <FilterMenu
