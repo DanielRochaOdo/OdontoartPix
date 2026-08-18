@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  analyzeMonthlyResponses,
   analyzeMonthlyResponse,
   analyzeTargetInstallment,
   MonthlyResponseError
@@ -12,7 +13,7 @@ describe("analyzeMonthlyResponse", () => {
       parcelas: [{ Situacao: "ATIVO", Observacao: "Sem parcelas" }]
     });
 
-    expect(result.paymentStatus).toBe("paid");
+    expect(result.paymentStatus).toBe("unpaid");
     expect(result.installmentsCount).toBe(0);
     expect(result.totalPendingAmountCents).toBe(0);
     expect(result.installments).toEqual([]);
@@ -70,7 +71,7 @@ describe("analyzeMonthlyResponse", () => {
 
   it("não considera cod_parcela vazio como parcela financeira", () => {
     const result = analyzeMonthlyResponse({ parcelas: [{ cod_parcela: "   " }] });
-    expect(result.paymentStatus).toBe("paid");
+    expect(result.paymentStatus).toBe("unpaid");
   });
 
   it("ignora parcelas do tipo Parcela Virtual em toda a leitura", () => {
@@ -137,7 +138,7 @@ describe("analyzeMonthlyResponse", () => {
       erros: null
     }, "55");
 
-    expect(result.paymentStatus).toBe("paid");
+    expect(result.paymentStatus).toBe("unpaid");
     expect(result.installmentsCount).toBe(0);
     expect(result.totalPendingAmountCents).toBe(0);
   });
@@ -195,6 +196,67 @@ describe("analyzeMonthlyResponse", () => {
     expect(result.installments[0]?.installmentCode).toBe("55");
   });
 
+  it("usa o historico completo para distinguir ABERTO de pagamento confirmado", () => {
+    const result = analyzeMonthlyResponse({
+      codigo: 1,
+      dados: {
+        CurrentPage: 1,
+        TotalPages: 1,
+        TotalCount: 2,
+        PageSize: 100,
+        Data: [
+          { Id: "55", ValorFinal: 100, ValorPago: 0, DescricaoRecebimento: "ABERTO" },
+          { Id: "56", ValorFinal: 80, ValorPago: "75,00", DescricaoRecebimento: "PIX" }
+        ]
+      },
+      erros: null
+    }, "55", undefined, { historyComplete: true });
+
+    expect(result.paymentStatus).toBe("unpaid");
+    expect(result.totalPendingAmountCents).toBe(10000);
+    expect(result.totalPaidAmountCents).toBe(7500);
+    expect(result.installments).toHaveLength(2);
+    expect(result.installments[1]).toMatchObject({
+      paymentDescription: "PIX",
+      paidAmountCents: 7500
+    });
+  });
+
+  it("nunca marca como pago um historico sem ValorPago preenchido", () => {
+    const result = analyzeMonthlyResponse({
+      codigo: 1,
+      dados: {
+        CurrentPage: 1,
+        TotalPages: 1,
+        TotalCount: 1,
+        PageSize: 100,
+        Data: [{ Id: "55", ValorFinal: 87.42, DescricaoRecebimento: "QUITADO" }]
+      },
+      erros: null
+    }, "55", undefined, { historyComplete: true });
+
+    expect(result.paymentStatus).toBe("unpaid");
+    expect(result.installments[0]?.paidAmountCents).toBeNull();
+  });
+
+  it("nao usa Situacao como tipo de pagamento quando DescricaoRecebimento nao veio", () => {
+    const result = analyzeMonthlyResponse({
+      codigo: 1,
+      dados: {
+        CurrentPage: 1,
+        TotalPages: 1,
+        TotalCount: 1,
+        PageSize: 100,
+        Data: [{ Id: "55", ValorFinal: 87.42, Situacao: "ATIVO" }]
+      },
+      erros: null
+    }, "55", undefined, { historyComplete: true });
+
+    expect(result.installments[0]?.situation).toBeUndefined();
+    expect(result.installments[0]?.paymentDescription).toBeUndefined();
+    expect(result.paymentStatus).toBe("unpaid");
+  });
+
   it("rejeita parcela financeira com ValorFinal inválido", () => {
     expect(() =>
       analyzeMonthlyResponse({ parcelas: [{ cod_parcela: "10", ValorFinal: "abc" }] })
@@ -203,6 +265,37 @@ describe("analyzeMonthlyResponse", () => {
 });
 
 describe("analise da fatura alvo e completude da paginacao", () => {
+  it("consolida paginas e encontra a parcela alvo na pagina seguinte", () => {
+    const result = analyzeMonthlyResponses([
+      {
+        codigo: 1,
+        dados: {
+          CurrentPage: 1,
+          TotalPages: 2,
+          TotalCount: 201,
+          PageSize: 200,
+          Data: [{ Id: "55", ValorFinal: 49, DescricaoRecebimento: "ABERTO" }]
+        },
+        erros: null
+      },
+      {
+        codigo: 1,
+        dados: {
+          CurrentPage: 2,
+          TotalPages: 2,
+          TotalCount: 201,
+          PageSize: 66,
+          Data: [{ Id: "999", ValorFinal: 63.8, ValorPago: 63.8, DescricaoRecebimento: "PIX" }]
+        },
+        erros: null
+      }
+    ], "999", undefined, { historyComplete: true });
+
+    expect(result.paymentStatus).toBe("paid");
+    expect(result.paginationComplete).toBe(true);
+    expect(result.totalPaidAmountCents).toBe(6380);
+  });
+
   it("analisa um conjunto de paginas sem depender do transporte HTTP", () => {
     const result = analyzeTargetInstallment({
       targetInstallmentId: "55",
@@ -225,8 +318,8 @@ describe("analise da fatura alvo e completude da paginacao", () => {
       }
     }, "55");
 
-    expect(result.paymentStatus).toBe("paid");
-    expect(result.paymentStatusSource).toBe("inferred_from_open_invoices_absence");
+    expect(result.paymentStatus).toBe("unpaid");
+    expect(result.paymentStatusSource).toBe("erp_open_invoice");
   });
 
   it("nao conclui pagamento quando ainda existem paginas nao consultadas", () => {

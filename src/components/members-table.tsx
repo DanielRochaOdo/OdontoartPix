@@ -16,6 +16,7 @@ type MemberItem = {
   due_date_text?: string | null;
   processing_status: string;
   payment_status: string | null;
+  payment_description: string | null;
   total_pending_amount_cents: number;
   member: Relation<{
     cpf: string | null;
@@ -39,6 +40,7 @@ type Row = {
   batch: string;
   status: string;
   payment: string;
+  receiptDescription: string;
   pending: number;
 };
 
@@ -171,6 +173,7 @@ export function MembersTable({
     dueDateTo?: string;
     status?: string;
     payment?: string;
+    receipt?: string;
     campaign?: string[];
     batch?: string[];
   };
@@ -199,6 +202,7 @@ export function MembersTable({
   const [filters, setFilters] = useState({
     status: initialFilters?.status ? normalizeStatus(initialFilters.status) : "all",
     payment: normalizePayment(initialFilters?.payment ?? "all"),
+    receipt: initialFilters?.receipt?.trim() || "all",
     campaign:
       initialFilters?.campaign && initialFilters.campaign.length === 1
         ? initialFilters.campaign[0]
@@ -239,6 +243,7 @@ export function MembersTable({
           batch: batch?.name ?? "-",
           status: normalizeStatus(item.processing_status),
           payment: normalizePayment(item.payment_status ?? "-"),
+          receiptDescription: String(item.payment_description ?? "").trim() || "-",
           pending: item.total_pending_amount_cents ?? 0
         };
       }),
@@ -249,6 +254,7 @@ export function MembersTable({
     () => ({
       status: [...new Set(rows.map((row) => row.status))].sort(),
       payment: [...new Set(rows.map((row) => row.payment))].sort(),
+      receipt: [...new Set(rows.map((row) => row.receiptDescription))].sort((left, right) => left.localeCompare(right, "pt-BR")),
       campaign: [...new Map(rows.map((row) => [row.campaignId, row.campaign])).entries()],
       batch: [...new Map(rows.map((row) => [row.batchId, row.batch])).entries()]
     }),
@@ -268,7 +274,8 @@ export function MembersTable({
             row.campaign,
             row.batch,
             row.status,
-            row.payment
+            row.payment,
+            row.receiptDescription
           ]
             .join(" ")
             .toLowerCase();
@@ -289,6 +296,7 @@ export function MembersTable({
             })() &&
             (filters.status === "all" || row.status === filters.status) &&
             (filters.payment === "all" || row.payment === filters.payment) &&
+            (filters.receipt === "all" || row.receiptDescription === filters.receipt) &&
             (
               seededCampaignIds.length > 0
                 ? seededCampaignIds.includes(row.campaignId)
@@ -402,6 +410,7 @@ export function MembersTable({
     ["batch", "Lote"],
     ["status", "Status"],
     ["payment", "Pagamento"],
+    ["receiptDescription", "Tipo de Pagto"],
     ["pending", "Pendencia"]
   ];
 
@@ -478,6 +487,7 @@ export function MembersTable({
     setFilters({
       status: "all",
       payment: "all",
+      receipt: "all",
       campaign: "all",
       batch: "all"
     });
@@ -499,6 +509,7 @@ export function MembersTable({
         Lote: row.batch,
         Status: statusLabel(row.status),
         Pagamento: paymentLabel(row.payment),
+        "Tipo de Pagto": row.receiptDescription,
         Pendencia: `R$ ${(row.pending / 100).toFixed(2).replace(".", ",")}`
       }))
     );
@@ -512,6 +523,7 @@ export function MembersTable({
       { wch: 28 },
       { wch: 16 },
       { wch: 16 },
+      { wch: 22 },
       { wch: 16 }
     ];
 
@@ -520,7 +532,7 @@ export function MembersTable({
     XLSX.writeFile(workbook, `associados-filtrados-${new Date().toISOString().slice(0, 10)}.xlsx`);
   }
 
-  function updateSelectFilter(key: "status" | "payment" | "campaign" | "batch", value: string) {
+  function updateSelectFilter(key: "status" | "payment" | "receipt" | "campaign" | "batch", value: string) {
     if (key === "campaign") {
       setSeededCampaignIds([]);
     }
@@ -760,7 +772,7 @@ export function MembersTable({
             className="min-w-0 bg-transparent text-sm outline-none"
           />
         </div>
-        {(["status", "payment", "campaign", "batch"] as const).map((key) => (
+        {(["status", "payment", "receipt", "campaign", "batch"] as const).map((key) => (
           <select
             key={key}
             value={filters[key]}
@@ -771,6 +783,8 @@ export function MembersTable({
               Todos:{" "}
               {key === "payment"
                 ? "Pagamento"
+                : key === "receipt"
+                  ? "Tipo de Pagto"
                 : key === "campaign"
                   ? "Campanha"
                   : key === "batch"
@@ -786,6 +800,8 @@ export function MembersTable({
                   ? statusLabel(String(option))
                   : key === "payment"
                   ? paymentLabel(String(option))
+                    : key === "receipt"
+                      ? String(option)
                     : Array.isArray(option)
                       ? option[1]
                       : option}
@@ -811,7 +827,7 @@ export function MembersTable({
       ) : null}
 
       <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <table className="min-w-[1300px] divide-y divide-slate-200 text-sm">
+        <table className="min-w-[1420px] divide-y divide-slate-200 text-sm">
           <thead className="bg-slate-50 text-slate-600">
             <tr>
               {columns.map(([key, label]) => (
@@ -829,7 +845,7 @@ export function MembersTable({
           <tbody className="divide-y divide-slate-200">
             {paginatedRows.length === 0 ? (
               <tr>
-                <td colSpan={10} className="px-4 py-8 text-center text-slate-500">
+                <td colSpan={columns.length + 1} className="px-4 py-8 text-center text-slate-500">
                   Nenhum associado encontrado.
                 </td>
               </tr>
@@ -847,6 +863,7 @@ export function MembersTable({
                   <td className="px-4 py-3">{row.batch}</td>
                   <td className="px-4 py-3">{statusLabel(row.status)}</td>
                   <td className="px-4 py-3">{paymentLabel(row.payment)}</td>
+                  <td className="px-4 py-3">{row.receiptDescription}</td>
                   <td className="px-4 py-3">
                     R$ {(row.pending / 100).toFixed(2).replace(".", ",")}
                   </td>

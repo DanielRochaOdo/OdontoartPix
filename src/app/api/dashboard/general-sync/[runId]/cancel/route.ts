@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { requireApiUser } from "@/lib/auth/require-api-user";
 import { fail, ok } from "@/lib/http/api-response";
-import { advanceGeneralSyncRuns, cancelGeneralSyncRun, getGeneralSyncRun } from "@/lib/general-sync";
+import { advanceGeneralSyncRuns, getGeneralSyncRun, pauseGeneralSyncRun } from "@/lib/general-sync";
 
 const ParamsSchema = z.object({ runId: z.string().uuid() });
 
@@ -24,14 +24,17 @@ export async function POST(
       : "Sincronizacao geral interrompida manualmente.";
 
   try {
-    await cancelGeneralSyncRun(parsed.data.runId, reason, auth.profile.id);
-    let advancement = await advanceGeneralSyncRuns();
-    let run = await getGeneralSyncRun(parsed.data.runId);
-    for (let attempt = 0; attempt < 40 && (run.status === "cancelling" || run.status === "queued" || run.status === "running"); attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 250));
+    await pauseGeneralSyncRun(parsed.data.runId, reason, auth.profile.id);
+    let advancement: Awaited<ReturnType<typeof advanceGeneralSyncRuns>> | null = null;
+    try {
       advancement = await advanceGeneralSyncRuns();
-      run = await getGeneralSyncRun(parsed.data.runId);
+    } catch (error) {
+      console.warn("[GENERAL_SYNC_CANCEL_ADVANCE_DEFERRED]", {
+        runId: parsed.data.runId,
+        message: error instanceof Error ? error.message : "Erro desconhecido"
+      });
     }
+    const run = await getGeneralSyncRun(parsed.data.runId);
 
     console.info("[GENERAL_SYNC_CANCEL_REQUESTED]", {
       runId: parsed.data.runId,
@@ -39,7 +42,7 @@ export async function POST(
       advancement
     });
 
-    return ok(run, run.status === "cancelled" ? "Sincronizacao geral interrompida." : "Interrupcao solicitada; aguardando o encerramento do worker.");
+    return ok(run, "Sincronizacao geral pausada. Retome pelo proprio dashboard.", 202);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Nao foi possivel cancelar a sincronizacao geral.";
     console.error("[GENERAL_SYNC_CANCEL_FAILED]", {

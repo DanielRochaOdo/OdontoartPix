@@ -69,6 +69,16 @@ export const DashboardMetricsSchema = z.object({
   totalBatchAmountCents: NumberSchema
 });
 
+export const DashboardReceiptStatusSchema = z.object({
+  label: z.string(),
+  installmentCount: NumberSchema,
+  amountCents: NumberSchema
+});
+
+export const DashboardPixPaidMetricsSchema = z.object({
+  pixPaidAmountCents: NumberSchema
+});
+
 export const CampaignListItemSchema = z.object({
   id: z.string().uuid(),
   name: z.string(),
@@ -90,6 +100,8 @@ export const CampaignListItemSchema = z.object({
 export type CampaignMetrics = z.infer<typeof CampaignMetricsSchema>;
 export type BatchMetrics = z.infer<typeof BatchMetricsSchema>;
 export type DashboardMetrics = z.infer<typeof DashboardMetricsSchema>;
+export type DashboardReceiptStatus = z.infer<typeof DashboardReceiptStatusSchema>;
+export type DashboardPixPaidMetrics = z.infer<typeof DashboardPixPaidMetricsSchema>;
 export type CampaignListItem = z.infer<typeof CampaignListItemSchema>;
 
 type DashboardMetricsFilters = {
@@ -174,6 +186,68 @@ export async function getDashboardMetrics(filters: DashboardMetricsFilters = {})
     throw new DataAccessError(
       "O banco retornou indicadores inválidos.",
       "getDashboardMetrics.parse",
+      parsed.error
+    );
+  }
+  return parsed.data;
+}
+
+export async function getDashboardReceiptStatusMetrics(filters: DashboardMetricsFilters = {}) {
+  const supabase = createSupabaseAdminClient();
+  const normalize = (values?: string[]) => {
+    const sanitized = (values ?? []).map((value) => value.trim()).filter(Boolean);
+    return sanitized.length > 0 ? sanitized : null;
+  };
+
+  const { data, error } = await supabase.rpc("get_dashboard_receipt_status_metrics", {
+    p_campaign_ids: normalize(filters.campaignIds),
+    p_batch_ids: normalize(filters.batchIds)
+  });
+
+  if (error) {
+    throw new DataAccessError(
+      "Nao foi possivel carregar os status de recebimento do dashboard.",
+      "getDashboardReceiptStatusMetrics",
+      error
+    );
+  }
+
+  const parsed = z.array(DashboardReceiptStatusSchema).safeParse(data ?? []);
+  if (!parsed.success) {
+    throw new DataAccessError(
+      "O banco retornou status de recebimento invalidos.",
+      "getDashboardReceiptStatusMetrics.parse",
+      parsed.error
+    );
+  }
+  return parsed.data;
+}
+
+export async function getDashboardPixPaidMetrics(filters: DashboardMetricsFilters = {}) {
+  const supabase = createSupabaseAdminClient();
+  const normalize = (values?: string[]) => {
+    const sanitized = (values ?? []).map((value) => value.trim()).filter(Boolean);
+    return sanitized.length > 0 ? sanitized : null;
+  };
+
+  const { data, error } = await supabase.rpc("get_dashboard_pix_paid_metrics", {
+    p_campaign_ids: normalize(filters.campaignIds),
+    p_batch_ids: normalize(filters.batchIds)
+  });
+
+  if (error) {
+    throw new DataAccessError(
+      "Nao foi possivel carregar o valor pago via Pix.",
+      "getDashboardPixPaidMetrics",
+      error
+    );
+  }
+
+  const parsed = DashboardPixPaidMetricsSchema.safeParse(data);
+  if (!parsed.success) {
+    throw new DataAccessError(
+      "O banco retornou o valor pago via Pix invalido.",
+      "getDashboardPixPaidMetrics.parse",
       parsed.error
     );
   }

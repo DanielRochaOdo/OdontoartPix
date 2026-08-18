@@ -40,7 +40,14 @@ export async function POST(
   }
 
   if (!jobs || jobs.length === 0) {
-    return fail("NOT_FOUND", "Nenhum job ativo ou pausado foi encontrado para o lote.", 404);
+    return ok(
+      {
+        batchId: parsed.data.id,
+        jobsDeleted: 0,
+        jobIds: []
+      },
+      "Nenhum job ativo ou pausado foi encontrado; o lote ja estava parado."
+    );
   }
 
   const { error: membersError } = await supabase

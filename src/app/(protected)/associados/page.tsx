@@ -35,6 +35,8 @@ export default async function MembersPage({
     status: typeof resolvedSearchParams.status === "string" ? resolvedSearchParams.status : "all",
     payment:
       typeof resolvedSearchParams.payment === "string" ? resolvedSearchParams.payment : "all",
+    receipt:
+      typeof resolvedSearchParams.receipt === "string" ? resolvedSearchParams.receipt : "all",
     campaign: readSearchParamArray(resolvedSearchParams.campaign),
     batch: readSearchParamArray(resolvedSearchParams.batch)
   };

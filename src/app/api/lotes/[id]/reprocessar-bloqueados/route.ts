@@ -7,7 +7,7 @@ import { fail, ok } from "@/lib/http/api-response";
 import { dispatchDurableProcessingWorkflowSafely, runImmediateProcessingKickoff } from "@/lib/processing-kickoff";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 const ParamsSchema = z.object({ id: z.string().uuid() });
 
@@ -60,7 +60,10 @@ export async function POST(
       batchId: batch.id,
       requestedBy: auth.profile.id
     });
-    const kickoff = await runImmediateProcessingKickoff();
+    const kickoff = await runImmediateProcessingKickoff({
+      processingOrigin: "manual",
+      includeGeneralSync: false
+    });
     return ok({ converted: Number(converted), jobId: job.id, kickoff, durableDispatch }, "Registros bloqueados reprocessados.", 202);
   } catch (error) {
     console.error("[BATCH_BLOCKED_REPROCESS_FAILED]", {

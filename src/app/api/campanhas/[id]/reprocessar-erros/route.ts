@@ -11,7 +11,7 @@ import {
 } from "@/lib/processing-kickoff";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 const ParamsSchema = z.object({ id: z.string().uuid() });
 
@@ -63,7 +63,10 @@ export async function POST(
       requestedBy: auth.profile.id
     });
 
-    const kickoff = await runImmediateProcessingKickoff();
+    const kickoff = await runImmediateProcessingKickoff({
+      processingOrigin: "manual",
+      includeGeneralSync: false
+    });
     const durableDispatch = await durableDispatchPromise;
 
     return ok(

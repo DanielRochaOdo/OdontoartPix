@@ -4,6 +4,7 @@ import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 import { useEffect, useMemo, useState } from "react";
 import { calculateAverageTicketCents, formatCurrencyBR } from "@/lib/money";
 import { ManualDashboardIcon } from "@/components/manual-dashboard-icon";
+import type { DashboardReceiptStatus } from "@/lib/metrics";
 
 type ChartValue = {
   label: string;
@@ -129,12 +130,125 @@ function DonutChart({
   );
 }
 
+const RECEIPT_STATUS_COLORS = ["#00B8FF", "#22D58C", "#FFB547", "#A78BFA", "#FF5B5B", "#14B8A6"];
+
+function ReceiptStatusChart({ statuses }: { statuses: DashboardReceiptStatus[] }) {
+  const [selectedLabel, setSelectedLabel] = useState<string | null>(null);
+  const values = statuses.map((status, index) => ({
+    label: status.label,
+    value: status.installmentCount,
+    amountCents: status.amountCents,
+    color: RECEIPT_STATUS_COLORS[index % RECEIPT_STATUS_COLORS.length]
+  }));
+  const selectedStatus = values.find((status) => status.label === selectedLabel) ?? null;
+  const totalInstallments = values.reduce((sum, item) => sum + item.value, 0);
+  const totalPaidAmountCents = values.reduce((sum, item) => sum + item.amountCents, 0);
+  const totalPaidAmountLabel = formatCurrencyBR(totalPaidAmountCents);
+  const centerAmountClassName = totalPaidAmountLabel.length > 17
+    ? "text-sm font-bold fill-[#102033] dark:fill-[#edf6ff]"
+    : totalPaidAmountLabel.length > 13
+      ? "text-base font-bold fill-[#102033] dark:fill-[#edf6ff]"
+      : "text-lg font-bold fill-[#102033] dark:fill-[#edf6ff]";
+
+  return (
+    <article className={lowerChartCardClassName}>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="flex items-center gap-2 text-base font-semibold text-[#102033] dark:text-[#f1f7ff]"><ChartTitleIcon type="insight" />Recebimentos</h3>
+          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-[#5d7184] dark:text-[#a9bdd0]">
+            <span>Parcelas agrupadas por DescricaoRecebimento.</span>
+            {values.length > 0 ? <span className="font-semibold text-[#087eaf] dark:text-[#6edbff]">Clique para detalhar</span> : null}
+          </div>
+        </div>
+      </div>
+
+      {values.length === 0 ? (
+        <div className="mt-3 flex flex-1 items-center justify-center rounded-2xl border border-dashed border-[#c7d8e6] bg-[#f7fafc] px-5 text-center text-sm text-[#6d8396] dark:border-[#284665] dark:bg-[#06172c] dark:text-[#829ab1]">
+          Nenhum status de recebimento registrado ainda.
+        </div>
+      ) : (
+        <>
+          <div className="mt-3 h-[220px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={values}
+                  dataKey="value"
+                  nameKey="label"
+                  innerRadius={68}
+                  outerRadius={104}
+                  paddingAngle={2}
+                  strokeWidth={0}
+                  cursor="pointer"
+                  onClick={(data) => {
+                    const label = data?.payload?.label;
+                    if (typeof label === "string") setSelectedLabel(label);
+                  }}
+                >
+                  {values.map((item) => <Cell key={item.label} fill={item.color} />)}
+                </Pie>
+                <Tooltip
+                  formatter={(value, _name, item) => [
+                    `${Number(value ?? 0).toLocaleString("pt-BR")} parcela(s)`,
+                    item.payload.label
+                  ]}
+                  contentStyle={{
+                    backgroundColor: "var(--chart-tooltip-bg, #071b34)",
+                    border: "1px solid rgba(62, 112, 147, 0.65)",
+                    borderRadius: "12px",
+                    color: "var(--chart-tooltip-fg, #edf6ff)"
+                  }}
+                />
+                <text x="50%" y="44%" textAnchor="middle" fill="currentColor" className={centerAmountClassName}>
+                  {totalPaidAmountLabel}
+                </text>
+                <text x="50%" y="61%" textAnchor="middle" fill="currentColor" className="text-[9px] font-medium fill-[#6d8396] dark:fill-[#8fa7bc]">
+                  {totalInstallments.toLocaleString("pt-BR")} parcelas
+                </text>
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+        </>
+      )}
+
+      {selectedStatus ? (
+        <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-slate-950/65 p-4 sm:p-6" role="presentation" onClick={() => setSelectedLabel(null)}>
+          <div className="max-h-[calc(100vh-2rem)] w-full max-w-4xl overflow-y-auto rounded-3xl border border-[#c7d8e6] bg-white p-6 shadow-2xl dark:border-[#284665] dark:bg-[#071b34]" role="dialog" aria-modal="true" aria-labelledby="receipt-status-modal-title" onClick={(event) => event.stopPropagation()}>
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#00a98f]">Detalhamento</p>
+                <h4 id="receipt-status-modal-title" className="mt-2 text-xl font-semibold text-[#102033] dark:text-[#f1f7ff]">Status de recebimento</h4>
+                <p className="mt-1 text-sm text-[#5d7184] dark:text-[#a9bdd0]">Valores consolidados por DescricaoRecebimento.</p>
+              </div>
+              <button type="button" onClick={() => setSelectedLabel(null)} className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-[#d6e3ef] text-[#5d7184] transition hover:bg-[#f5f8fc] dark:border-[#284665] dark:text-[#c4d3e2] dark:hover:bg-[#10223b]" aria-label="Fechar detalhamento">
+                <span aria-hidden="true" className="text-xl leading-none">×</span>
+              </button>
+            </div>
+            <div className="mt-5 grid gap-2 sm:grid-cols-2">
+              {values.map((item) => (
+                <div key={item.label} className={`rounded-2xl border p-3 ${item.label === selectedStatus.label ? "border-[#00a98f] bg-[#f4fffc] dark:bg-[#0b2b3d]" : "border-[#d6e3ef] dark:border-[#284665]"}`}>
+                  <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-1">
+                    <span className="flex min-w-0 items-start gap-2 break-words text-sm font-medium text-[#30485d] dark:text-[#c4d3e2]"><span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: item.color }} />{item.label}</span>
+                    <span className="shrink-0 text-right text-sm font-semibold text-[#102033] dark:text-[#edf6ff]">{item.value.toLocaleString("pt-BR")} parcela(s)</span>
+                    <p className="col-span-2 text-sm text-[#5d7184] dark:text-[#a9bdd0]">Equivalente: <strong className="text-[#102033] dark:text-[#edf6ff]">{formatCurrencyBR(item.amountCents)}</strong></p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
 export function DashboardDonutCharts({
   paid,
   unpaid,
   paidAmountCents,
   pendingAmountCents,
   utilizationPercentage,
+  receiptStatuses = [],
   historyScope = "all"
 }: {
   paid: number;
@@ -142,6 +256,7 @@ export function DashboardDonutCharts({
   paidAmountCents: number;
   pendingAmountCents: number;
   utilizationPercentage: number;
+  receiptStatuses?: DashboardReceiptStatus[];
   historyScope?: string;
 }) {
   const averageTicketAmountCents = calculateAverageTicketCents(paidAmountCents, paid);
@@ -249,12 +364,7 @@ export function DashboardDonutCharts({
         </div>
       </article>
 
-      <article className="flex h-full min-h-[216px] flex-col rounded-2xl border border-[#284665] bg-[#071b34]/90 p-4 shadow-[0_8px_28px_rgba(0,0,0,0.2)]">
-        <h3 className="flex items-center gap-2 text-base font-semibold text-[#102033] dark:text-[#f1f7ff]"><ChartTitleIcon type="insight" />Grafico 4</h3>
-        <div className="mt-3 flex flex-1 items-center justify-center rounded-2xl bg-[#06172c] text-sm text-[#829ab1]">
-          A definir
-        </div>
-      </article>
+      <ReceiptStatusChart statuses={receiptStatuses} />
     </div>
   );
 }

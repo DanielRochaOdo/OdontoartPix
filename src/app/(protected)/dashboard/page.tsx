@@ -5,7 +5,7 @@ import { canAdmin, getCurrentProfile } from "@/lib/auth";
 import { getBatches, getCampaigns } from "@/lib/data";
 import { DataAccessError } from "@/lib/errors/data-access-error";
 import { getActiveGeneralSyncRun } from "@/lib/general-sync";
-import { getDashboardMetrics, recordDashboardPaidMetric } from "@/lib/metrics";
+import { getDashboardMetrics, getDashboardPixPaidMetrics, getDashboardReceiptStatusMetrics, recordDashboardPaidMetric } from "@/lib/metrics";
 import { getProcessingScheduleView } from "@/lib/processing-settings";
 import { formatCurrencyBR } from "@/lib/money";
 import { ManualDashboardIcon, type ManualDashboardIconName } from "@/components/manual-dashboard-icon";
@@ -37,9 +37,9 @@ function buildMembersErrorHref(campaignIds: string[], batchIds: string[]) {
 
 function MetricIcon({ label }: { label: string }) {
   const names: Record<string, ManualDashboardIconName> = {
-    "Campanhas consideradas": "campaigns",
     Associados: "consolidated",
     "Parcelas consolidadas": "parcels",
+    "Valor pago via Pix": "paidValue",
     Pagos: "paid",
     "Nao pagos": "unpaid",
     Erros: "errors",
@@ -53,7 +53,7 @@ function MetricIcon({ label }: { label: string }) {
 
 function metricIconClass(label: string) {
   if (label === "Associados") return "border-info bg-info-soft text-info";
-  if (label === "Pagos" || label === "Valor pago" || label === "Aproveitamento") {
+  if (label === "Pagos" || label === "Valor pago via Pix" || label === "Valor pago" || label === "Aproveitamento") {
     return "border-success bg-success-soft text-success";
   }
   if (label === "Erros" || label === "Valor pendente") return "border-danger bg-danger-soft text-danger";
@@ -74,11 +74,13 @@ export default async function DashboardPage({
   let batches: Awaited<ReturnType<typeof getBatches>> = [];
   let profile: Awaited<ReturnType<typeof getCurrentProfile>> | null = null;
   let activeGeneralSyncRun: Awaited<ReturnType<typeof getActiveGeneralSyncRun>> | null = null;
+  let receiptStatuses: Awaited<ReturnType<typeof getDashboardReceiptStatusMetrics>> = [];
+  let pixPaidMetrics: Awaited<ReturnType<typeof getDashboardPixPaidMetrics>> = { pixPaidAmountCents: 0 };
   let processingSchedule = await getProcessingScheduleView();
   let errorMessage: string | null = null;
 
   try {
-    [metrics, campaigns, batches, profile, activeGeneralSyncRun, processingSchedule] = await Promise.all([
+    [metrics, campaigns, batches, profile, activeGeneralSyncRun, processingSchedule, receiptStatuses, pixPaidMetrics] = await Promise.all([
       getDashboardMetrics({
         campaignIds: selectedCampaignIds,
         batchIds: selectedBatchIds
@@ -87,7 +89,25 @@ export default async function DashboardPage({
       getBatches(),
       getCurrentProfile(),
       getActiveGeneralSyncRun(),
-      getProcessingScheduleView()
+      getProcessingScheduleView(),
+      getDashboardReceiptStatusMetrics({
+        campaignIds: selectedCampaignIds,
+        batchIds: selectedBatchIds
+      }).catch((error) => {
+        console.error("[DASHBOARD_RECEIPT_STATUS_LOAD_FAILED]", {
+          message: error instanceof Error ? error.message : "Erro desconhecido"
+        });
+        return [];
+      }),
+      getDashboardPixPaidMetrics({
+        campaignIds: selectedCampaignIds,
+        batchIds: selectedBatchIds
+      }).catch((error) => {
+        console.error("[DASHBOARD_PIX_PAID_LOAD_FAILED]", {
+          message: error instanceof Error ? error.message : "Erro desconhecido"
+        });
+        return { pixPaidAmountCents: 0 };
+      })
     ]);
   } catch (error) {
     console.error("[DASHBOARD_METRICS_LOAD_FAILED]", {
@@ -99,9 +119,12 @@ export default async function DashboardPage({
 
   const cards = metrics
     ? [
-        { label: "Campanhas consideradas", value: String(metrics.totalCampaigns) },
         { label: "Associados", value: String(metrics.uniqueCpfs) },
         { label: "Parcelas consolidadas", value: String(metrics.totalCpfs) },
+        {
+          label: "Valor pago via Pix",
+          value: formatCurrencyBR(pixPaidMetrics.pixPaidAmountCents)
+        },
         { label: "Pagos", value: String(metrics.paid) },
         { label: "Nao pagos", value: String(metrics.unpaid) },
         { label: "Erros", value: String(metrics.errored) },
@@ -183,17 +206,17 @@ export default async function DashboardPage({
         <section className="mt-6 grid gap-5 xl:grid-cols-[minmax(560px,0.9fr)_minmax(680px,1.4fr)] xl:items-stretch">
           <div className="grid content-start gap-3 sm:grid-cols-2">
             {cards.map((card) => (
-              ["Pagos", "Valor pago", "Aproveitamento"].includes(card.label) ? (
+              ["Valor pago via Pix", "Pagos", "Valor pago", "Aproveitamento"].includes(card.label) ? (
                 <DashboardMetricCard
                   key={card.label}
                   label={card.label}
                   value={card.value}
-                  numericValue={card.label === "Pagos" ? metrics?.paid ?? 0 : card.label === "Valor pago" ? metrics?.totalPaidAmountCents ?? 0 : metrics?.utilizationPercentage ?? 0}
-                  kind={card.label === "Pagos" ? "count" : card.label === "Valor pago" ? "currency" : "percentage"}
-                  icon={card.label === "Pagos" ? "paid" : card.label === "Valor pago" ? "paidValue" : "utilization"}
+                  numericValue={card.label === "Pagos" ? metrics?.paid ?? 0 : card.label === "Valor pago via Pix" ? pixPaidMetrics.pixPaidAmountCents : card.label === "Valor pago" ? metrics?.totalPaidAmountCents ?? 0 : metrics?.utilizationPercentage ?? 0}
+                  kind={card.label === "Pagos" ? "count" : card.label === "Valor pago via Pix" || card.label === "Valor pago" ? "currency" : "percentage"}
+                  icon={card.label === "Pagos" ? "paid" : card.label === "Valor pago via Pix" || card.label === "Valor pago" ? "paidValue" : "utilization"}
                   detailEndpoint={card.label === "Pagos" ? `/api/dashboard/paid-details?campaignIds=${encodeURIComponent(selectedCampaignIds.join(","))}&batchIds=${encodeURIComponent(selectedBatchIds.join(","))}` : undefined}
                   scopeKey={`${selectedCampaignIds.slice().sort().join(",") || "all"}|${selectedBatchIds.slice().sort().join(",") || "all"}`}
-                  valueClassName={card.label === "Valor pago" || card.label === "Aproveitamento" ? "text-[#00a98f] dark:text-[#18d8b6]" : undefined}
+                  valueClassName={card.label === "Valor pago via Pix" || card.label === "Valor pago" || card.label === "Aproveitamento" ? "text-[#00a98f] dark:text-[#18d8b6]" : undefined}
                 />
               ) :
               card.label === "Erros" ? (
@@ -211,7 +234,7 @@ export default async function DashboardPage({
                   className="group flex min-h-[112px] items-center gap-4 rounded-2xl border border-[#d6e3ef] bg-white p-4 shadow-sm transition hover:border-[#00a98f]/70 hover:bg-[#f4fffc] dark:border-[#284665] dark:bg-[#071b34]/90 dark:shadow-[0_8px_24px_rgba(0,0,0,0.16)] dark:hover:border-[#00E5C3]/70 dark:hover:bg-[#0b2440]"
                 >
                   <span className={`inline-flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border transition group-hover:shadow-[0_0_18px_rgba(0,229,195,0.2)] ${metricIconClass(card.label)}`}><MetricIcon label={card.label} /></span>
-                  <div className="min-w-0"><p className="text-[13px] leading-4 text-[#5d7184] dark:text-[#c1d0e0]">{card.label}</p><div className={`mt-1 text-2xl font-semibold leading-tight tracking-tight ${card.label === "Valor pago" || card.label === "Aproveitamento" ? "text-[#00a98f] dark:text-[#18d8b6]" : card.label === "Valor pendente" ? "text-[#d94352] dark:text-rose-400" : "text-[#102033] dark:text-[#f4f8ff]"}`}>{card.value}</div></div>
+                  <div className="min-w-0"><p className="text-[13px] leading-4 text-[#5d7184] dark:text-[#c1d0e0]">{card.label}</p><div className={`mt-1 text-2xl font-semibold leading-tight tracking-tight ${card.label === "Valor pago via Pix" || card.label === "Valor pago" || card.label === "Aproveitamento" ? "text-[#00a98f] dark:text-[#18d8b6]" : card.label === "Valor pendente" ? "text-[#d94352] dark:text-rose-400" : "text-[#102033] dark:text-[#f4f8ff]"}`}>{card.value}</div></div>
                 </article>
               )
             ))}
@@ -224,6 +247,7 @@ export default async function DashboardPage({
               paidAmountCents={metrics.totalPaidAmountCents}
               pendingAmountCents={metrics.totalPendingAmountCents}
               utilizationPercentage={metrics.utilizationPercentage}
+              receiptStatuses={receiptStatuses}
               historyScope={`campaigns:${selectedCampaignIds.slice().sort().join(",") || "all"}|batches:${selectedBatchIds.slice().sort().join(",") || "all"}`}
             />
           ) : null}
