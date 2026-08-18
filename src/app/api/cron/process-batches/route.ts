@@ -4,7 +4,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { DataAccessError } from "@/lib/errors/data-access-error";
 
 export const runtime = "nodejs";
-export const maxDuration = 55;
+export const maxDuration = 120;
 export const dynamic = "force-dynamic";
 
 async function recordSchedulerPulse(input: {
@@ -91,7 +91,7 @@ export async function GET(request: Request) {
     const systemUserId = request.headers.get("x-processing-system-user-id")?.trim() || null;
     const result = await triggerQueuedProcessing({
       maxRuns: 10000,
-      budgetMs: 45000,
+      budgetMs: 110000,
       systemUserId,
       allowScheduledSync: true
     });
