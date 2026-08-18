@@ -34,11 +34,11 @@ describe("processing-config", () => {
     expect(config.persistenceConcurrency).toBe(1);
     expect(config.persistenceBatchSize).toBe(15);
     expect(config.maxBufferedResults).toBe(15);
-    expect(config.httpConnectTimeoutMs).toBe(5000);
-    expect(config.httpReadTimeoutMs).toBe(5000);
+    expect(config.httpConnectTimeoutMs).toBe(30000);
+    expect(config.httpReadTimeoutMs).toBe(30000);
     expect(config.maxAttemptsPerItem).toBe(3);
     expect(config.staleHeartbeatMs).toBe(120000);
-    expect(config.workerCycleBudgetMs).toBe(55000);
+    expect(config.workerCycleBudgetMs).toBe(110000);
     expect(config.shutdownReserveMs).toBe(9000);
     expect(config.persistenceReserveMs).toBe(5000);
     expect(config.finalizationReserveMs).toBe(8000);
