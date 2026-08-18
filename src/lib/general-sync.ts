@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import { getCurrentProfile } from "@/lib/auth";
 import { enqueueBatchJob } from "@/lib/batch-job-service";
 import { getProcessingConfig } from "@/lib/processing-config";
-import { isProcessingPaused, pauseProcessing, resumeProcessing } from "@/lib/processing-control";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { DataAccessError } from "@/lib/errors/data-access-error";
 
@@ -11,6 +10,7 @@ type GeneralSyncScopeType = "all" | "filtered";
 export type GeneralSyncRunStatus =
   | "queued"
   | "running"
+  | "paused"
   | "completed"
   | "completed_with_errors"
   | "failed"
@@ -201,6 +201,7 @@ export type GeneralSyncRunDetail = {
     batchIds: string[];
   };
   canCancel: boolean;
+  canResume: boolean;
 };
 
 type GeneralSyncStartResult =
@@ -214,7 +215,7 @@ type GeneralSyncStartResult =
       run: GeneralSyncRunDetail;
     };
 
-const ACTIVE_RUN_STATUSES: GeneralSyncRunStatus[] = ["queued", "running", "cancelling"];
+const ACTIVE_RUN_STATUSES: GeneralSyncRunStatus[] = ["queued", "running", "paused", "cancelling"];
 const ACTIVE_BATCH_JOB_STATUSES = ["queued", "running", "paused"];
 const FINAL_BATCH_STATUSES: GeneralSyncBatchStatus[] = [
   "completed",
@@ -222,6 +223,27 @@ const FINAL_BATCH_STATUSES: GeneralSyncBatchStatus[] = [
   "failed",
   "cancelled"
 ];
+
+async function prepareInitialReceiptStatusReconciliation() {
+  const supabase = createSupabaseAdminClient();
+  const { data, error } = await supabase.rpc("prepare_initial_receipt_status_reconciliation_v1");
+
+  if (error) {
+    // Mantem o processamento operacional disponivel durante a janela de
+    // rollout em que a migration ainda nao foi aplicada no banco.
+    console.warn("[INITIAL_RECEIPT_STATUS_RECONCILIATION_UNAVAILABLE]", {
+      message: error.message
+    });
+    return { started: false, status: "unavailable", preparedMemberCount: 0 };
+  }
+
+  const row = Array.isArray(data) ? data[0] : data;
+  return {
+    started: row?.started === true,
+    status: typeof row?.status === "string" ? row.status : "unknown",
+    preparedMemberCount: Number(row?.preparedMemberCount ?? 0)
+  };
+}
 
 function uniqueIds(values?: string[]) {
   return [...new Set((values ?? []).map((value) => value.trim()).filter(Boolean))];
@@ -678,7 +700,8 @@ async function buildRunDetail(run: GeneralSyncRunRow): Promise<GeneralSyncRunDet
     })),
     lastHeartbeatAt: run.last_heartbeat_at,
     filters,
-    canCancel: run.status === "queued" || run.status === "running" || run.status === "cancelling"
+    canCancel: run.status === "queued" || run.status === "running" || run.status === "cancelling",
+    canResume: run.status === "paused"
   };
 }
 
@@ -830,18 +853,78 @@ async function interruptBatchJob(batchId: string, reason: string, requestedBy?: 
   }
 
   const workerId = runningJobs?.[0]?.locked_by ?? claimOwners?.[0]?.processing_owner ?? null;
-  const { error: membersError } = await supabase.rpc("release_worker_claims_v2", {
-    p_batch_id: batchId,
-    p_worker_id: workerId,
-    p_reason: reason,
-    p_next_retry_at: stoppedAt
-  });
+  if (workerId) {
+    const { error: membersError } = await supabase.rpc("release_worker_claims_v2", {
+      p_batch_id: batchId,
+      p_worker_id: workerId,
+      p_reason: reason,
+      p_next_retry_at: stoppedAt
+    });
 
-  if (membersError) {
-    throw new DataAccessError("Nao foi possivel liberar os itens do lote interrompido.", "generalSync.interruptBatchJob.members", membersError);
+    if (membersError) {
+      throw new DataAccessError("Nao foi possivel liberar os itens do lote interrompido.", "generalSync.interruptBatchJob.members", membersError);
+    }
   }
 
   return [...(runningJobs ?? []), ...(queuedJobs ?? [])];
+}
+
+async function pauseBatchJob(batchId: string, reason: string, requestedBy?: string) {
+  const supabase = createSupabaseAdminClient();
+  const pausedAt = new Date().toISOString();
+
+  const { error: runningError } = await supabase
+    .from("processing_jobs")
+    .update({
+      stop_requested_at: pausedAt,
+      stop_requested_by: requestedBy ?? null,
+      stop_reason: reason,
+      updated_at: pausedAt
+    })
+    .eq("batch_id", batchId)
+    .eq("processing_origin", "dashboard")
+    .eq("status", "running");
+  if (runningError) {
+    throw new DataAccessError("Nao foi possivel sinalizar a pausa do lote ativo.", "generalSync.pauseBatchJob.running", runningError);
+  }
+
+  const { error: queuedError } = await supabase
+    .from("processing_jobs")
+    .update({
+      status: "paused",
+      stop_requested_at: pausedAt,
+      stop_requested_by: requestedBy ?? null,
+      stop_reason: reason,
+      updated_at: pausedAt
+    })
+    .eq("batch_id", batchId)
+    .eq("processing_origin", "dashboard")
+    .eq("status", "queued");
+  if (queuedError) {
+    throw new DataAccessError("Nao foi possivel pausar o lote enfileirado.", "generalSync.pauseBatchJob.queued", queuedError);
+  }
+}
+
+async function resumePausedProcessingJob(jobId: string) {
+  const supabase = createSupabaseAdminClient();
+  const resumedAt = new Date().toISOString();
+  const { error } = await supabase
+    .from("processing_jobs")
+    .update({
+      status: "queued",
+      stop_requested_at: null,
+      stop_requested_by: null,
+      stop_reason: null,
+      next_run_at: resumedAt,
+      finished_at: null,
+      updated_at: resumedAt
+    })
+    .eq("id", jobId)
+    .eq("processing_origin", "dashboard")
+    .eq("status", "paused");
+  if (error) {
+    throw new DataAccessError("Nao foi possivel retomar o lote pausado.", "generalSync.resumeProcessingJob", error);
+  }
 }
 
 export function summarizeGeneralSyncRunStatus(
@@ -1027,6 +1110,23 @@ async function syncOneRunState(run: GeneralSyncRunRow, workerId: string) {
     const trackedJobId = activeBatch.processing_job_id ?? activeBatch.waiting_job_id;
     const job = await getProcessingJob(trackedJobId);
 
+    if (job?.status === "paused" && activeBatch.processing_job_id) {
+      await resumePausedProcessingJob(job.id);
+      await updateRunBatch(activeBatch.id, {
+        status: "running",
+        message: null
+      });
+      await updateRun(run.id, {
+        status: "running",
+        current_batch_id: activeBatch.batch_id,
+        current_batch_name: activeBatch.batch_name,
+        current_batch_position: activeBatch.position
+      });
+      await refreshRunHeartbeat(run.id, workerId);
+      await releaseRunLock(run.id, workerId);
+      return;
+    }
+
     if (job && ACTIVE_BATCH_JOB_STATUSES.includes(job.status)) {
        const liveProcessedCount = Math.max(
          activeBatch.processed_count,
@@ -1186,7 +1286,8 @@ async function syncOneRunState(run: GeneralSyncRunRow, workerId: string) {
     batchId: nextBatch.batch_id,
     requestedBy: run.requested_by,
     includeErrors: run.sync_mode === "error_reprocess" || run.sync_mode === "full_sync",
-    scheduledRecheck: isScheduledRecheck
+    scheduledRecheck: isScheduledRecheck,
+    processingOrigin: "dashboard"
   });
 
   if (!job) {
@@ -1266,7 +1367,10 @@ export async function getGeneralSyncPreview(input: ScopeInput): Promise<GeneralS
 }
 
 export async function startGeneralSync(input: ScopeInput & { requestedBy: string; confirmationToken?: string | null }): Promise<GeneralSyncStartResult> {
-  await resumeProcessing();
+  const isUnfilteredScope = uniqueIds(input.campaignIds).length === 0 && uniqueIds(input.batchIds).length === 0;
+  if (isUnfilteredScope) {
+    await prepareInitialReceiptStatusReconciliation();
+  }
   const scope = await resolveScope(input);
   if (scope.emptyReason) {
     throw new Error(scope.emptyReason);
@@ -1332,7 +1436,7 @@ export async function startGeneralSync(input: ScopeInput & { requestedBy: string
 }
 
 export async function startScheduledGeneralSync(systemUserIdOverride?: string | null) {
-  if (await isProcessingPaused()) return null;
+  await prepareInitialReceiptStatusReconciliation();
 
   const requestKey = `scheduled:${new Date().toISOString().slice(0, 16)}`;
   const systemUserId = systemUserIdOverride?.trim() || process.env.PROCESSING_SYSTEM_USER_ID?.trim() || null;
@@ -1380,12 +1484,66 @@ export async function getActiveGeneralSyncRun() {
   return buildRunDetail(run);
 }
 
+export async function pauseGeneralSyncRun(runId: string, reason: string, requestedBy: string) {
+  const run = await getRunRow(runId);
+  if (!run) throw new Error("Sincronizacao geral nao encontrada.");
+  if (isFinalRunStatus(run.status) || run.status === "paused") return buildRunDetail(run);
+
+  await updateRun(run.id, {
+    status: "paused",
+    cancel_reason: reason,
+    failure_reason: null,
+    finished_at: null
+  });
+
+  const batches = await getRunBatches(run.id);
+  const activeBatch = batches.find((item) =>
+    item.status === "running" || item.status === "queued" || item.status === "waiting_active_job"
+  ) ?? null;
+
+  if (activeBatch?.processing_job_id) {
+    await pauseBatchJob(activeBatch.batch_id, reason, requestedBy);
+  }
+
+  return getGeneralSyncRun(run.id);
+}
+
+export async function resumeGeneralSyncRun(runId: string, requestedBy: string) {
+  const run = await getRunRow(runId);
+  if (!run) throw new Error("Sincronizacao geral nao encontrada.");
+  if (isFinalRunStatus(run.status) || run.status !== "paused") return buildRunDetail(run);
+
+  const resumedAt = new Date().toISOString();
+  await updateRun(run.id, {
+    status: "queued",
+    cancel_reason: null,
+    failure_reason: null,
+    finished_at: null,
+    updated_at: resumedAt
+  });
+
+  const batches = await getRunBatches(run.id);
+  const activeBatch = batches.find((item) =>
+    item.status === "running" || item.status === "queued" || item.status === "waiting_active_job"
+  ) ?? null;
+  if (activeBatch?.processing_job_id) {
+    await resumePausedProcessingJob(activeBatch.processing_job_id);
+  }
+
+  await logGeneralSyncEvent({
+    eventType: "dashboard_general_sync_resumed",
+    createdBy: requestedBy,
+    runId: run.id,
+    reason: "Sincronizacao geral retomada manualmente no dashboard."
+  });
+
+  return getGeneralSyncRun(run.id);
+}
+
 export async function cancelGeneralSyncRun(runId: string, reason: string, requestedBy: string) {
   const run = await getRunRow(runId);
   if (!run) throw new Error("Sincronizacao geral nao encontrada.");
   if (isFinalRunStatus(run.status)) return buildRunDetail(run);
-
-  await pauseProcessing(reason, requestedBy);
 
   await updateRun(run.id, {
     status: "cancelling",
@@ -1428,11 +1586,6 @@ export async function advanceGeneralSyncRuns() {
 
   const run = ((data ?? []) as GeneralSyncRunRow[])[0];
   if (!run) return { claimed: false as const };
-
-  if (await isProcessingPaused() && run.status !== "cancelling") {
-    await releaseRunLock(run.id, workerId);
-    return { claimed: false as const, paused: true as const };
-  }
 
   try {
     await syncOneRunState(run, workerId);

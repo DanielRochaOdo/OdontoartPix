@@ -1,5 +1,6 @@
 import {
   analyzeMonthlyResponse,
+  analyzeMonthlyResponses,
   MonthlyResponseError,
   type MonthlyAnalysis
 } from "@/lib/analysis";
@@ -35,12 +36,49 @@ export type MonthlyConsultationResult = {
   analysis: MonthlyAnalysis;
 };
 
-export function buildMensalidadesRequestUrl(baseUrl: string, token: string, associatedCode: string) {
+export function buildMensalidadesRequestUrl(
+  baseUrl: string,
+  token: string,
+  associatedCode: string,
+  page = 1
+) {
   const normalizedBaseUrl = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
   const url = new URL("api/Mensalidades", normalizedBaseUrl);
   url.searchParams.set("token", token);
   url.searchParams.set("CodigoAssociadoEmpresa", associatedCode.trim());
+  url.searchParams.set("HistoricoCompleto", "true");
+  url.searchParams.set("limite", "200");
+  url.searchParams.set("pagina", String(page));
   return url;
+}
+
+function readPaginationMetadata(input: unknown) {
+  if (!input || typeof input !== "object") return null;
+  const dados = (input as { dados?: unknown }).dados;
+  if (!dados || typeof dados !== "object") return null;
+
+  const page = (dados as { CurrentPage?: unknown }).CurrentPage;
+  const totalPages = (dados as { TotalPages?: unknown }).TotalPages;
+  const totalCount = (dados as { TotalCount?: unknown }).TotalCount;
+  const pageSize = (dados as { PageSize?: unknown }).PageSize;
+  const data = (dados as { Data?: unknown }).Data;
+
+  if (
+    !Number.isInteger(page) ||
+    !Number.isInteger(totalPages) ||
+    !Number.isInteger(totalCount) ||
+    !Number.isInteger(pageSize) ||
+    !Array.isArray(data)
+  ) {
+    return null;
+  }
+
+  return {
+    currentPage: page as number,
+    totalPages: totalPages as number,
+    totalCount: totalCount as number,
+    pageSize: pageSize as number
+  };
 }
 
 function parseRetryAfterMs(value: string | null) {
@@ -101,7 +139,7 @@ async function readResponseBody(response: Response, controller: AbortController)
   }
 }
 
-export async function consultMonthlyByAssociatedCode(
+async function consultMonthlyByAssociatedCodeSinglePage(
   associatedCode: string,
   targetInstallmentId?: string,
   fallbackDueDate?: string,
@@ -158,7 +196,9 @@ export async function consultMonthlyByAssociatedCode(
       return {
         httpStatus: response.status,
         durationMs: performance.now() - startedAt,
-        analysis: analyzeMonthlyResponse(payload, targetInstallmentId, fallbackDueDate)
+        analysis: analyzeMonthlyResponse(payload, targetInstallmentId, fallbackDueDate, {
+          historyComplete: true
+        })
       };
     } catch (error) {
       if (error instanceof MonthlyResponseError) {
@@ -192,6 +232,136 @@ export async function consultMonthlyByAssociatedCode(
       "Não foi possível estabelecer comunicação com o ERP.",
       true
     );
+  } finally {
+    externalSignal?.removeEventListener("abort", abortFromWorker);
+  }
+}
+
+export async function consultMonthlyByAssociatedCode(
+  associatedCode: string,
+  targetInstallmentId?: string,
+  fallbackDueDate?: string,
+  externalSignal?: AbortSignal
+): Promise<MonthlyConsultationResult> {
+  const baseUrl = process.env.MENSALIDADES_API_BASE_URL;
+  const token = process.env.MENSALIDADES_API_TOKEN;
+  if (!baseUrl || !token) {
+    throw new ErpError(
+      "ERP_NOT_CONFIGURED",
+      "A API de mensalidades nao esta configurada no servidor.",
+      false
+    );
+  }
+
+  const { httpConnectTimeoutMs, maxPagesPerOperation } = await getProcessingConfig();
+  const controller = new AbortController();
+  const abortFromWorker = () => controller.abort("processing-stopped");
+  if (externalSignal?.aborted) controller.abort("processing-stopped");
+  else externalSignal?.addEventListener("abort", abortFromWorker, { once: true });
+  const startedAt = performance.now();
+  const payloads: unknown[] = [];
+  let requestedPage = 1;
+  let expectedTotalPages: number | null = null;
+  let httpStatus = 200;
+
+  try {
+    while (true) {
+      if (requestedPage > maxPagesPerOperation) {
+        throw new ErpError(
+          "ERP_INVALID_RESPONSE",
+          "A API de mensalidades excedeu o limite de paginas permitido.",
+          false
+        );
+      }
+
+      const url = buildMensalidadesRequestUrl(baseUrl, token, associatedCode, requestedPage);
+      const connectTimeout = setTimeout(() => controller.abort("connect-timeout"), httpConnectTimeoutMs);
+      let response: Response;
+      try {
+        response = await fetch(url.toString(), {
+          method: "GET",
+          signal: controller.signal,
+          headers: { Accept: "application/json" },
+          cache: "no-store"
+        });
+      } finally {
+        clearTimeout(connectTimeout);
+      }
+
+      if (requestedPage === 1) httpStatus = response.status;
+
+      if (!response.ok) {
+        const retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after"));
+        throw errorForStatus(response.status, retryAfterMs);
+      }
+
+      const text = await readResponseBody(response, controller);
+      let payload: unknown;
+      try {
+        payload = text ? JSON.parse(text) : null;
+      } catch {
+        throw new ErpError(
+          "ERP_INVALID_RESPONSE",
+          "O ERP retornou um corpo que nao e JSON valido.",
+          false,
+          response.status
+        );
+      }
+
+      payloads.push(payload);
+      const metadata = readPaginationMetadata(payload);
+      if (!metadata) break;
+
+      if (metadata.currentPage !== requestedPage) {
+        throw new ErpError(
+          "ERP_INVALID_RESPONSE",
+          `A API retornou a pagina ${metadata.currentPage}, mas a pagina ${requestedPage} foi solicitada.`,
+          false,
+          response.status
+        );
+      }
+
+      if (expectedTotalPages === null) {
+        expectedTotalPages = metadata.totalPages;
+      } else if (expectedTotalPages !== metadata.totalPages) {
+        throw new ErpError(
+          "ERP_INVALID_RESPONSE",
+          "A API retornou uma quantidade de paginas inconsistente.",
+          false,
+          response.status
+        );
+      }
+
+      if (metadata.totalPages === 0 || requestedPage >= metadata.totalPages) break;
+      requestedPage += 1;
+    }
+
+    try {
+      return {
+        httpStatus,
+        durationMs: performance.now() - startedAt,
+        analysis: analyzeMonthlyResponses(payloads, targetInstallmentId, fallbackDueDate, {
+          historyComplete: true
+        })
+      };
+    } catch (error) {
+      if (error instanceof MonthlyResponseError) {
+        throw new ErpError("ERP_INVALID_RESPONSE", error.message, false, httpStatus);
+      }
+      throw error;
+    }
+  } catch (error) {
+    if (error instanceof ErpError) throw error;
+
+    if (externalSignal?.aborted) {
+      throw new ErpError("PROCESSING_STOPPED", "A consulta foi interrompida pelo operador.", false);
+    }
+
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new ErpError("ERP_TIMEOUT", "A consulta ao ERP excedeu o tempo limite.", true);
+    }
+
+    throw new ErpError("ERP_NETWORK_ERROR", "Nao foi possivel estabelecer comunicacao com o ERP.", true);
   } finally {
     externalSignal?.removeEventListener("abort", abortFromWorker);
   }

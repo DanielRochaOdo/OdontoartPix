@@ -8,7 +8,7 @@ import {
 } from "@/lib/mensalidades-api";
 import { getProcessingConfig } from "@/lib/processing-config";
 import type { MonthlyAnalysis } from "@/lib/analysis";
-import { isProcessingPaused } from "@/lib/processing-control";
+import type { ProcessingOrigin } from "@/lib/batch-job-service";
 
 export type ErpBenchmarkMetrics = {
   totalAssociatedCodeCount: number;
@@ -1016,7 +1016,10 @@ async function releaseJob(jobId: string, workerId: string, values: Record<string
   if (error) throw error;
 }
 
-export async function processNextJobBlock(outerDeadline?: number): Promise<ProcessingBlockResult> {
+export async function processNextJobBlock(
+  outerDeadline?: number,
+  processingOrigin?: ProcessingOrigin
+): Promise<ProcessingBlockResult> {
   const supabase = createSupabaseAdminClient();
   const workerId = randomUUID();
   const config = await getProcessingConfig();
@@ -1035,18 +1038,6 @@ export async function processNextJobBlock(outerDeadline?: number): Promise<Proce
     config.persistenceReserveMs,
     config.finalizationReserveMs
   );
-  if (await isProcessingPaused()) {
-    return {
-      workerId,
-      jobId: null,
-      claimed: 0,
-      succeeded: 0,
-      failed: 0,
-      retried: 0,
-      status: "paused"
-    };
-  }
-
   if (remainingBudgetMs(executorDeadline) <= minimumEntryBudgetMs) {
     return {
       workerId,
@@ -1061,7 +1052,8 @@ export async function processNextJobBlock(outerDeadline?: number): Promise<Proce
 
   const { data: jobData, error: claimJobError } = await withInfrastructureRetry(async () => supabase.rpc("claim_next_processing_job", {
     p_worker_id: workerId,
-    p_lease_seconds: config.globalLockLeaseSeconds
+    p_lease_seconds: config.globalLockLeaseSeconds,
+    ...(processingOrigin ? { p_processing_origin: processingOrigin } : {})
   }).abortSignal(databaseOperationSignal(processingDeadline)));
   if (claimJobError) throw claimJobError;
 

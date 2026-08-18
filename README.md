@@ -17,18 +17,23 @@ Sistema web para importacao de campanhas, consulta de mensalidades e consolidaca
 A consulta e server-side por `GET`:
 
 ```text
-/api/Mensalidades?token=...&CodigoAssociadoEmpresa=...
+/api/Mensalidades?token=...&CodigoAssociadoEmpresa=...&HistoricoCompleto=true&limite=200&pagina=1
 ```
 
 Regras:
 
-- `parcelas` precisa ser um array;
-- parcela com `cod_parcela` preenchido representa pendencia;
-- array valido sem `cod_parcela` representa associado pago;
-- o total pendente e a soma de `ValorFinal`;
+- a consulta usa `HistoricoCompleto=true` e retorna parcelas pagas e abertas;
+- a consulta usa `limite=200` e percorre `pagina=1` ate `TotalPages` antes de classificar a parcela-alvo;
+- parcela com `DescricaoRecebimento=ABERTO` representa pendencia;
+- uma parcela so e paga quando `ValorPago` e `DescricaoRecebimento` estao preenchidos e a descricao e diferente de `ABERTO`;
+- no dashboard, valores, contagens e status usam somente a parcela `target_installment_id` cadastrada no lote;
+- o total pendente e a soma de `ValorFinal` da parcela-alvo nao paga;
+- os valores de `DescricaoRecebimento` sao persistidos para o grafico de recebimentos do dashboard;
 - as parcelas sao agrupadas por `Tipo_plano`;
 - timeout, falha HTTP, rede ou payload invalido sao erros e nao podem virar pagamento confirmado;
 - token, `CodigoAssociadoEmpresa`, CPF completo, Pix e link de cartao nao devem aparecer nos logs.
+- o quarto grafico do dashboard agrupa somente parcelas-alvo pagas por `DescricaoRecebimento` e respeita os filtros de campanha/lote; sem filtros, considera todo o sistema ativo;
+- na primeira sincronizacao geral apos esta atualizacao, os associados que ja estavam marcados como pagos sao reconsultados uma unica vez para preencher `ValorPago` e `DescricaoRecebimento` com o historico completo.
 
 ## Variaveis
 

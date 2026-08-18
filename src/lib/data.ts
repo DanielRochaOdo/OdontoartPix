@@ -13,6 +13,7 @@ type MembersListItem = {
   last_checked_at: string | null;
   processing_attempts: number;
   last_error: string | null;
+  payment_description: string | null;
   member: {
     id: string;
     cpf: string | null;
@@ -181,8 +182,60 @@ export async function getMembers(filters: {
       throw new DataAccessError("Nao foi possivel carregar os associados.", "getMembers", error);
     }
 
-    const chunk = (data ?? []) as MembersListItem[];
-    rows.push(...chunk);
+    const chunk = (data ?? []) as Omit<MembersListItem, "payment_description">[];
+    const chunkIds = chunk.map((item) => item.id);
+    const installmentsByMember = new Map<
+      string,
+      Array<{ cod_parcela: string | null; situation: string | null; created_at: string | null }>
+    >();
+
+    if (chunkIds.length > 0) {
+      const lookupChunkSize = 100;
+      for (let chunkStart = 0; chunkStart < chunkIds.length; chunkStart += lookupChunkSize) {
+        const lookupIds = chunkIds.slice(chunkStart, chunkStart + lookupChunkSize);
+
+        for (let installmentFrom = 0; ; installmentFrom += pageSize) {
+          const { data: installmentRows, error: installmentError } = await supabase
+            .from("member_installments")
+            .select("campaign_batch_member_id,cod_parcela,situation,created_at")
+            .in("campaign_batch_member_id", lookupIds)
+            .order("created_at", { ascending: false })
+            .range(installmentFrom, installmentFrom + pageSize - 1);
+
+          if (installmentError) {
+            throw new DataAccessError(
+              "Nao foi possivel carregar o tipo de pagamento dos associados.",
+              "getMembers.paymentDescription",
+              installmentError
+            );
+          }
+
+          for (const installment of installmentRows ?? []) {
+            const memberInstallments = installmentsByMember.get(installment.campaign_batch_member_id) ?? [];
+            memberInstallments.push(installment);
+            installmentsByMember.set(installment.campaign_batch_member_id, memberInstallments);
+          }
+
+          if ((installmentRows ?? []).length < pageSize) break;
+        }
+      }
+    }
+
+    rows.push(
+      ...chunk.map((item) => {
+        const installments = installmentsByMember.get(item.id) ?? [];
+        const targetInstallmentId = String(item.target_installment_id ?? "").trim();
+        const targetInstallment = installments.find(
+          (installment) => String(installment.cod_parcela ?? "").trim() === targetInstallmentId
+        );
+        const paymentDescription = targetInstallment?.situation?.trim() || null;
+
+        return {
+          ...item,
+          payment_description: paymentDescription
+        };
+      })
+    );
 
     if (chunk.length < pageSize) break;
   }

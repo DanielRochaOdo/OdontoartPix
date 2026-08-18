@@ -1,6 +1,7 @@
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getProcessingConfig } from "@/lib/processing-config";
-import { isProcessingPaused } from "@/lib/processing-control";
+
+export type ProcessingOrigin = "manual" | "dashboard";
 
 export type ProcessingJobStatus =
   | "queued"
@@ -134,14 +135,12 @@ export async function enqueueBatchJob(input: {
   requestedBy: string;
   includeErrors?: boolean;
   scheduledRecheck?: boolean;
+  processingOrigin?: ProcessingOrigin;
 }): Promise<EnqueuedJob | null> {
-  if (await isProcessingPaused()) {
-    throw new Error("O processamento esta pausado. Clique em Sincronizar geral para retomar.");
-  }
-
   const supabase = createSupabaseAdminClient();
   const includeErrors = input.includeErrors ?? false;
   const scheduledRecheck = input.scheduledRecheck ?? false;
+  const processingOrigin = input.processingOrigin ?? "manual";
   const config = await getProcessingConfig();
 
   const { data: activeJob, error: activeJobError } = await supabase
@@ -236,6 +235,7 @@ export async function enqueueBatchJob(input: {
       success_items: 0,
       error_items: 0,
       include_errors: includeErrors,
+      processing_origin: processingOrigin,
       requested_by: input.requestedBy,
       next_run_at: new Date().toISOString()
     })
@@ -262,6 +262,7 @@ export async function enqueueCampaignJobs(input: {
   campaignId: string;
   requestedBy: string;
   includeErrors?: boolean;
+  processingOrigin?: ProcessingOrigin;
 }) {
   const supabase = createSupabaseAdminClient();
 
@@ -290,7 +291,8 @@ export async function enqueueCampaignJobs(input: {
       campaignId: batch.campaign_id,
       batchId: batch.id,
       requestedBy: input.requestedBy,
-      includeErrors: input.includeErrors
+      includeErrors: input.includeErrors,
+      processingOrigin: input.processingOrigin
     });
     if (job) jobs.push(job);
   }

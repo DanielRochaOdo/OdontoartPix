@@ -39,7 +39,12 @@ export async function POST(request: Request) {
       source: "dashboard-general-sync",
       requestedBy: auth.profile.id
     });
-    const kickoff = durableDispatch.ok ? null : await runImmediateProcessingKickoff();
+    const kickoff = durableDispatch.ok
+      ? null
+      : await runImmediateProcessingKickoff({
+          processingOrigin: "dashboard",
+          includeGeneralSync: true
+        });
 
     return ok(
       {

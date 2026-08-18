@@ -3,7 +3,7 @@ import { advanceGeneralSyncRuns, startScheduledGeneralSync } from "@/lib/general
 import { dispatchDurableProcessingWorkflowSafely } from "@/lib/durable-processing-dispatch";
 import { getProcessingConfig } from "@/lib/processing-config";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { isProcessingPaused } from "@/lib/processing-control";
+import type { ProcessingOrigin } from "@/lib/batch-job-service";
 
 export type ProcessingKickoffResult = {
   runs: number;
@@ -20,12 +20,16 @@ export function resolveIdleProcessingStatus(activeJobCount: number) {
   return activeJobCount > 0 ? "queued" as const : "idle" as const;
 }
 
-async function countActiveProcessingJobs() {
+async function countActiveProcessingJobs(processingOrigin?: ProcessingOrigin) {
   const supabase = createSupabaseAdminClient();
-  const { count, error } = await supabase
+  let query = supabase
     .from("processing_jobs")
     .select("id", { count: "exact", head: true })
     .in("status", ["queued", "running"]);
+
+  if (processingOrigin) query = query.eq("processing_origin", processingOrigin);
+
+  const { count, error } = await query;
 
   if (error) throw error;
   return count ?? 0;
@@ -42,12 +46,17 @@ async function countActiveGeneralSyncRuns() {
   return count ?? 0;
 }
 
-async function resolveActiveSystemStatus() {
-  if (await isProcessingPaused()) return "paused" as const;
-
+async function resolveActiveSystemStatus(input?: {
+  processingOrigin?: ProcessingOrigin;
+  includeGeneralSync?: boolean;
+}) {
+  const activeJobCountPromise = countActiveProcessingJobs(input?.processingOrigin);
+  const activeGeneralSyncCountPromise = input?.includeGeneralSync === false
+    ? Promise.resolve(0)
+    : countActiveGeneralSyncRuns();
   const [activeJobCount, activeGeneralSyncCount] = await Promise.all([
-    countActiveProcessingJobs(),
-    countActiveGeneralSyncRuns()
+    activeJobCountPromise,
+    activeGeneralSyncCountPromise
   ]);
 
   return resolveIdleProcessingStatus(activeJobCount + activeGeneralSyncCount);
@@ -274,6 +283,8 @@ export async function triggerQueuedProcessing(options?: {
   budgetMs?: number;
   systemUserId?: string | null;
   allowScheduledSync?: boolean;
+  processingOrigin?: ProcessingOrigin;
+  includeGeneralSync?: boolean;
 }): Promise<ProcessingKickoffResult> {
   const maxRuns = Math.max(1, options?.maxRuns ?? 10000);
   const budgetMs = Math.max(1000, options?.budgetMs ?? 840000);
@@ -288,11 +299,6 @@ export async function triggerQueuedProcessing(options?: {
     lastStatus: "idle"
   };
 
-  if (await isProcessingPaused()) {
-    summary.lastStatus = "paused";
-    return summary;
-  }
-
   await recoverStalledProcessingIfNeeded();
   const config = await getProcessingConfig();
   const minimumEntryBudgetMs = calculateMinimumEntryBudgetMs(
@@ -304,10 +310,14 @@ export async function triggerQueuedProcessing(options?: {
 
   while (summary.runs < maxRuns && Date.now() < deadline) {
     if (deadline - Date.now() <= minimumEntryBudgetMs) break;
-    await advanceGeneralSyncRuns();
+    if (options?.includeGeneralSync !== false) {
+      await advanceGeneralSyncRuns();
+    }
     if (deadline - Date.now() <= minimumEntryBudgetMs) break;
-    const result = await processNextJobBlock(deadline);
-    await advanceGeneralSyncRuns();
+    const result = await processNextJobBlock(deadline, options?.processingOrigin);
+    if (options?.includeGeneralSync !== false) {
+      await advanceGeneralSyncRuns();
+    }
     summary.runs += 1;
     summary.claimed += result.claimed;
     summary.succeeded += result.succeeded;
@@ -317,11 +327,16 @@ export async function triggerQueuedProcessing(options?: {
 
     if (result.status === "idle") {
       await recoverStalledProcessingIfNeeded();
-      await advanceGeneralSyncRuns();
-      if (options?.allowScheduledSync) {
+      if (options?.includeGeneralSync !== false) {
+        await advanceGeneralSyncRuns();
+      }
+      if (options?.allowScheduledSync && options?.includeGeneralSync !== false) {
         await startScheduledGeneralSync(options?.systemUserId);
       }
-      summary.lastStatus = await resolveActiveSystemStatus();
+      summary.lastStatus = await resolveActiveSystemStatus({
+        processingOrigin: options?.processingOrigin,
+        includeGeneralSync: options?.includeGeneralSync
+      });
       if (summary.lastStatus === "idle") break;
 
       const remainingBudgetMs = deadline - Date.now();
@@ -335,7 +350,10 @@ export async function triggerQueuedProcessing(options?: {
     }
   }
 
-  summary.lastStatus = await resolveActiveSystemStatus();
+  summary.lastStatus = await resolveActiveSystemStatus({
+    processingOrigin: options?.processingOrigin,
+    includeGeneralSync: options?.includeGeneralSync
+  });
 
   return summary;
 }

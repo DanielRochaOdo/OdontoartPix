@@ -224,6 +224,7 @@ export function GeneralSyncButton({
   const [loadingPreview, setLoadingPreview] = useState(false);
   const [starting, setStarting] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+  const [resuming, setResuming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedMetric, setSelectedMetric] = useState<"success" | "error" | "processing" | null>(null);
 
@@ -235,8 +236,8 @@ export function GeneralSyncButton({
   }, [selectedBatchIds.length, selectedCampaignIds.length]);
 
   const runId = run?.id ?? null;
-  const shouldPollRun = run?.canCancel ?? false;
-  const shouldDiscoverActiveRun = !run || !run.canCancel;
+  const shouldPollRun = Boolean(run?.canCancel || run?.canResume);
+  const shouldDiscoverActiveRun = !run || (!run.canCancel && !run.canResume);
 
   useEffect(() => {
     if (!shouldDiscoverActiveRun) return;
@@ -384,7 +385,7 @@ export function GeneralSyncButton({
     setError(null);
 
     try {
-      const response = await fetch(`/api/dashboard/general-sync/${run.id}/cancel`, {
+      const response = await fetch(`/api/dashboard/general-sync/${run.id}/pause`, {
         method: "POST",
         headers: {
           Accept: "application/json",
@@ -396,19 +397,43 @@ export function GeneralSyncButton({
       });
       const payload = (await response.json().catch(() => null)) as ApiSuccess<GeneralSyncRunDetail> | null;
       if (!response.ok || !payload?.success || !payload.data) {
-        setError(payload?.error?.message ?? "Nao foi possivel cancelar a sincronizacao geral.");
+        setError(payload?.error?.message ?? "Nao foi possivel pausar a sincronizacao geral.");
         return;
       }
       setRun(payload.data);
       emitMetricsSync();
     } catch {
-      setError("Falha de comunicacao ao cancelar a sincronizacao geral.");
+      setError("Falha de comunicacao ao pausar a sincronizacao geral.");
     } finally {
       setCancelling(false);
     }
   }
 
-  const activeRun = run && run.canCancel;
+  async function resume() {
+    if (!run || resuming || !run.canResume) return;
+    setResuming(true);
+    setError(null);
+
+    try {
+      const response = await fetch(`/api/dashboard/general-sync/${run.id}/resume`, {
+        method: "POST",
+        headers: { Accept: "application/json" }
+      });
+      const payload = (await response.json().catch(() => null)) as ApiSuccess<{ run: GeneralSyncRunDetail }> | null;
+      if (!response.ok || !payload?.success || !payload.data?.run) {
+        setError(payload?.error?.message ?? "Nao foi possivel retomar a sincronizacao geral.");
+        return;
+      }
+      setRun(payload.data.run);
+      emitMetricsSync();
+    } catch {
+      setError("Falha de comunicacao ao retomar a sincronizacao geral.");
+    } finally {
+      setResuming(false);
+    }
+  }
+
+  const activeRun = run && (run.canCancel || run.canResume);
   const runProgress = run ? progressPercentage(run) : 0;
   const currentBatchProgress = batchProgressPercentage(run);
   const baseProgress = baseProgressPercentage(run);
@@ -467,12 +492,16 @@ export function GeneralSyncButton({
             <div>
               <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.16em] text-emerald-700 dark:text-emerald-400">
                 <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-emerald-500" aria-hidden="true" />
-                {run.triggerSource === "scheduled"
+                {run.status === "paused"
+                  ? "Sincronizacao geral pausada"
+                  : run.triggerSource === "scheduled"
                   ? "Sincronizacao automatica em andamento"
                   : "Processamento geral em andamento"}
               </div>
               <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
-                {run.triggerSource === "scheduled"
+                {run.status === "paused"
+                  ? "Pausada no dashboard. Somente o botao Retomar deste dashboard pode continuar o fluxo."
+                  : run.triggerSource === "scheduled"
                   ? "Iniciada pelo cron horario. O dashboard atualiza o progresso automaticamente."
                   : run.scopeType === "all"
                   ? "Processando toda a base"
@@ -484,11 +513,11 @@ export function GeneralSyncButton({
               <p className="mt-1">Última atualização: {lastUpdate ? formatRelative(lastUpdate) : "aguardando"}</p>
               <button
                 type="button"
-                onClick={() => void cancel()}
-                disabled={cancelling}
-                className="mt-3 rounded-lg bg-red-700 px-3 py-2 text-xs font-semibold text-white transition hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={() => void (run.canResume ? resume() : cancel())}
+                disabled={cancelling || resuming}
+                className={`mt-3 rounded-lg px-3 py-2 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-60 ${run.canResume ? "bg-emerald-700 hover:bg-emerald-800" : "bg-red-700 hover:bg-red-800"}`}
               >
-                {cancelling ? "Interrompendo..." : "Interromper sincronização"}
+                {resuming ? "Retomando..." : cancelling ? "Pausando..." : run.canResume ? "Retomar sincronização" : "Interromper sincronização"}
               </button>
             </div>
           </div>
@@ -782,20 +811,29 @@ export function GeneralSyncButton({
               <button
                 type="button"
                 onClick={() => setOpen(false)}
-                disabled={starting || cancelling}
+                disabled={starting || cancelling || resuming}
                 className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 disabled:opacity-60"
               >
                 Fechar
               </button>
               {run ? (
-                run.canCancel ? (
+                run.canResume ? (
+                  <button
+                    type="button"
+                    onClick={() => void resume()}
+                    disabled={resuming}
+                    className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-800 disabled:opacity-60"
+                  >
+                    {resuming ? "Retomando..." : "Retomar sincronizacao"}
+                  </button>
+                ) : run.canCancel ? (
                   <button
                     type="button"
                     onClick={() => void cancel()}
-                    disabled={cancelling}
+                    disabled={cancelling || resuming}
                     className="rounded-lg bg-red-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-800 disabled:opacity-60"
                   >
-                    {cancelling ? "Cancelando..." : "Interromper sincronizacao"}
+                    {cancelling ? "Pausando..." : "Interromper sincronizacao"}
                   </button>
                 ) : null
               ) : (
