@@ -5,7 +5,6 @@ on:
   push:
     branches:
       - main
-      - fix/full-processing-conformance
 
 jobs:
   validate:
