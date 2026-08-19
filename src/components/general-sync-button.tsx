@@ -8,6 +8,9 @@ import type { GeneralSyncPreview, GeneralSyncRunDetail } from "@/lib/general-syn
 import { normalizeProcessingProgress } from "@/lib/processing-progress";
 import { ManualDashboardIcon, type ManualDashboardIconName } from "@/components/manual-dashboard-icon";
 
+const GENERAL_SYNC_DISCOVERY_INTERVAL_MS = 15_000;
+const GENERAL_SYNC_PROGRESS_INTERVAL_MS = 5_000;
+
 type ApiSuccess<T> = {
   success?: boolean;
   message?: string;
@@ -254,7 +257,6 @@ export function GeneralSyncButton({
 
         if (payload.data) {
           setRun(payload.data);
-          emitMetricsSync();
         }
       } catch {
         // A transient polling failure must not remove the current dashboard state.
@@ -262,13 +264,16 @@ export function GeneralSyncButton({
     }
 
     void discover();
-    const timer = window.setInterval(() => {
-      void discover();
-    }, 2500);
+    const pollWhenVisible = () => {
+      if (document.visibilityState === "visible") void discover();
+    };
+    const timer = window.setInterval(pollWhenVisible, GENERAL_SYNC_DISCOVERY_INTERVAL_MS);
+    document.addEventListener("visibilitychange", pollWhenVisible);
 
     return () => {
       active = false;
       window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", pollWhenVisible);
     };
   }, [shouldDiscoverActiveRun]);
 
@@ -289,7 +294,6 @@ export function GeneralSyncButton({
           return;
         }
         setRun(payload.data);
-        emitMetricsSync();
       } catch (error) {
         if (!active) return;
         setError(
@@ -301,13 +305,16 @@ export function GeneralSyncButton({
     }
 
     void refresh();
-    const timer = window.setInterval(() => {
-      void refresh();
-    }, 2500);
+    const pollWhenVisible = () => {
+      if (document.visibilityState === "visible") void refresh();
+    };
+    const timer = window.setInterval(pollWhenVisible, GENERAL_SYNC_PROGRESS_INTERVAL_MS);
+    document.addEventListener("visibilitychange", pollWhenVisible);
 
     return () => {
       active = false;
       window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", pollWhenVisible);
     };
   }, [runId, shouldPollRun]);
 

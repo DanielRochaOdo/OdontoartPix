@@ -101,6 +101,9 @@ type BatchOutcome = {
   results: ConsultationResult[];
 };
 
+const STOP_REQUEST_POLL_INTERVAL_MS = 2_000;
+const WORKER_HEARTBEAT_INTERVAL_MS = 10_000;
+
 type WavePersistenceSummary = {
   waveId: string;
   jobId: string;
@@ -755,7 +758,7 @@ async function processClaimedMembers(
         message: error instanceof Error ? error.message : String(error)
       });
     });
-  }, 5_000);
+  }, WORKER_HEARTBEAT_INTERVAL_MS);
 
   try {
     await heartbeatClaimedMembers(claimed.map((item) => item.id), workerId, outerDeadline);
@@ -1093,7 +1096,7 @@ export async function processNextJobBlock(
       .finally(() => {
         stopPollInFlight = false;
       });
-  }, 250);
+  }, STOP_REQUEST_POLL_INTERVAL_MS);
 
   logProcessingPhase({
     phase: "job_selected",

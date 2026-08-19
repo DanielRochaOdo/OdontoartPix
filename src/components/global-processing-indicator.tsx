@@ -14,6 +14,8 @@ type ActiveProcessing = {
   errorItems: number;
 };
 
+const PROCESSING_INDICATOR_POLL_INTERVAL_MS = 10_000;
+
 const EMPTY: ActiveProcessing = {
   active: false,
   jobCount: 0,
@@ -45,10 +47,15 @@ export function GlobalProcessingIndicator() {
       }
     }
     load();
-    const timer = window.setInterval(load, 3000);
+    const pollWhenVisible = () => {
+      if (document.visibilityState === "visible") void load();
+    };
+    const timer = window.setInterval(pollWhenVisible, PROCESSING_INDICATOR_POLL_INTERVAL_MS);
+    document.addEventListener("visibilitychange", pollWhenVisible);
     return () => {
       mounted = false;
       window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", pollWhenVisible);
     };
   }, []);
 
