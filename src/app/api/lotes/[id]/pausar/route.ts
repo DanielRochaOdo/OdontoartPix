@@ -19,69 +19,75 @@ export async function POST(
   const reason =
     body && typeof body === "object" && typeof (body as { reason?: unknown }).reason === "string"
       ? (body as { reason: string }).reason.trim().slice(0, 500)
-      : "Processamento interrompido manualmente.";
+      : "Processamento manual pausado pelo operador.";
 
   const supabase = createSupabaseAdminClient();
-  const stoppedAt = new Date().toISOString();
+  const pausedAt = new Date().toISOString();
 
-  const { data: jobs, error: jobsError } = await supabase
+  // Nunca altera jobs do dashboard. A pausa de lote pertence exclusivamente
+  // ao fluxo manual e o worker ativo recebe uma solicitacao cooperativa.
+  const { data: runningJobs, error: runningError } = await supabase
     .from("processing_jobs")
-    .delete()
+    .update({
+      stop_requested_at: pausedAt,
+      stop_requested_by: auth.profile.id,
+      stop_reason: reason,
+      updated_at: pausedAt
+    })
     .eq("batch_id", parsed.data.id)
-    .in("status", ["queued", "running", "paused"])
+    .eq("processing_origin", "manual")
+    .eq("status", "running")
     .select("id,batch_id,status");
 
-  if (jobsError) {
-    console.error("[BATCH_INTERRUPT_FAILED]", {
+  if (runningError) {
+    console.error("[BATCH_PAUSE_RUNNING_FAILED]", {
       batchId: parsed.data.id,
-      message: jobsError.message
+      message: runningError.message
     });
-    return fail("DATABASE_ERROR", "Não foi possível interromper o lote.", 500);
+    return fail("DATABASE_ERROR", "Não foi possível solicitar a pausa do lote.", 500);
   }
 
-  if (!jobs || jobs.length === 0) {
+  const { data: queuedJobs, error: queuedError } = await supabase
+    .from("processing_jobs")
+    .update({
+      status: "paused",
+      stop_requested_at: pausedAt,
+      stop_requested_by: auth.profile.id,
+      stop_reason: reason,
+      finished_at: null,
+      updated_at: pausedAt
+    })
+    .eq("batch_id", parsed.data.id)
+    .eq("processing_origin", "manual")
+    .eq("status", "queued")
+    .select("id,batch_id,status");
+
+  if (queuedError) {
+    console.error("[BATCH_PAUSE_QUEUED_FAILED]", {
+      batchId: parsed.data.id,
+      message: queuedError.message
+    });
+    return fail("DATABASE_ERROR", "Não foi possível pausar os jobs enfileirados do lote.", 500);
+  }
+
+  const jobs = [...(runningJobs ?? []), ...(queuedJobs ?? [])];
+  if (jobs.length === 0) {
     return ok(
       {
         batchId: parsed.data.id,
-        jobsDeleted: 0,
+        jobsAffected: 0,
         jobIds: []
       },
-      "Nenhum job ativo ou pausado foi encontrado; o lote ja estava parado."
-    );
-  }
-
-  const { error: membersError } = await supabase
-    .from("campaign_batch_members")
-    .update({
-      processing_status: "retrying",
-      processing_owner: null,
-      processing_started_at: null,
-      processing_heartbeat_at: null,
-      next_retry_at: stoppedAt,
-      last_error: reason,
-      updated_at: stoppedAt
-    })
-    .eq("batch_id", parsed.data.id)
-    .eq("processing_status", "processing");
-
-  if (membersError) {
-    console.error("[BATCH_INTERRUPT_MEMBERS_FAILED]", {
-      batchId: parsed.data.id,
-      message: membersError.message
-    });
-    return fail(
-      "DATABASE_ERROR",
-      "Os jobs do lote foram removidos, mas não foi possível liberar os itens em processamento.",
-      500
+      "Nenhum job manual ativo foi encontrado; jobs do dashboard não foram alterados."
     );
   }
 
   return ok(
     {
       batchId: parsed.data.id,
-      jobsDeleted: jobs.length,
+      jobsAffected: jobs.length,
       jobIds: jobs.map((job) => job.id)
     },
-    "Processamento interrompido e jobs removidos."
+    "Pausa solicitada somente para o processamento manual do lote."
   );
 }
