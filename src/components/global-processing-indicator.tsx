@@ -37,7 +37,22 @@ type ActiveProcessing = {
   } | null;
 };
 
+type ErrorReplayStatus = {
+  requestedCount: number;
+  queuedCount: number;
+  processingCount: number;
+  resolvedCount: number;
+  failedCount: number;
+  activities: Array<{
+    id: string;
+    type: string;
+    label: string;
+    createdAt: string;
+  }>;
+};
+
 const PROCESSING_INDICATOR_POLL_INTERVAL_MS = 10_000;
+const ERROR_REPLAY_POLL_INTERVAL_MS = 3_000;
 
 const EMPTY: ActiveProcessing = {
   active: false,
@@ -53,6 +68,15 @@ const EMPTY: ActiveProcessing = {
   origins: { manual: 0, dashboard: 0, unknown: 0 },
   scopes: { campaign: 0, batch: 0, member: 0, dashboard: 0 },
   generalSync: null
+};
+
+const EMPTY_ERROR_REPLAY: ErrorReplayStatus = {
+  requestedCount: 0,
+  queuedCount: 0,
+  processingCount: 0,
+  resolvedCount: 0,
+  failedCount: 0,
+  activities: []
 };
 
 function integer(value: number) {
@@ -84,8 +108,16 @@ function syncModeLabel(mode: SyncMode) {
   return "Sincronização completa";
 }
 
+function relativeTime(value: string) {
+  const seconds = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 1000));
+  if (seconds < 5) return "agora";
+  if (seconds < 60) return `há ${seconds}s`;
+  return `há ${Math.floor(seconds / 60)}min`;
+}
+
 export function GlobalProcessingIndicator() {
   const [processing, setProcessing] = useState(EMPTY);
+  const [errorReplay, setErrorReplay] = useState(EMPTY_ERROR_REPLAY);
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
@@ -94,7 +126,10 @@ export function GlobalProcessingIndicator() {
       try {
         const response = await fetch("/api/processing/active", { cache: "no-store" });
         const payload = await response.json();
-        if (mounted && payload.success && payload.data) setProcessing(payload.data);
+        if (mounted && payload.success && payload.data) {
+          setProcessing(payload.data);
+          if (!payload.data.generalSync?.id) setErrorReplay(EMPTY_ERROR_REPLAY);
+        }
       } catch {
         // A falha de leitura não deve interromper a navegação global.
       }
@@ -112,6 +147,41 @@ export function GlobalProcessingIndicator() {
     };
   }, []);
 
+  const generalSyncId = processing.generalSync?.id ?? null;
+
+  useEffect(() => {
+    if (!open || !generalSyncId) return;
+
+    let mounted = true;
+    async function loadReplayStatus() {
+      try {
+        const response = await fetch(
+          `/api/dashboard/general-sync/${generalSyncId}/error-reprocess-status`,
+          { cache: "no-store" }
+        );
+        const payload = await response.json();
+        if (mounted && response.ok && payload.success && payload.data) {
+          setErrorReplay(payload.data);
+        }
+      } catch {
+        // A observabilidade dos erros não deve interromper o processamento.
+      }
+    }
+
+    void loadReplayStatus();
+    const pollWhenVisible = () => {
+      if (document.visibilityState === "visible") void loadReplayStatus();
+    };
+    const timer = window.setInterval(pollWhenVisible, ERROR_REPLAY_POLL_INTERVAL_MS);
+    document.addEventListener("visibilitychange", pollWhenVisible);
+
+    return () => {
+      mounted = false;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", pollWhenVisible);
+    };
+  }, [generalSyncId, open]);
+
   if (!processing.active) return null;
 
   const progress = normalizeProcessingProgress(processing);
@@ -120,6 +190,7 @@ export function GlobalProcessingIndicator() {
     : 0;
   const sourceLabel = processingSourceLabel(processing);
   const deferredCount = processing.deferredJobCount ?? 0;
+  const hasErrorReplay = errorReplay.requestedCount > 0;
 
   return (
     <>
@@ -144,7 +215,7 @@ export function GlobalProcessingIndicator() {
             aria-modal="true"
             aria-labelledby="global-processing-title"
             onMouseDown={(event) => event.stopPropagation()}
-            className="w-full max-w-md rounded-2xl border border-[#00a98f]/60 bg-white p-5 text-[#102033] shadow-2xl dark:border-[#00E5C3]/50 dark:bg-[#071b34] dark:text-[#F5F8FF]"
+            className="max-h-[calc(100vh-6rem)] w-full max-w-md overflow-y-auto rounded-2xl border border-[#00a98f]/60 bg-white p-5 text-[#102033] shadow-2xl dark:border-[#00E5C3]/50 dark:bg-[#071b34] dark:text-[#F5F8FF]"
           >
             <div className="flex items-start justify-between gap-4">
               <div>
@@ -226,8 +297,53 @@ export function GlobalProcessingIndicator() {
 
             <div className="mt-5 grid grid-cols-2 gap-3 text-sm">
               <Metric label="Sucessos" value={integer(progress.successItems)} />
-              <Metric label="Erros" value={integer(progress.errorItems)} />
+              <Metric label="Erros atuais" value={integer(progress.errorItems)} />
             </div>
+
+            {processing.generalSync && hasErrorReplay ? (
+              <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50/70 p-4 dark:border-amber-900 dark:bg-amber-950/20">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-amber-700 dark:text-amber-300">
+                      Tratativa de erros desta onda
+                    </p>
+                    <p className="mt-1 text-xs text-amber-800/80 dark:text-amber-200/80">
+                      Atualização automática enquanto este painel estiver aberto.
+                    </p>
+                  </div>
+                  {errorReplay.processingCount > 0 ? (
+                    <span className="inline-flex items-center gap-2 rounded-full bg-sky-100 px-2.5 py-1 text-xs font-semibold text-sky-700 dark:bg-sky-950/50 dark:text-sky-300">
+                      <span className="h-2 w-2 animate-pulse rounded-full bg-sky-500" />
+                      Reprocessando
+                    </span>
+                  ) : null}
+                </div>
+
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <Metric label="Solicitados" value={integer(errorReplay.requestedCount)} />
+                  <Metric label="Aguardando" value={integer(errorReplay.queuedCount)} />
+                  <Metric label="Reprocessando" value={integer(errorReplay.processingCount)} />
+                  <Metric label="Resolvidos" value={integer(errorReplay.resolvedCount)} />
+                </div>
+                <div className="mt-2">
+                  <Metric label="Permaneceram com erro" value={integer(errorReplay.failedCount)} />
+                </div>
+
+                {errorReplay.activities.length > 0 ? (
+                  <div className="mt-4 border-t border-amber-200 pt-3 dark:border-amber-900">
+                    <p className="text-xs font-semibold text-[#5d7184] dark:text-[#9bb2c7]">Atividades da tratativa</p>
+                    <div className="mt-2 space-y-2">
+                      {errorReplay.activities.slice(0, 4).map((activity) => (
+                        <div key={activity.id} className="border-l-2 border-amber-300 pl-3 dark:border-amber-800">
+                          <p className="text-xs text-[#7893ab] dark:text-[#8da5bb]">{relativeTime(activity.createdAt)}</p>
+                          <p className="text-sm text-[#30485d] dark:text-[#d7e5f2]">{activity.label}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
           </section>
         </div>
       ) : null}
