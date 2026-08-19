@@ -19,7 +19,7 @@ export async function updateSession(request: NextRequest) {
 
   // Login and API handlers can work without a middleware Auth round trip.
   // Avoid spending the timeout budget validating a missing session.
-  if (isApi || !hasAuthCookie) {
+  if (isLogin || isApi || !hasAuthCookie) {
     if (!isApi && !isLogin) {
       const redirectUrl = request.nextUrl.clone();
       redirectUrl.pathname = "/login";
