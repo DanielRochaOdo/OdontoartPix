@@ -33,7 +33,7 @@ export async function POST(
 
   try {
     const supabase = createSupabaseAdminClient();
-    const { data, error } = await supabase.rpc("request_member_reprocess_v2", {
+    const { data, error } = await supabase.rpc("request_member_reprocess_v3", {
       p_member_link_id: parsed.data.id,
       p_requested_by: auth.profile.id
     });
@@ -84,9 +84,11 @@ export async function POST(
     const message =
       row.mode === "dashboard"
         ? "Associado incorporado à onda atual do dashboard."
-        : row.mode === "existing_job"
-          ? "Associado incorporado ao processamento mais amplo já enfileirado para o lote."
-          : "Associado enfileirado para processamento com prioridade individual.";
+        : row.mode === "deferred_job"
+          ? "Associado registrado na fila e aguardando a onda do dashboard terminar."
+          : row.mode === "existing_job"
+            ? "Associado incorporado ao processamento mais amplo já enfileirado para o lote."
+            : "Associado enfileirado para processamento com prioridade individual.";
 
     return ok(
       {
