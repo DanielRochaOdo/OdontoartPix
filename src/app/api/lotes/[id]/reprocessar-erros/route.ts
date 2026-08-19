@@ -2,7 +2,8 @@ import { z } from "zod";
 import { requireApiUser } from "@/lib/auth/require-api-user";
 import {
   enqueueBatchJob,
-  ProcessingJobModeConflictError
+  ProcessingJobModeConflictError,
+  ProcessingJobOriginConflictError
 } from "@/lib/batch-job-service";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { fail, ok } from "@/lib/http/api-response";
@@ -42,7 +43,8 @@ export async function POST(
       campaignId: batch.campaign_id,
       batchId: batch.id,
       requestedBy: auth.profile.id,
-      includeErrors: true
+      includeErrors: true,
+      processingOrigin: "manual"
     });
 
     if (!job) {
@@ -64,7 +66,7 @@ export async function POST(
           totalItems: job.total_items,
           created: false
         },
-        "O lote ja possui reprocessamento em execucao.",
+        "O lote ja possui reprocessamento manual em execucao.",
         202
       );
     }
@@ -94,12 +96,12 @@ export async function POST(
         created: job.created
       },
       durableDispatch.ok
-        ? "Os registros com erro do lote foram colocados novamente na fila, iniciados localmente e entregues ao worker duravel ate o fim."
-        : "Os registros com erro do lote foram colocados novamente na fila e iniciados localmente. O worker duravel falhou ao ser acionado e foi registrado para diagnostico.",
+        ? "Os registros com erro foram enfileirados no fluxo manual e entregues ao worker duravel."
+        : "Os registros com erro foram enfileirados, mas o worker duravel nao pôde ser acionado; a falha foi registrada.",
       202
     );
   } catch (error) {
-    if (error instanceof ProcessingJobModeConflictError) {
+    if (error instanceof ProcessingJobModeConflictError || error instanceof ProcessingJobOriginConflictError) {
       return fail(error.code, error.message, 409);
     }
     console.error("[BATCH_ERROR_REPROCESS_FAILED]", {
