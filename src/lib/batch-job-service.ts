@@ -163,6 +163,7 @@ async function requestErroredMembers(batchId: string) {
     .eq("batch_id", batchId)
     .is("deleted_at", null)
     .eq("processing_status", "error")
+    .is("error_reprocess_requested_at", null)
     .or("payment_status.is.null,payment_status.neq.paid");
 
   if (error) throw error;
@@ -216,7 +217,7 @@ export async function enqueueBatchJob(input: {
   const { data: activeJob, error: activeJobError } = await supabase
     .from("processing_jobs")
     .select(
-      "id,campaign_id,batch_id,status,total_items,processed_items,success_items,error_items,include_errors,processing_origin,processing_scope,processing_priority"
+      "id,campaign_id,batch_id,status,total_items,processed_items,success_items,error_items,include_errors,processing_origin,processing_scope,processing_priority,target_member_link_id"
     )
     .eq("batch_id", input.batchId)
     .eq("processing_origin", processingOrigin)
@@ -232,8 +233,6 @@ export async function enqueueBatchJob(input: {
     const activePriority = Number(activeJob.processing_priority ?? PROCESSING_PRIORITIES[activeScope] ?? 60);
     const mergedIncludeErrors = Boolean(activeJob.include_errors || includeErrors);
 
-    // Uma solicitacao mais ampla pode aproveitar o mesmo job do lote. Isso
-    // evita dois jobs manuais concorrendo pelos mesmos associados.
     if (!includeErrors) {
       await reopenUnpaidMembersForManualProcessing(input.batchId, scheduledRecheck);
       await normalizeExhaustedMembers(input.batchId, config.maxAttemptsPerItem);
@@ -257,6 +256,7 @@ export async function enqueueBatchJob(input: {
         include_errors: mergedIncludeErrors,
         processing_priority: mergedPriority,
         processing_scope: mergedScope,
+        target_member_link_id: mergedScope === "member" ? activeJob.target_member_link_id : null,
         total_items: Math.max(
           Number(activeJob.total_items ?? 0),
           Number(activeJob.processed_items ?? 0) + summary.claimable
