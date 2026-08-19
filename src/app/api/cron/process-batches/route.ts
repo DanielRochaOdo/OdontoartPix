@@ -7,6 +7,9 @@ export const runtime = "nodejs";
 export const maxDuration = 120;
 export const dynamic = "force-dynamic";
 
+// Mantem margem para finalizacao e resposta antes do limite rigido da Vercel.
+const CRON_PROCESSING_BUDGET_MS = 90_000;
+
 async function recordSchedulerPulse(input: {
   startedAt: string;
   finishedAt?: string | null;
@@ -90,8 +93,8 @@ export async function GET(request: Request) {
   try {
     const systemUserId = request.headers.get("x-processing-system-user-id")?.trim() || null;
     const result = await triggerQueuedProcessing({
-      maxRuns: 10000,
-      budgetMs: 110000,
+      maxRuns: 20,
+      budgetMs: CRON_PROCESSING_BUDGET_MS,
       systemUserId,
       allowScheduledSync: true
     });

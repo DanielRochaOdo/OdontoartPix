@@ -165,12 +165,20 @@ function BatchPanel({
       }
     }
 
-    const timer = window.setInterval(refresh, 4000);
+    const pollingInterval = metrics.activeJobs > 0 || metrics.queuedJobs > 0 || metrics.processing > 0
+      ? 8_000
+      : 30_000;
+    const pollWhenVisible = () => {
+      if (document.visibilityState === "visible") void refresh();
+    };
+    const timer = window.setInterval(pollWhenVisible, pollingInterval);
+    document.addEventListener("visibilitychange", pollWhenVisible);
     return () => {
       active = false;
       window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", pollWhenVisible);
     };
-  }, [batch.id, router]);
+  }, [batch.id, metrics.activeJobs, metrics.processing, metrics.queuedJobs, router]);
 
   function toggleExpanded() {
     setExpanded((current) => {
