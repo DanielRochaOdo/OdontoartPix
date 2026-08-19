@@ -1,16 +1,11 @@
 import { z } from "zod";
 import { requireApiUser } from "@/lib/auth/require-api-user";
-import {
-  enqueueCampaignJobs,
-  ProcessingJobModeConflictError,
-  ProcessingJobOriginConflictError
-} from "@/lib/batch-job-service";
+import { enqueueCampaignJobs, PROCESSING_PRIORITIES } from "@/lib/batch-job-service";
 import { fail, ok } from "@/lib/http/api-response";
 import {
   dispatchDurableProcessingWorkflowSafely,
   runImmediateProcessingKickoff
 } from "@/lib/processing-kickoff";
-import { assertCampaignProcessingAvailable } from "@/lib/processing-preflight";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -30,17 +25,13 @@ export async function POST(
   }
 
   try {
-    await assertCampaignProcessingAvailable({
-      campaignId: parsed.data.id,
-      includeErrors: false,
-      processingOrigin: "manual"
-    });
-
     const result = await enqueueCampaignJobs({
       campaignId: parsed.data.id,
       requestedBy: auth.profile.id,
       includeErrors: false,
-      processingOrigin: "manual"
+      processingOrigin: "manual",
+      processingScope: "campaign",
+      processingPriority: PROCESSING_PRIORITIES.campaign
     });
 
     if (!result.found) {
@@ -51,26 +42,6 @@ export async function POST(
         "CONFLICT",
         "Não existem faturas elegíveis para processamento nesta campanha.",
         422
-      );
-    }
-
-    const hasRunningJob = result.jobs.some((job) => !job.created && job.status === "running");
-    if (hasRunningJob) {
-      return ok(
-        {
-          campaignId: parsed.data.id,
-          jobsCreated: result.jobs.filter((job) => job.created).length,
-          kickoff: null,
-          jobs: result.jobs.map((job) => ({
-            jobId: job.id,
-            batchId: job.batch_id,
-            status: job.status,
-            totalItems: job.total_items,
-            created: job.created
-          }))
-        },
-        "A campanha já possui processamento manual em execução.",
-        202
       );
     }
 
@@ -92,23 +63,21 @@ export async function POST(
         jobsCreated: result.jobs.filter((job) => job.created).length,
         kickoff,
         durableDispatch,
+        priority: PROCESSING_PRIORITIES.campaign,
         jobs: result.jobs.map((job) => ({
           jobId: job.id,
           batchId: job.batch_id,
           status: job.status,
           totalItems: job.total_items,
-          created: job.created
+          created: job.created,
+          priority: job.processing_priority,
+          scope: job.processing_scope
         }))
       },
-      durableDispatch.ok
-        ? "O processamento manual da campanha foi enfileirado e entregue ao worker durável."
-        : "O processamento manual foi enfileirado, mas o worker durável não pôde ser acionado; a falha foi registrada.",
+      "A campanha foi enfileirada com prioridade acima de lote e associado.",
       202
     );
   } catch (error) {
-    if (error instanceof ProcessingJobModeConflictError || error instanceof ProcessingJobOriginConflictError) {
-      return fail(error.code, error.message, 409);
-    }
     console.error("[CAMPAIGN_ENQUEUE_FAILED]", {
       campaignId: parsed.data.id,
       message: error instanceof Error ? error.message : "Erro desconhecido"
