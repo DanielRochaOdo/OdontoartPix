@@ -51,15 +51,9 @@ create index if not exists idx_member_installments_target_lookup_v1
     created_at desc
   );
 
--- A unicidade anterior era por lote e fazia uma origem reutilizar/impedir a
--- outra. A nova unicidade é por lote + origem. O código ainda impede execução
--- simultânea de origens diferentes enquanto ambas estiverem ativas, mas um
--- dashboard pausado não bloqueia um job manual.
-drop index if exists public.uq_processing_jobs_one_active_per_batch;
-drop index if exists public.uq_processing_jobs_one_active_per_origin;
-create unique index uq_processing_jobs_one_active_per_origin
-  on public.processing_jobs(batch_id, processing_origin)
-  where status in ('queued', 'running');
+-- A troca do índice ativo de processing_jobs foi deliberadamente movida para
+-- a migration 073. Manter esse DDL na mesma transação dos backfills acima
+-- criava uma ordem cruzada de locks com o worker e podia gerar deadlock.
 
 -- A constraint antiga lançava exceção durante a persistência intermediária da
 -- onda: o vínculo podia receber paid antes do enriquecimento de ValorPago.
