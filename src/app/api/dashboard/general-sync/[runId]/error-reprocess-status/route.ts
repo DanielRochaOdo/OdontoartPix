@@ -6,7 +6,9 @@ import { fail, ok } from "@/lib/http/api-response";
 const ParamsSchema = z.object({ runId: z.string().uuid() });
 
 type ReplayRow = {
+  request_id: string;
   status: "queued" | "processing" | "retrying" | "resolved" | "failed";
+  requested_at: string;
 };
 
 type EventRow = {
@@ -24,12 +26,12 @@ function numberFromDetails(details: Record<string, unknown> | null, key: string)
 function activityLabel(event: EventRow) {
   if (event.event_type === "dashboard_errors_absorbed") {
     const count = numberFromDetails(event.details, "requestedCount");
-    return `${count} erro(s) solicitados para nova tentativa`;
+    return `${count} erro(s) adicionados ao pedido fechado`;
   }
 
   if (event.event_type === "dashboard_error_reprocess_started") {
     const count = numberFromDetails(event.details, "requestedCount");
-    return `${count} erro(s) entraram em reprocessamento`;
+    return `${count} erro(s) do pedido entraram em reprocessamento`;
   }
 
   if (event.event_type === "dashboard_error_reprocess_completed") {
@@ -54,16 +56,44 @@ export async function GET(
   try {
     const supabase = createSupabaseAdminClient();
 
+    const { data: latest, error: latestError } = await supabase
+      .from("dashboard_error_reprocess_items")
+      .select("request_id,requested_at")
+      .eq("run_id", parsed.data.runId)
+      .order("requested_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (latestError) throw latestError;
+
+    if (!latest) {
+      return ok({
+        runId: parsed.data.runId,
+        requestId: null,
+        requestedAt: null,
+        requestedCount: 0,
+        queuedCount: 0,
+        processingCount: 0,
+        resolvedCount: 0,
+        failedCount: 0,
+        completedCount: 0,
+        remainingCount: 0,
+        activities: []
+      });
+    }
+
+    const requestId = String(latest.request_id);
     const [{ data: rows, error: rowsError }, { data: events, error: eventsError }] = await Promise.all([
       supabase
         .from("dashboard_error_reprocess_items")
-        .select("status")
-        .eq("run_id", parsed.data.runId),
+        .select("request_id,status,requested_at")
+        .eq("run_id", parsed.data.runId)
+        .eq("request_id", requestId),
       supabase
         .from("event_logs")
         .select("id,event_type,details,created_at")
         .eq("category", "processing")
         .eq("details->>runId", parsed.data.runId)
+        .eq("details->>requestId", requestId)
         .in("event_type", [
           "dashboard_errors_absorbed",
           "dashboard_error_reprocess_started",
@@ -82,14 +112,20 @@ export async function GET(
     const processingCount = replayRows.filter((row) => row.status === "processing").length;
     const resolvedCount = replayRows.filter((row) => row.status === "resolved").length;
     const failedCount = replayRows.filter((row) => row.status === "failed").length;
+    const completedCount = resolvedCount + failedCount;
+    const remainingCount = Math.max(requestedCount - completedCount, 0);
 
     return ok({
       runId: parsed.data.runId,
+      requestId,
+      requestedAt: latest.requested_at,
       requestedCount,
       queuedCount,
       processingCount,
       resolvedCount,
       failedCount,
+      completedCount,
+      remainingCount,
       activities: ((events ?? []) as EventRow[]).map((event) => ({
         id: event.id,
         type: event.event_type,
