@@ -48,6 +48,21 @@ type Row = {
 
 type SortKey = keyof Omit<Row, "id">;
 
+type BulkErrorReprocessProgress = {
+  requestId: string;
+  requestedCount: number;
+  batchCount: number;
+  campaignCount: number;
+  status: "queued" | "running" | "completed";
+  active: boolean;
+  queuedCount: number;
+  processingCount: number;
+  attemptedCount: number;
+  completedCount: number;
+  resolvedCount: number;
+  failedCount: number;
+};
+
 const PAGE_SIZE = 50;
 
 function first<T>(value: Relation<T>) {
@@ -218,12 +233,8 @@ export function MembersTable({
   const [ascending, setAscending] = useState(true);
   const [page, setPage] = useState(1);
   const [reprocessingErrors, setReprocessingErrors] = useState(false);
-  const [bulkProgress, setBulkProgress] = useState<{
-    initialCount: number;
-    processedCampaigns: number;
-    totalCampaigns: number;
-    active: boolean;
-  } | null>(null);
+  const [bulkProgress, setBulkProgress] = useState<BulkErrorReprocessProgress | null>(null);
+  const [bulkError, setBulkError] = useState<string | null>(null);
 
   const rows = useMemo(
     () =>
@@ -424,56 +435,85 @@ export function MembersTable({
     filters.status === "error" &&
     filteredRows.length > 0;
 
-  const remainingErrorCount = canReprocessErrors && filters.status === "error" ? filteredRows.length : 0;
-  const resolvedErrorCount = bulkProgress
-    ? Math.max(0, bulkProgress.initialCount - remainingErrorCount)
-    : 0;
-  const resolutionPercentage = bulkProgress
-    ? bulkProgress.initialCount === 0
+  const completionPercentage = bulkProgress
+    ? bulkProgress.requestedCount === 0
       ? 100
-      : Math.min(100, (resolvedErrorCount / bulkProgress.initialCount) * 100)
+      : Math.min(100, (bulkProgress.completedCount / bulkProgress.requestedCount) * 100)
     : 0;
 
   useEffect(() => {
-    if (!bulkProgress?.active) return;
+    const requestId = bulkProgress?.requestId;
+    if (!requestId || !bulkProgress?.active) return;
 
-    if (remainingErrorCount === 0) {
-      setBulkProgress((current) => (current ? { ...current, active: false } : current));
-      return;
+    let cancelled = false;
+
+    async function loadProgress() {
+      try {
+        const response = await fetch(
+          `/api/associados/reprocessar-erros-filtrados/${requestId}`,
+          { cache: "no-store" }
+        );
+        const payload = await response.json().catch(() => null);
+        if (!response.ok || !payload?.success || !payload.data) return;
+        if (cancelled) return;
+
+        const data = payload.data as BulkErrorReprocessProgress;
+        setBulkProgress(data);
+        router.refresh();
+        if (!data.active) emitMetricsSync();
+      } catch {
+        // O acompanhamento visual nao deve interromper o worker.
+      }
     }
 
+    void loadProgress();
     const timer = window.setInterval(() => {
-      router.refresh();
-    }, 4000);
+      void loadProgress();
+    }, 3000);
 
-    return () => window.clearInterval(timer);
-  }, [bulkProgress, remainingErrorCount, router]);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [bulkProgress?.active, bulkProgress?.requestId, router]);
 
   async function reprocessFilteredErrors() {
-    if (!canShowErrorReprocess) return;
+    if (!canShowErrorReprocess || bulkProgress?.active) return;
 
-    const campaignIds = [...new Set(filteredRows.map((row) => row.campaignId))];
+    const memberIds = filteredRows.map((row) => row.id);
     setReprocessingErrors(true);
-    setBulkProgress({
-      initialCount: filteredRows.length,
-      processedCampaigns: 0,
-      totalCampaigns: campaignIds.length,
-      active: true
-    });
+    setBulkError(null);
+
     try {
-      for (const [index, campaignId] of campaignIds.entries()) {
-        await fetch(`/api/campanhas/${campaignId}/reprocessar-erros`, { method: "POST" });
-        setBulkProgress((current) =>
-          current
-            ? {
-                ...current,
-                processedCampaigns: index + 1
-              }
-            : current
-        );
+      const response = await fetch("/api/associados/reprocessar-erros-filtrados", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ memberIds })
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !payload?.success || !payload.data?.requestId) {
+        throw new Error(payload?.message ?? "Nao foi possivel iniciar o reprocessamento filtrado.");
       }
+
+      const requestedCount = Number(payload.data.requestedCount ?? memberIds.length);
+      setBulkProgress({
+        requestId: String(payload.data.requestId),
+        requestedCount,
+        batchCount: Number(payload.data.batchCount ?? 0),
+        campaignCount: Number(payload.data.campaignCount ?? 0),
+        status: "queued",
+        active: true,
+        queuedCount: requestedCount,
+        processingCount: 0,
+        attemptedCount: 0,
+        completedCount: 0,
+        resolvedCount: 0,
+        failedCount: 0
+      });
       emitMetricsSync();
       router.refresh();
+    } catch (error) {
+      setBulkError(error instanceof Error ? error.message : "Nao foi possivel iniciar o reprocessamento filtrado.");
     } finally {
       setReprocessingErrors(false);
     }
@@ -562,47 +602,75 @@ export function MembersTable({
 
   return (
     <>
-      {canShowErrorReprocess ? (
+      {canShowErrorReprocess || bulkProgress?.active ? (
         <div className="mb-4 flex justify-end">
           <button
             type="button"
             onClick={reprocessFilteredErrors}
-            disabled={reprocessingErrors}
+            disabled={reprocessingErrors || bulkProgress?.active || !canShowErrorReprocess}
             className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-900 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {reprocessingErrors ? "Reprocessando erros..." : "Reprocessar erros filtrados"}
+            {reprocessingErrors
+              ? "Criando snapshot..."
+              : bulkProgress?.active
+                ? "Reprocessamento em andamento"
+                : "Reprocessar erros filtrados"}
           </button>
+        </div>
+      ) : null}
+
+      {bulkError ? (
+        <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+          {bulkError}
         </div>
       ) : null}
 
       {bulkProgress ? (
         <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm dark:border-amber-900/60 dark:bg-amber-950/30">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <p className="text-sm font-medium text-amber-900 dark:text-amber-100">
-                Reprocessamento em lote de erros
+                Reprocessamento do snapshot de erros
               </p>
               <p className="text-xs text-amber-800 dark:text-amber-200/80">
                 {bulkProgress.active
-                  ? `${resolvedErrorCount} de ${bulkProgress.initialCount} erros resolvidos.`
-                  : `Processamento concluído. ${resolvedErrorCount} de ${bulkProgress.initialCount} erros resolvidos.`}
+                  ? `${bulkProgress.completedCount} de ${bulkProgress.requestedCount} concluídos · ${bulkProgress.attemptedCount} já receberam tentativa.`
+                  : `Concluído: ${bulkProgress.requestedCount} de ${bulkProgress.requestedCount} receberam nova tentativa.`}
               </p>
             </div>
             <div className="text-right text-xs text-amber-800 dark:text-amber-200/80">
-              <div>
-                Campanhas disparadas: {bulkProgress.processedCampaigns}/{bulkProgress.totalCampaigns}
-              </div>
-              <div>Erros restantes: {remainingErrorCount}</div>
+              <div>Aguardando: {bulkProgress.queuedCount}</div>
+              <div>Reprocessando: {bulkProgress.processingCount}</div>
             </div>
           </div>
+
+          <div className="mt-3 grid gap-2 sm:grid-cols-4">
+            <div className="rounded-lg border border-amber-200/80 bg-white/70 px-3 py-2 dark:border-amber-900/60 dark:bg-amber-950/20">
+              <p className="text-[11px] uppercase tracking-wide text-amber-700 dark:text-amber-300">Snapshot</p>
+              <p className="mt-1 text-sm font-semibold text-amber-950 dark:text-amber-100">{bulkProgress.requestedCount}</p>
+            </div>
+            <div className="rounded-lg border border-amber-200/80 bg-white/70 px-3 py-2 dark:border-amber-900/60 dark:bg-amber-950/20">
+              <p className="text-[11px] uppercase tracking-wide text-amber-700 dark:text-amber-300">Tentados</p>
+              <p className="mt-1 text-sm font-semibold text-amber-950 dark:text-amber-100">{bulkProgress.attemptedCount}</p>
+            </div>
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50/80 px-3 py-2 dark:border-emerald-900/60 dark:bg-emerald-950/20">
+              <p className="text-[11px] uppercase tracking-wide text-emerald-700 dark:text-emerald-300">Resolvidos</p>
+              <p className="mt-1 text-sm font-semibold text-emerald-900 dark:text-emerald-100">{bulkProgress.resolvedCount}</p>
+            </div>
+            <div className="rounded-lg border border-rose-200 bg-rose-50/80 px-3 py-2 dark:border-rose-900/60 dark:bg-rose-950/20">
+              <p className="text-[11px] uppercase tracking-wide text-rose-700 dark:text-rose-300">Continuaram com erro</p>
+              <p className="mt-1 text-sm font-semibold text-rose-900 dark:text-rose-100">{bulkProgress.failedCount}</p>
+            </div>
+          </div>
+
           <div className="mt-3 h-2 overflow-hidden rounded-full bg-amber-200/70 dark:bg-amber-900/50">
             <div
               className="h-full rounded-full bg-amber-600 transition-[width] dark:bg-amber-400"
-              style={{ width: `${resolutionPercentage}%` }}
+              style={{ width: `${completionPercentage}%` }}
             />
           </div>
           <p className="mt-2 text-right text-xs text-amber-800 dark:text-amber-200/80">
-            {resolutionPercentage.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}% resolvido
+            {completionPercentage.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}% concluído
           </p>
         </div>
       ) : null}
