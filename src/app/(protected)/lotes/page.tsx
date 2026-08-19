@@ -4,6 +4,8 @@ import { getBatches } from "@/lib/data";
 import { PageSurface } from "@/components/page-surface";
 import { PageHeader } from "@/components/page-header";
 
+export const dynamic = "force-dynamic";
+
 export default async function BatchesPage() {
   const rows = await getBatches();
 
