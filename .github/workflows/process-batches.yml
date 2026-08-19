@@ -35,6 +35,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     environment: Production
+    env:
+      # Em producao o worker pode iniciar a sincronizacao agendada conforme
+      # a janela configurada no banco. O valor false fica restrito a testes locais.
+      PROCESSING_ALLOW_SCHEDULED_SYNC: "true"
 
     steps:
       - name: Detect durable worker mode
