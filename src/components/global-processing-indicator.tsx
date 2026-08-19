@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { normalizeProcessingProgress } from "@/lib/processing-progress";
 
+type SyncMode = "full_sync" | "scheduled_recheck" | "error_reprocess";
+
 type ActiveProcessing = {
   active: boolean;
   jobCount: number;
@@ -21,7 +23,7 @@ type ActiveProcessing = {
     id: string;
     status: string;
     triggerSource: "manual" | "scheduled";
-    syncMode: "full_sync" | "scheduled_recheck" | "error_reprocess";
+    syncMode: SyncMode;
     currentBatchName: string | null;
     lastHeartbeatAt: string | null;
   } | null;
@@ -61,11 +63,7 @@ function processingSourceLabel(processing: ActiveProcessing) {
   return "Processamento em segundo plano";
 }
 
-function syncModeLabel(mode: ActiveProcessing["generalSync"] extends infer T
-  ? T extends { syncMode: infer M }
-    ? M
-    : never
-  : never) {
+function syncModeLabel(mode: SyncMode) {
   if (mode === "scheduled_recheck") return "Rechecagem agendada";
   if (mode === "error_reprocess") return "Reprocessamento de erros";
   return "Sincronização completa";
