@@ -1,10 +1,34 @@
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { fail } from "@/lib/http/api-response";
 import type { Role } from "@/lib/auth";
+import { isTransientSupabaseError } from "@/lib/supabase/fetch";
 
 export async function requireApiUser(allowedRoles: Role[]) {
   const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase.auth.getUser();
+  let data: Awaited<ReturnType<typeof supabase.auth.getUser>>["data"];
+  let error: Awaited<ReturnType<typeof supabase.auth.getUser>>["error"];
+
+  try {
+    const authResult = await supabase.auth.getUser();
+    data = authResult.data;
+    error = authResult.error;
+  } catch (authError) {
+    console.warn("[AUTH_API_PROVIDER_UNAVAILABLE]", {
+      message: authError instanceof Error ? authError.message : "Erro desconhecido"
+    });
+    return {
+      ok: false as const,
+      response: fail("AUTH_PROVIDER_UNAVAILABLE", "O serviço de autenticação está temporariamente indisponível.", 503)
+    };
+  }
+
+  if (error && isTransientSupabaseError(error)) {
+    return {
+      ok: false as const,
+      response: fail("AUTH_PROVIDER_UNAVAILABLE", "O serviço de autenticação está temporariamente indisponível.", 503)
+    };
+  }
+
   if (error || !data.user) {
     return { ok: false as const, response: fail("UNAUTHENTICATED", "Você precisa estar autenticado.", 401) };
   }
