@@ -6,11 +6,12 @@ Sistema web para importacao de campanhas, consulta de mensalidades e consolidaca
 
 1. A importacao valida o arquivo e grava campanha, lote, associados e vinculos com status `pending`.
 2. A importacao nao consulta o ERP.
-3. O botao **Processar campanha** ou **Processar lote** cria jobs com status `queued`.
-4. O clique em **Processar campanha** ou **Processar lote** faz um kickoff local curto e dispara um worker duravel no GitHub Actions.
-5. O worker duravel chama `/api/cron/process-batches` repetidamente ate a fila entrar em `idle`, `failed` ou `paused`.
-6. Cada resposta do ERP e persistida em `campaign_batch_members`, `member_installments`, `member_plan_totals` e `consultation_logs`.
-7. Dashboard, lista, campanha e lote leem metricas canonicas calculadas no PostgreSQL.
+3. Processamentos de dashboard, campanha, lote, associado e reprocessamento de erros entram na fila priorizada.
+4. A prioridade operacional e: Dashboard + erros da onda > Campanha > Lote > Associado.
+5. A aplicacao apenas cria/atualiza a fila e dispara o worker duravel; o processamento pesado nao deve depender da request da Vercel.
+6. Em producao, o GitHub Actions executa `scripts/process-batches-worker.ts` diretamente quando os secrets do ERP/Supabase estao configurados. O endpoint da Vercel permanece como fallback.
+7. Cada resposta do ERP e persistida em `campaign_batch_members`, `member_installments`, `member_plan_totals` e `consultation_logs`.
+8. Dashboard, lista, campanha e lote leem metricas canonicas calculadas no PostgreSQL.
 
 ## Contrato da API de mensalidades
 
@@ -23,101 +24,126 @@ A consulta e server-side por `GET`:
 Regras:
 
 - a consulta usa `HistoricoCompleto=true` e retorna parcelas pagas e abertas;
-- a consulta usa `limite=200` e percorre `pagina=1` ate `TotalPages` antes de classificar a parcela-alvo;
+- a consulta usa `limite=200` e avanca pagina a pagina somente enquanto a parcela-alvo ainda nao foi localizada;
+- ao encontrar `target_installment_id` por `Id`, `CodigoParcela` ou `cod_parcela`, a consulta encerra a paginacao imediatamente e analisa a parcela encontrada;
+- se a parcela-alvo nao aparecer, a consulta segue ate `TotalPages`;
 - parcela com `DescricaoRecebimento=ABERTO` representa pendencia;
 - uma parcela so e paga quando `ValorPago` e `DescricaoRecebimento` estao preenchidos e a descricao e diferente de `ABERTO`;
+- `DataPagamento` da parcela-alvo e persistida e exibida na listagem de associados;
 - no dashboard, valores, contagens e status usam somente a parcela `target_installment_id` cadastrada no lote;
 - o total pendente e a soma de `ValorFinal` da parcela-alvo nao paga;
 - os valores de `DescricaoRecebimento` sao persistidos para o grafico de recebimentos do dashboard;
-- as parcelas sao agrupadas por `Tipo_plano`;
 - timeout, falha HTTP, rede ou payload invalido sao erros e nao podem virar pagamento confirmado;
 - token, `CodigoAssociadoEmpresa`, CPF completo, Pix e link de cartao nao devem aparecer nos logs.
-- o quarto grafico do dashboard agrupa somente parcelas-alvo pagas por `DescricaoRecebimento` e respeita os filtros de campanha/lote; sem filtros, considera todo o sistema ativo;
-- na primeira sincronizacao geral apos esta atualizacao, os associados que ja estavam marcados como pagos sao reconsultados uma unica vez para preencher `ValorPago` e `DescricaoRecebimento` com o historico completo.
 
-## Variaveis
+## Reprocessamento de erros
 
-Copie `.env.example` para `.env.local` e configure:
+O reprocessamento de erros filtrados usa snapshot fechado:
+
+- o clique fotografa exatamente os IDs que estavam com erro naquele instante;
+- erros novos que surgirem depois nao entram automaticamente no mesmo pedido;
+- todos os IDs do snapshot precisam receber uma nova tentativa antes do pedido ser concluido;
+- o progresso separa aguardando, reprocessando, resolvidos e continuaram com erro;
+- `100% concluido` significa que todos receberam nova tentativa, nao que todos foram resolvidos;
+- o reprocessamento usa o mesmo perfil ativo do modulo Configuracoes (Conservador, Mediano ou Agressivo).
+
+## Variaveis de ambiente
+
+Use `.env.example` como referencia. Os valores armazenados em `processing_settings` no banco prevalecem sobre os defaults de ambiente para os parametros do worker.
+
+### Vercel Production
+
+A aplicacao precisa, no minimo, das credenciais do ERP/Supabase e das variaveis para disparar o GitHub Actions:
 
 ```text
 MENSALIDADES_API_BASE_URL
 MENSALIDADES_API_TOKEN
-MENSALIDADES_API_TIMEOUT_MS
-MENSALIDADES_API_CONNECT_TIMEOUT_MS
-MENSALIDADES_API_READ_TIMEOUT_MS
 NEXT_PUBLIC_SUPABASE_URL
 NEXT_PUBLIC_SUPABASE_ANON_KEY
 SUPABASE_SERVICE_ROLE_KEY
 CRON_SECRET
-PROCESSING_WORKER_COUNT
-PROCESSING_BLOCK_SIZE
-PROCESSING_CONCURRENCY
-PROCESSING_MAX_ATTEMPTS
-PROCESSING_STALE_HEARTBEAT_MS
-PROCESSING_LEASE_SECONDS
-PROCESSING_WORKER_CYCLE_BUDGET_MS
-PROCESSING_PRODUCTIVE_DELAY_MS
 GITHUB_ACTIONS_TOKEN
-GITHUB_ACTIONS_REPO_OWNER
-GITHUB_ACTIONS_REPO_NAME
-GITHUB_ACTIONS_WORKFLOW_ID
-GITHUB_ACTIONS_REF
-```
-
-## Banco
-
-Aplique as migrations em ordem. As migrations `009_processing_pipeline_and_metrics.sql` e `010_campaign_list_metrics.sql` adicionam o scheduler duravel, persistencia normalizada e as metricas canonicas.
-
-## Scheduler externo
-
-O workflow `.github/workflows/process-batches.yml` usa um pulso de recuperação a cada 5 minutos:
-
-```text
-GET /api/cron/process-batches
-Authorization: Bearer <CRON_SECRET>
-```
-
-O pulso não significa que uma sincronização geral será iniciada a cada 5 minutos.
-A função `claim_scheduled_processing_slot_v1` no PostgreSQL controla a janela
-real configurada (`30`, `60` ou `120` minutos) de forma transacional. O pulso
-mais frequente existe para reduzir o impacto de atrasos ou perdas ocasionais do
-agendamento do GitHub Actions.
-
-Configuracao necessaria no GitHub Actions:
-
-```text
-PROCESS_BATCHES_URL=https://<seu-dominio>/api/cron/process-batches
-CRON_SECRET=<mesmo valor configurado na aplicacao>
-```
-
-Configuracao necessaria na aplicacao para disparar o worker duravel ao clicar em processar:
-
-```text
-GITHUB_ACTIONS_TOKEN=<token com permissao para Actions: write no repositorio>
-GITHUB_ACTIONS_REPO_OWNER=<ex.: DanielRochaOdo>
-GITHUB_ACTIONS_REPO_NAME=<ex.: OdontoartPix>
+GITHUB_ACTIONS_REPO_OWNER=DanielRochaOdo
+GITHUB_ACTIONS_REPO_NAME=OdontoartPix
 GITHUB_ACTIONS_WORKFLOW_ID=process-batches.yml
 GITHUB_ACTIONS_REF=main
 ```
 
-O workflow pode ser disparado manualmente, por agendamento ou diretamente pela aplicacao.
-Cada chamada do workflow executa o endpoint de processamento em loop ate a fila entrar em `idle`, `failed` ou `paused`.
+`GITHUB_ACTIONS_TOKEN` precisa permitir disparo de Actions no repositorio.
+
+### GitHub Actions - Environment `Production`
+
+Para o modo duravel direto, configure os secrets:
+
+```text
+NEXT_PUBLIC_SUPABASE_URL
+SUPABASE_SERVICE_ROLE_KEY
+MENSALIDADES_API_BASE_URL
+MENSALIDADES_API_TOKEN
+PROCESSING_SYSTEM_USER_ID
+```
+
+Quando esses quatro primeiros secrets estao presentes, o workflow processa diretamente no runner do GitHub, evitando usar a Vercel para o trabalho pesado.
+
+Mantenha tambem os secrets de fallback:
+
+```text
+PROCESS_BATCHES_URL=https://mensalidades.odontoart.com/api/cron/process-batches
+CRON_SECRET=<mesmo valor configurado na Vercel>
+PROCESSING_SYSTEM_USER_ID
+```
+
+As variaveis opcionais do GitHub Actions podem definir defaults de emergencia:
+
+```text
+PROCESSING_WORKER_COUNT
+PROCESSING_BLOCK_SIZE
+PROCESSING_CONCURRENCY
+PROCESSING_ERP_CONCURRENCY
+```
+
+Na operacao normal, o modulo Configuracoes persiste esses parametros em `processing_settings` e o worker os le diretamente do Supabase.
+
+## Banco
+
+Aplique as migrations em ordem antes de publicar o codigo correspondente. Nunca use `db reset --linked` ou `migration repair` como substituto de uma migration faltante em producao.
+
+## Scheduler externo
+
+O workflow `.github/workflows/process-batches.yml` possui pulso a cada 5 minutos e tambem aceita `workflow_dispatch`.
+
+O pulso de 5 minutos nao significa iniciar uma sincronizacao geral a cada 5 minutos. A janela real de sincronizacao agendada e controlada de forma transacional no banco.
+
+Em producao:
+
+```text
+PROCESSING_ALLOW_SCHEDULED_SYNC=true
+```
+
+O valor `false` deve ser usado apenas em testes locais controlados para impedir que o worker de desenvolvimento crie sincronizacoes agendadas.
+
+Depois de publicar esta versao na `main`, o workflow **Process Batches** deve estar habilitado no GitHub Actions. Enquanto uma branch local estiver sendo testada contra o mesmo Supabase, mantenha-o desabilitado para evitar concorrencia com codigo da `main`.
 
 ## Operacao
 
-Defaults iniciais do worker:
+Defaults de fallback do codigo:
 
-- ate 10 workers paralelos;
-- ate 60 itens claimados por lote;
-- ate 15 chamadas simultaneas por worker;
-- timeout de 15s para conexao e 15s para leitura;
-- ate 3 tentativas totais por item;
-- reclaim apos 120s sem heartbeat;
-- orcamento de 55s por ciclo;
-- lease global de 15 minutos;
-- atraso de 10ms entre lotes produtivos.
+- `PROCESSING_WORKER_COUNT=10`;
+- `PROCESSING_BLOCK_SIZE=60`;
+- `PROCESSING_CONCURRENCY=15`;
+- `PROCESSING_ERP_CONCURRENCY=15`;
+- timeout de conexao ERP de 30s;
+- timeout de leitura ERP de 30s;
+- ate 3 tentativas por item;
+- stale heartbeat de 120s;
+- lease de 900s;
+- pagina ERP de ate 200 itens.
+
+Esses defaults nao substituem o perfil configurado no modulo Configuracoes.
 
 ## Validacao
+
+Antes do merge para `main`:
 
 ```bash
 npm ci
@@ -126,12 +152,14 @@ npm run test
 npm run build
 ```
 
-Antes de processar uma base grande, valide com uma campanha pequena e confirme:
+Validacoes operacionais recomendadas:
 
 - importacao termina sem chamar o ERP;
-- campanha inicia em `aguardando`;
-- o botao cria job `queued` e retorna HTTP 202;
-- o cron altera o estado para `processando`;
-- `paid + unpaid = completed`;
-- `pending + processing + completed + errored = total`;
-- o valor pendente corresponde a soma das parcelas persistidas.
+- processamento cria fila e retorna HTTP 202;
+- dashboard e erros da propria onda usam prioridade 1;
+- campanha, lote e associado respeitam a ordem de prioridade;
+- interromper o Dashboard encerra a onda, nao cria estado de pausa recuperavel;
+- snapshot filtrado processa exatamente os IDs fotografados no clique;
+- `resolved + failed = requested` ao finalizar um snapshot de erros;
+- valores financeiros so mudam apos nova verdade recebida do ERP;
+- a parcela-alvo paga exige evidencia explicita de `ValorPago` + `DescricaoRecebimento` valida.
