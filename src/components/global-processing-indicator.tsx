@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { listenMetricsSync } from "@/lib/metrics-sync";
 import { normalizeProcessingProgress } from "@/lib/processing-progress";
 
 type SyncMode = "full_sync" | "scheduled_recheck" | "error_reprocess";
@@ -51,8 +52,9 @@ type ErrorReplayStatus = {
   }>;
 };
 
-const PROCESSING_INDICATOR_POLL_INTERVAL_MS = 10_000;
-const ERROR_REPLAY_POLL_INTERVAL_MS = 3_000;
+const PROCESSING_INDICATOR_ACTIVE_POLL_INTERVAL_MS = 10_000;
+const PROCESSING_INDICATOR_IDLE_POLL_INTERVAL_MS = 60_000;
+const ERROR_REPLAY_POLL_INTERVAL_MS = 5_000;
 
 const EMPTY: ActiveProcessing = {
   active: false,
@@ -122,28 +124,73 @@ export function GlobalProcessingIndicator() {
 
   useEffect(() => {
     let mounted = true;
+    let loading = false;
+    let timer: number | null = null;
+    let lastKnownActive = false;
+
+    function clearTimer() {
+      if (timer !== null) {
+        window.clearTimeout(timer);
+        timer = null;
+      }
+    }
+
+    function scheduleNext(active: boolean) {
+      clearTimer();
+      if (!mounted || document.visibilityState !== "visible") return;
+      timer = window.setTimeout(
+        () => void load(),
+        active
+          ? PROCESSING_INDICATOR_ACTIVE_POLL_INTERVAL_MS
+          : PROCESSING_INDICATOR_IDLE_POLL_INTERVAL_MS
+      );
+    }
+
     async function load() {
+      if (!mounted || loading || document.visibilityState !== "visible") return;
+      loading = true;
+      let activeForNextPoll = lastKnownActive;
+
       try {
         const response = await fetch("/api/processing/active", { cache: "no-store" });
         const payload = await response.json();
         if (mounted && payload.success && payload.data) {
+          activeForNextPoll = Boolean(payload.data.active);
+          lastKnownActive = activeForNextPoll;
           setProcessing(payload.data);
           if (!payload.data.generalSync?.id) setErrorReplay(EMPTY_ERROR_REPLAY);
         }
       } catch {
         // A falha de leitura não deve interromper a navegação global.
+      } finally {
+        loading = false;
+        if (mounted) scheduleNext(activeForNextPoll);
       }
     }
-    load();
-    const pollWhenVisible = () => {
-      if (document.visibilityState === "visible") void load();
+
+    const refreshNow = () => {
+      if (!mounted || document.visibilityState !== "visible") return;
+      clearTimer();
+      void load();
     };
-    const timer = window.setInterval(pollWhenVisible, PROCESSING_INDICATOR_POLL_INTERVAL_MS);
-    document.addEventListener("visibilitychange", pollWhenVisible);
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        refreshNow();
+      } else {
+        clearTimer();
+      }
+    };
+
+    const stopMetricsSync = listenMetricsSync(refreshNow);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    void load();
+
     return () => {
       mounted = false;
-      window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", pollWhenVisible);
+      clearTimer();
+      stopMetricsSync();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, []);
 
