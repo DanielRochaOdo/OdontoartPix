@@ -14,6 +14,7 @@ type MembersListItem = {
   processing_attempts: number;
   last_error: string | null;
   payment_description: string | null;
+  payment_date_text: string | null;
   member: {
     id: string;
     cpf: string | null;
@@ -36,6 +37,7 @@ type TargetReceiptRow = {
   cod_parcela: string | null;
   situation: string | null;
   payment_description: string | null;
+  payment_date_text: string | null;
   paid_amount_cents: number | null;
   updated_at: string | null;
   created_at: string | null;
@@ -192,7 +194,7 @@ export async function getMembers(filters: {
       throw new DataAccessError("Nao foi possivel carregar os associados.", "getMembers", error);
     }
 
-    const chunk = (data ?? []) as Omit<MembersListItem, "payment_description">[];
+    const chunk = (data ?? []) as Omit<MembersListItem, "payment_description" | "payment_date_text">[];
     const chunkIds = chunk.map((item) => item.id);
     const targetIdByMember = new Map(
       chunk.map((item) => [item.id, String(item.target_installment_id ?? "").trim()])
@@ -214,7 +216,7 @@ export async function getMembers(filters: {
         const { data: installmentRows, error: installmentError } = await supabase
           .from("member_installments")
           .select(
-            "campaign_batch_member_id,cod_parcela,situation,payment_description,paid_amount_cents,updated_at,created_at"
+            "campaign_batch_member_id,cod_parcela,situation,payment_description,payment_date_text,paid_amount_cents,updated_at,created_at"
           )
           .in("campaign_batch_member_id", lookupIds)
           .in("cod_parcela", targetCodes)
@@ -247,7 +249,8 @@ export async function getMembers(filters: {
 
         return {
           ...item,
-          payment_description: paymentDescription
+          payment_description: paymentDescription,
+          payment_date_text: target?.payment_date_text?.trim() || null
         };
       })
     );
@@ -300,7 +303,7 @@ export async function getMemberDetail(campaignBatchMemberId: string) {
     supabase
       .from("member_installments")
       .select(
-        "id,cod_usuario,cod_parcela,due_date_text,installment_type,boleto_code,pix_code,card_payment_link,situation,payment_description,paid_amount_cents,base_amount_cents,fine_amount_cents,interest_amount_cents,additional_amount_cents,discount_amount_cents,final_amount_cents,plan_type,observation,created_at"
+        "id,cod_usuario,cod_parcela,due_date_text,installment_type,boleto_code,pix_code,card_payment_link,situation,payment_description,payment_date_text,paid_amount_cents,base_amount_cents,fine_amount_cents,interest_amount_cents,additional_amount_cents,discount_amount_cents,final_amount_cents,plan_type,observation,created_at"
       )
       .in("campaign_batch_member_id", relatedLinkIds)
       .order("due_date_text", { ascending: true })
@@ -352,6 +355,7 @@ export async function getMemberDetail(campaignBatchMemberId: string) {
           ? "open"
           : item.payment_status ?? item.processing_status,
       payment_description: null,
+      payment_date_text: null,
       paid_amount_cents: null,
       base_amount_cents: item.installment_amount_cents ?? 0,
       fine_amount_cents: 0,
