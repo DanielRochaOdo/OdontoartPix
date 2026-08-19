@@ -19,6 +19,8 @@ type QueueRow = {
   target_installment_id?: string | null;
 };
 
+const DURABLE_WAKE_MODES = new Set(["member_job", "waiting_member_job", "existing_job"]);
+
 export async function POST(
   _: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -67,7 +69,7 @@ export async function POST(
 
     let durableDispatch = null;
     let kickoff = null;
-    if (row.mode === "member_job" && row.batch_id && row.campaign_id) {
+    if (DURABLE_WAKE_MODES.has(row.mode ?? "") && row.batch_id && row.campaign_id) {
       const durableDispatchPromise = dispatchDurableProcessingWorkflowSafely({
         source: "batch",
         campaignId: row.campaign_id,
