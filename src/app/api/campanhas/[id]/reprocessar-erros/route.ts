@@ -2,7 +2,8 @@ import { z } from "zod";
 import { requireApiUser } from "@/lib/auth/require-api-user";
 import {
   enqueueCampaignJobs,
-  ProcessingJobModeConflictError
+  ProcessingJobModeConflictError,
+  ProcessingJobOriginConflictError
 } from "@/lib/batch-job-service";
 import { fail, ok } from "@/lib/http/api-response";
 import {
@@ -29,7 +30,8 @@ export async function POST(
     const result = await enqueueCampaignJobs({
       campaignId: parsed.data.id,
       requestedBy: auth.profile.id,
-      includeErrors: true
+      includeErrors: true,
+      processingOrigin: "manual"
     });
 
     if (!result.found) return fail("NOT_FOUND", "Campanha não encontrada.", 404);
@@ -52,7 +54,7 @@ export async function POST(
             created: job.created
           }))
         },
-        "A campanha ja possui reprocessamento em execucao.",
+        "A campanha já possui reprocessamento manual em execução.",
         202
       );
     }
@@ -84,12 +86,12 @@ export async function POST(
         }))
       },
       durableDispatch.ok
-        ? "Os registros com erro foram colocados novamente na fila, iniciados localmente e entregues ao worker duravel ate o fim."
-        : "Os registros com erro foram colocados novamente na fila e iniciados localmente. O worker duravel falhou ao ser acionado e foi registrado para diagnostico.",
+        ? "Os registros com erro foram enfileirados no fluxo manual e entregues ao worker durável."
+        : "Os registros com erro foram enfileirados, mas o worker durável não pôde ser acionado; a falha foi registrada.",
       202
     );
   } catch (error) {
-    if (error instanceof ProcessingJobModeConflictError) {
+    if (error instanceof ProcessingJobModeConflictError || error instanceof ProcessingJobOriginConflictError) {
       return fail(error.code, error.message, 409);
     }
     console.error("[CAMPAIGN_ERROR_REPROCESS_FAILED]", {
