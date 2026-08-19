@@ -1,10 +1,7 @@
 import { z } from "zod";
 import { requireApiUser } from "@/lib/auth/require-api-user";
-import {
-  enqueueBatchJob,
-  ProcessingJobModeConflictError,
-  ProcessingJobOriginConflictError
-} from "@/lib/batch-job-service";
+import { enqueueBatchJob, PROCESSING_PRIORITIES } from "@/lib/batch-job-service";
+import { absorbBatchErrorsIntoActiveDashboard } from "@/lib/dashboard-error-absorption";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { fail, ok } from "@/lib/http/api-response";
 import {
@@ -39,12 +36,32 @@ export async function POST(
     if (error) throw error;
     if (!batch) return fail("NOT_FOUND", "Lote nao encontrado.", 404);
 
+    const absorbed = await absorbBatchErrorsIntoActiveDashboard(batch.id);
+    if (absorbed.absorbed) {
+      return ok(
+        {
+          absorbedIntoDashboard: true,
+          runId: absorbed.runId,
+          jobId: absorbed.jobId,
+          batchId: batch.id,
+          requestedCount: absorbed.requestedCount,
+          priority: PROCESSING_PRIORITIES.dashboard
+        },
+        absorbed.requestedCount > 0
+          ? `${absorbed.requestedCount} erro(s) entraram na propria onda ativa do dashboard.`
+          : "A onda do dashboard esta ativa e nao ha erros novos elegiveis neste lote.",
+        202
+      );
+    }
+
     const job = await enqueueBatchJob({
       campaignId: batch.campaign_id,
       batchId: batch.id,
       requestedBy: auth.profile.id,
       includeErrors: true,
-      processingOrigin: "manual"
+      processingOrigin: "manual",
+      processingScope: "batch",
+      processingPriority: PROCESSING_PRIORITIES.batch
     });
 
     if (!job) {
@@ -52,22 +69,6 @@ export async function POST(
         "CONFLICT",
         "Nao existem registros com erro para reprocessar neste lote.",
         422
-      );
-    }
-
-    if (!job.created && job.status === "running") {
-      return ok(
-        {
-          jobId: job.id,
-          batchId: job.batch_id,
-          campaignId: job.campaign_id,
-          kickoff: null,
-          status: job.status,
-          totalItems: job.total_items,
-          created: false
-        },
-        "O lote ja possui reprocessamento manual em execucao.",
-        202
       );
     }
 
@@ -86,6 +87,7 @@ export async function POST(
 
     return ok(
       {
+        absorbedIntoDashboard: false,
         jobId: job.id,
         batchId: job.batch_id,
         campaignId: job.campaign_id,
@@ -93,17 +95,14 @@ export async function POST(
         durableDispatch,
         status: job.status,
         totalItems: job.total_items,
-        created: job.created
+        created: job.created,
+        priority: job.processing_priority,
+        scope: job.processing_scope
       },
-      durableDispatch.ok
-        ? "Os registros com erro foram enfileirados no fluxo manual e entregues ao worker duravel."
-        : "Os registros com erro foram enfileirados, mas o worker duravel nao pôde ser acionado; a falha foi registrada.",
+      "Os erros foram enfileirados com prioridade de lote.",
       202
     );
   } catch (error) {
-    if (error instanceof ProcessingJobModeConflictError || error instanceof ProcessingJobOriginConflictError) {
-      return fail(error.code, error.message, 409);
-    }
     console.error("[BATCH_ERROR_REPROCESS_FAILED]", {
       batchId: parsed.data.id,
       message: error instanceof Error ? error.message : "Erro desconhecido"
