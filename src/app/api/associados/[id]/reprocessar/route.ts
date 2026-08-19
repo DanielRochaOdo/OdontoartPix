@@ -33,7 +33,7 @@ export async function POST(
 
   try {
     const supabase = createSupabaseAdminClient();
-    const { data, error } = await supabase.rpc("request_member_reprocess_v1", {
+    const { data, error } = await supabase.rpc("request_member_reprocess_v2", {
       p_member_link_id: parsed.data.id,
       p_requested_by: auth.profile.id
     });
