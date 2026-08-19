@@ -32,25 +32,32 @@ async function withAuthRetry<T>(operation: () => PromiseLike<T>, attempts = 3) {
 
 export async function getCurrentProfile() {
   const supabase = await createSupabaseServerClient();
-  let authResult: Awaited<ReturnType<typeof supabase.auth.getUser>>;
+  let claimsResult: Awaited<ReturnType<typeof supabase.auth.getClaims>>;
 
   try {
-    authResult = await withAuthRetry(() => supabase.auth.getUser());
+    claimsResult = await withAuthRetry(() => supabase.auth.getClaims());
   } catch (error) {
-    console.error("[AUTH_GET_USER_FAILED]", {
+    console.error("[AUTH_GET_CLAIMS_FAILED]", {
       message: error instanceof Error ? error.message : "Erro desconhecido"
     });
     throw new Error("AUTH_PROVIDER_UNAVAILABLE");
   }
 
-  const user = authResult.data.user;
-  if (!user) return null;
+  if (claimsResult.error) {
+    if (isTransientSupabaseError(claimsResult.error)) {
+      throw new Error("AUTH_PROVIDER_UNAVAILABLE");
+    }
+    return null;
+  }
+
+  const userId = claimsResult.data?.claims?.sub;
+  if (typeof userId !== "string" || !userId) return null;
 
   const { data: profile } = await withAuthRetry(() =>
     supabase
       .from("profiles")
       .select("id,nome,email,role,ativo")
-      .eq("id", user.id)
+      .eq("id", userId)
       .maybeSingle()
   );
 
