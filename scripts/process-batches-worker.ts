@@ -11,7 +11,7 @@ async function main() {
   const startedAt = Date.now();
   const systemUserId = process.env.PROCESSING_SYSTEM_USER_ID?.trim() || null;
   let cycle = 0;
-  let finalStatus = "idle";
+  let finalStatus: "idle" | "queued" | "completed" | "failed" | "paused" = "idle";
 
   while (Date.now() - startedAt < MAX_EXECUTION_MS) {
     cycle += 1;
@@ -23,7 +23,7 @@ async function main() {
       allowScheduledSync: true
     });
 
-    finalStatus = result.lastStatus ?? result.status ?? "idle";
+    finalStatus = result.lastStatus;
     console.info("[DURABLE_WORKER_CYCLE]", {
       cycle,
       status: finalStatus,
