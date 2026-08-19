@@ -33,7 +33,7 @@ export async function POST(
 
   try {
     const supabase = createSupabaseAdminClient();
-    const { data, error } = await supabase.rpc("request_member_reprocess_v5", {
+    const { data, error } = await supabase.rpc("request_member_reprocess_v6", {
       p_member_link_id: parsed.data.id,
       p_requested_by: auth.profile.id
     });
@@ -44,13 +44,6 @@ export async function POST(
       }
       if (error.message.includes("member_target_installment_missing")) {
         return fail("VALIDATION_ERROR", "O associado não possui parcela de destino configurada.", 422);
-      }
-      if (error.message.includes("member_reprocess_waiting_for_other_member_job")) {
-        return fail(
-          "PROCESSING_CONFLICT",
-          "Já existe outro associado deste lote em processamento. Tente novamente após a conclusão dele.",
-          409
-        );
       }
       throw error;
     }
@@ -81,8 +74,6 @@ export async function POST(
         batchId: row.batch_id,
         requestedBy: auth.profile.id
       });
-      // O kickoff usa o mesmo worker/configuracao global. Nao ha concorrencia
-      // especial para reprocessamento individual.
       kickoff = await runImmediateProcessingKickoff({
         processingOrigin: "manual",
         includeGeneralSync: false
@@ -95,9 +86,11 @@ export async function POST(
         ? "Associado incorporado à onda atual do dashboard."
         : row.mode === "deferred_job"
           ? "Associado registrado na fila e aguardando a onda do dashboard terminar."
-          : row.mode === "existing_job"
-            ? "Associado incorporado ao processamento compatível já enfileirado para o lote."
-            : "Associado enfileirado para processamento com prioridade individual.";
+          : row.mode === "waiting_member_job"
+            ? "Associado colocado na fila individual e será processado automaticamente após o associado atual deste lote."
+            : row.mode === "existing_job"
+              ? "Associado incorporado ao processamento compatível já enfileirado para o lote."
+              : "Associado enfileirado para processamento com prioridade individual.";
 
     return ok(
       {
