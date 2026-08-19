@@ -117,6 +117,8 @@ export async function POST(
     return fail("VALIDATION_ERROR", "O associado não possui parcela de destino configurada.", 422);
   }
 
+  const erpStartedAt = performance.now();
+
   try {
     const result = await consultMonthlyByAssociatedCode(
       associatedCode,
@@ -167,13 +169,24 @@ export async function POST(
     const errorMessage =
       error instanceof Error ? error.message : "Falha desconhecida durante a consulta manual.";
     const httpStatus = error instanceof ErpError ? error.httpStatus ?? null : null;
+    const durationMs = Math.round(performance.now() - erpStartedAt);
+
+    console.error("[MEMBER_REPROCESS_ERP_FAILED]", {
+      memberId: memberLink.id,
+      targetInstallmentId,
+      code: errorCode,
+      message: errorMessage,
+      httpStatus,
+      retryable: error instanceof ErpError ? error.retryable : true,
+      durationMs
+    });
 
     await supabase.rpc("persist_member_processing_error", {
       p_campaign_batch_member_id: memberLink.id,
       p_error_code: errorCode,
       p_error_message: errorMessage,
       p_http_status: httpStatus,
-      p_duration_ms: 0
+      p_duration_ms: durationMs
     });
 
     return fail("EXTERNAL_API_ERROR", errorMessage, 502);
