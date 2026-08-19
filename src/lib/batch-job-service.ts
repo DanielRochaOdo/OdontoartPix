@@ -14,6 +14,7 @@ export const PROCESSING_PRIORITIES: Record<ProcessingJobScope, number> = {
 export type ProcessingJobStatus =
   | "queued"
   | "running"
+  | "deferred"
   | "completed"
   | "failed"
   | "paused"
@@ -219,7 +220,7 @@ export async function enqueueBatchJob(input: {
     )
     .eq("batch_id", input.batchId)
     .eq("processing_origin", processingOrigin)
-    .in("status", ["queued", "running", "paused"])
+    .in("status", ["queued", "running", "paused", "deferred"])
     .order("processing_priority", { ascending: false })
     .order("created_at", { ascending: false })
     .limit(1)
@@ -307,8 +308,8 @@ export async function enqueueBatchJob(input: {
     };
   }
 
-  // Origens diferentes podem coexistir na fila. A funcao SQL que reivindica
-  // jobs garante exclusao de execucao e respeita a prioridade global.
+  // Origens diferentes podem coexistir na fila. Durante uma onda geral, o
+  // trigger do banco converte jobs manuais queued em deferred.
   if (!includeErrors) {
     await reopenUnpaidMembersForManualProcessing(input.batchId, scheduledRecheck);
     await normalizeExhaustedMembers(input.batchId, config.maxAttemptsPerItem);
