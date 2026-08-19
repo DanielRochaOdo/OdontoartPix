@@ -6,11 +6,19 @@ const ALLOWED_ROLES = new Set(["administrador", "operador", "visualizador"]);
 
 export default async function LoginPage() {
   const supabase = await createSupabaseServerClient();
-  const {
-    data: { user }
-  } = await supabase.auth.getUser();
-
   let blockedMessage: string | null = null;
+  let user = null;
+
+  try {
+    const result = await supabase.auth.getUser();
+    user = result.data.user;
+  } catch (error) {
+    console.warn("[LOGIN_AUTH_PROVIDER_UNAVAILABLE]", {
+      message: error instanceof Error ? error.message : String(error)
+    });
+    blockedMessage =
+      "O serviÃ§o de autenticaÃ§Ã£o estÃ¡ temporariamente indisponÃ­vel. Tente novamente em instantes.";
+  }
 
   if (user) {
     const { data: profile, error } = await supabase

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 export type ApiErrorCode =
   | "UNAUTHENTICATED"
+  | "AUTH_PROVIDER_UNAVAILABLE"
   | "FORBIDDEN"
   | "VALIDATION_ERROR"
   | "PROCESSING_JOB_MODE_CONFLICT"

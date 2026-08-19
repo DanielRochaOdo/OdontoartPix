@@ -1,20 +1,15 @@
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { isTransientSupabaseError } from "@/lib/supabase/fetch";
 
 export type Role = "administrador" | "operador" | "visualizador";
 
-function isTransientAuthError(error: unknown) {
+function isHardAuthTimeout(error: unknown) {
+  const status = typeof error === "object" && error !== null && "status" in error
+    ? Number((error as { status?: unknown }).status)
+    : 0;
   const message = error instanceof Error ? error.message : String(error ?? "");
   const normalized = message.toLowerCase();
-  return [
-    "fetch failed",
-    "network",
-    "socket",
-    "econnreset",
-    "etimedout",
-    "enotfound",
-    "eai_again",
-    "connection"
-  ].some((fragment) => normalized.includes(fragment));
+  return status >= 500 || normalized.includes("abort") || normalized.includes("timeout");
 }
 
 async function withAuthRetry<T>(operation: () => PromiseLike<T>, attempts = 3) {
@@ -25,7 +20,7 @@ async function withAuthRetry<T>(operation: () => PromiseLike<T>, attempts = 3) {
       return await operation();
     } catch (error) {
       lastError = error;
-      if (!isTransientAuthError(error) || attempt === attempts) {
+      if (!isTransientSupabaseError(error) || attempt === attempts || isHardAuthTimeout(error)) {
         throw error;
       }
       await new Promise((resolve) => setTimeout(resolve, 200 * attempt));
