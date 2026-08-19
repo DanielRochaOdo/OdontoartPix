@@ -6,12 +6,11 @@ Sistema web para importacao de campanhas, consulta de mensalidades e consolidaca
 
 1. A importacao valida o arquivo e grava campanha, lote, associados e vinculos com status `pending`.
 2. A importacao nao consulta o ERP.
-3. Processamentos de dashboard, campanha, lote, associado e reprocessamento de erros entram na fila priorizada.
-4. A prioridade operacional e: Dashboard + erros da onda > Campanha > Lote > Associado.
-5. A aplicacao apenas cria/atualiza a fila e dispara o worker duravel; o processamento pesado nao deve depender da request da Vercel.
-6. Em producao, o GitHub Actions executa `scripts/process-batches-worker.ts` diretamente quando os secrets do ERP/Supabase estao configurados. O endpoint da Vercel permanece como fallback.
-7. Cada resposta do ERP e persistida em `campaign_batch_members`, `member_installments`, `member_plan_totals` e `consultation_logs`.
-8. Dashboard, lista, campanha e lote leem metricas canonicas calculadas no PostgreSQL.
+3. O botao **Processar campanha** ou **Processar lote** cria jobs com status `queued`.
+4. O clique em **Processar campanha** ou **Processar lote** faz um kickoff curto e dispara o worker duravel no GitHub Actions.
+5. Em producao, o processamento pesado roda diretamente no runner do GitHub Actions, fora da Vercel.
+6. Cada resposta do ERP e persistida em `campaign_batch_members`, `member_installments`, `member_plan_totals` e `consultation_logs`.
+7. Dashboard, lista, campanha e lote leem metricas canonicas calculadas no PostgreSQL.
 
 ## Contrato da API de mensalidades
 
@@ -24,56 +23,24 @@ A consulta e server-side por `GET`:
 Regras:
 
 - a consulta usa `HistoricoCompleto=true` e retorna parcelas pagas e abertas;
-- a consulta usa `limite=200` e avanca pagina a pagina somente enquanto a parcela-alvo ainda nao foi localizada;
-- ao encontrar `target_installment_id` por `Id`, `CodigoParcela` ou `cod_parcela`, a consulta encerra a paginacao imediatamente e analisa a parcela encontrada;
-- se a parcela-alvo nao aparecer, a consulta segue ate `TotalPages`;
+- a consulta usa `limite=200` e avanca pagina a pagina ate localizar a parcela-alvo; ao encontra-la, nao solicita paginas posteriores;
+- se a parcela-alvo nao for localizada, a consulta segue ate `TotalPages`;
 - parcela com `DescricaoRecebimento=ABERTO` representa pendencia;
 - uma parcela so e paga quando `ValorPago` e `DescricaoRecebimento` estao preenchidos e a descricao e diferente de `ABERTO`;
-- `DataPagamento` da parcela-alvo e persistida e exibida na listagem de associados;
+- `DataPagamento` da parcela-alvo e persistida para exibicao na lista de associados;
 - no dashboard, valores, contagens e status usam somente a parcela `target_installment_id` cadastrada no lote;
 - o total pendente e a soma de `ValorFinal` da parcela-alvo nao paga;
 - os valores de `DescricaoRecebimento` sao persistidos para o grafico de recebimentos do dashboard;
+- as parcelas sao agrupadas por `Tipo_plano`;
 - timeout, falha HTTP, rede ou payload invalido sao erros e nao podem virar pagamento confirmado;
-- token, `CodigoAssociadoEmpresa`, CPF completo, Pix e link de cartao nao devem aparecer nos logs.
+- token, `CodigoAssociadoEmpresa`, CPF completo, Pix e link de cartao nao devem aparecer nos logs;
+- o quarto grafico do dashboard agrupa somente parcelas-alvo pagas por `DescricaoRecebimento` e respeita os filtros de campanha/lote; sem filtros, considera todo o sistema ativo.
 
-## Reprocessamento de erros
+## Variaveis
 
-O reprocessamento de erros filtrados usa snapshot fechado:
+Copie `.env.example` para `.env.local` e configure as variaveis necessarias para o ambiente local.
 
-- o clique fotografa exatamente os IDs que estavam com erro naquele instante;
-- erros novos que surgirem depois nao entram automaticamente no mesmo pedido;
-- todos os IDs do snapshot precisam receber uma nova tentativa antes do pedido ser concluido;
-- o progresso separa aguardando, reprocessando, resolvidos e continuaram com erro;
-- `100% concluido` significa que todos receberam nova tentativa, nao que todos foram resolvidos;
-- o reprocessamento usa o mesmo perfil ativo do modulo Configuracoes (Conservador, Mediano ou Agressivo).
-
-## Variaveis de ambiente
-
-Use `.env.example` como referencia. Os valores armazenados em `processing_settings` no banco prevalecem sobre os defaults de ambiente para os parametros do worker.
-
-### Vercel Production
-
-A aplicacao precisa, no minimo, das credenciais do ERP/Supabase e das variaveis para disparar o GitHub Actions:
-
-```text
-MENSALIDADES_API_BASE_URL
-MENSALIDADES_API_TOKEN
-NEXT_PUBLIC_SUPABASE_URL
-NEXT_PUBLIC_SUPABASE_ANON_KEY
-SUPABASE_SERVICE_ROLE_KEY
-CRON_SECRET
-GITHUB_ACTIONS_TOKEN
-GITHUB_ACTIONS_REPO_OWNER=DanielRochaOdo
-GITHUB_ACTIONS_REPO_NAME=OdontoartPix
-GITHUB_ACTIONS_WORKFLOW_ID=process-batches.yml
-GITHUB_ACTIONS_REF=main
-```
-
-`GITHUB_ACTIONS_TOKEN` precisa permitir disparo de Actions no repositorio.
-
-### GitHub Actions - Environment `Production`
-
-Para o modo duravel direto, configure os secrets:
+No environment `Production` do GitHub Actions, o worker duravel exige obrigatoriamente:
 
 ```text
 NEXT_PUBLIC_SUPABASE_URL
@@ -83,36 +50,19 @@ MENSALIDADES_API_TOKEN
 PROCESSING_SYSTEM_USER_ID
 ```
 
-Quando esses quatro primeiros secrets estao presentes, o workflow processa diretamente no runner do GitHub, evitando usar a Vercel para o trabalho pesado.
+O workflow de producao falha se qualquer uma dessas variaveis estiver ausente. Ele nao faz fallback para processamento pesado dentro de Functions da Vercel.
 
-Mantenha tambem os secrets de fallback:
-
-```text
-PROCESS_BATCHES_URL=https://mensalidades.odontoart.com/api/cron/process-batches
-CRON_SECRET=<mesmo valor configurado na Vercel>
-PROCESSING_SYSTEM_USER_ID
-```
-
-As variaveis opcionais do GitHub Actions podem definir defaults de emergencia:
-
-```text
-PROCESSING_WORKER_COUNT
-PROCESSING_BLOCK_SIZE
-PROCESSING_CONCURRENCY
-PROCESSING_ERP_CONCURRENCY
-```
-
-Na operacao normal, o modulo Configuracoes persiste esses parametros em `processing_settings` e o worker os le diretamente do Supabase.
+Os parametros operacionais de concorrencia, block size, tentativas, buffers e timeouts continuam sendo carregados de `processing_settings`, configurados pelo modulo **Configuracoes**. Variaveis do GitHub environment podem ser usadas como fallback de inicializacao quando aplicavel.
 
 ## Banco
 
-Aplique as migrations em ordem antes de publicar o codigo correspondente. Nunca use `db reset --linked` ou `migration repair` como substituto de uma migration faltante em producao.
+Aplique as migrations em ordem. O processamento atual depende das migrations de fila, verdade financeira, prioridades e snapshots de reprocessamento presentes em `supabase/migrations`.
 
 ## Scheduler externo
 
-O workflow `.github/workflows/process-batches.yml` possui pulso a cada 5 minutos e tambem aceita `workflow_dispatch`.
+O workflow `.github/workflows/process-batches.yml` usa um pulso de recuperacao a cada 5 minutos. Esse pulso roda no GitHub Actions e nao deve executar processamento pesado na Vercel.
 
-O pulso de 5 minutos nao significa iniciar uma sincronizacao geral a cada 5 minutos. A janela real de sincronizacao agendada e controlada de forma transacional no banco.
+O pulso nao significa que uma sincronizacao geral sera iniciada a cada 5 minutos. A janela efetiva da sincronizacao agendada continua sendo controlada transacionalmente no PostgreSQL.
 
 Em producao:
 
@@ -120,30 +70,25 @@ Em producao:
 PROCESSING_ALLOW_SCHEDULED_SYNC=true
 ```
 
-O valor `false` deve ser usado apenas em testes locais controlados para impedir que o worker de desenvolvimento crie sincronizacoes agendadas.
+Em testes locais controlados, pode-se iniciar o worker com:
 
-Depois de publicar esta versao na `main`, o workflow **Process Batches** deve estar habilitado no GitHub Actions. Enquanto uma branch local estiver sendo testada contra o mesmo Supabase, mantenha-o desabilitado para evitar concorrencia com codigo da `main`.
+```bash
+PROCESSING_ALLOW_SCHEDULED_SYNC=false npx --yes dotenv-cli@8.0.0 -e .env.local -- npx --yes tsx@4.20.5 scripts/process-batches-worker.ts
+```
 
-## Operacao
+## Uso de Vercel
 
-Defaults de fallback do codigo:
+A Vercel deve atuar como camada web/control plane. O processamento em massa de ERP nao deve ser executado continuamente por `/api/cron/process-batches` em producao.
 
-- `PROCESSING_WORKER_COUNT=10`;
-- `PROCESSING_BLOCK_SIZE=60`;
-- `PROCESSING_CONCURRENCY=15`;
-- `PROCESSING_ERP_CONCURRENCY=15`;
-- timeout de conexao ERP de 30s;
-- timeout de leitura ERP de 30s;
-- ate 3 tentativas por item;
-- stale heartbeat de 120s;
-- lease de 900s;
-- pagina ERP de ate 200 itens.
+Para reduzir invocacoes, o indicador global usa polling adaptativo:
 
-Esses defaults nao substituem o perfil configurado no modulo Configuracoes.
+- sistema ocioso: consulta a cada 60 segundos;
+- processamento ativo: consulta a cada 10 segundos;
+- aba oculta: sem polling;
+- eventos internos de processamento: atualizacao imediata;
+- painel detalhado de erros aberto: atualizacao a cada 5 segundos.
 
 ## Validacao
-
-Antes do merge para `main`:
 
 ```bash
 npm ci
@@ -152,14 +97,10 @@ npm run test
 npm run build
 ```
 
-Validacoes operacionais recomendadas:
+Antes de processar uma base grande em producao, confirme no log do GitHub Actions:
 
-- importacao termina sem chamar o ERP;
-- processamento cria fila e retorna HTTP 202;
-- dashboard e erros da propria onda usam prioridade 1;
-- campanha, lote e associado respeitam a ordem de prioridade;
-- interromper o Dashboard encerra a onda, nao cria estado de pausa recuperavel;
-- snapshot filtrado processa exatamente os IDs fotografados no clique;
-- `resolved + failed = requested` ao finalizar um snapshot de erros;
-- valores financeiros so mudam apos nova verdade recebida do ERP;
-- a parcela-alvo paga exige evidencia explicita de `ValorPago` + `DescricaoRecebimento` valida.
+```text
+Using direct GitHub durable worker.
+```
+
+Depois valide uma campanha pequena, uma onda do Dashboard, um snapshot fechado de erros e um reprocessamento individual.
