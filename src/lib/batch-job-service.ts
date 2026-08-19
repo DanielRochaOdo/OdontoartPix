@@ -21,6 +21,7 @@ export type EnqueuedJob = {
   success_items: number;
   error_items: number;
   include_errors: boolean;
+  processing_origin: ProcessingOrigin;
   created: boolean;
   resumed?: boolean;
 };
@@ -40,6 +41,24 @@ export class ProcessingJobModeConflictError extends Error {
         : "O lote possui um reprocessamento de erros ativo. Aguarde a conclusao antes de iniciar o processamento normal."
     );
     this.name = "ProcessingJobModeConflictError";
+  }
+}
+
+export class ProcessingJobOriginConflictError extends Error {
+  readonly code = "PROCESSING_JOB_ORIGIN_CONFLICT";
+
+  constructor(
+    readonly batchId: string,
+    readonly activeJobId: string,
+    readonly activeOrigin: ProcessingOrigin,
+    readonly requestedOrigin: ProcessingOrigin
+  ) {
+    super(
+      requestedOrigin === "manual"
+        ? "Este lote esta sendo processado pela sincronizacao do dashboard. Pause a sincronizacao geral para executar o processamento manual isoladamente."
+        : "Este lote possui um processamento manual ativo. A sincronizacao do dashboard aguardara a conclusao do processamento manual."
+    );
+    this.name = "ProcessingJobOriginConflictError";
   }
 }
 
@@ -103,7 +122,7 @@ async function reopenUnpaidMembersForManualProcessing(batchId: string, resetAtte
   if (error) throw error;
 }
 
-async function resumePausedJob(jobId: string) {
+async function resumePausedJob(jobId: string, processingOrigin: ProcessingOrigin) {
   const supabase = createSupabaseAdminClient();
   const resumedAt = new Date().toISOString();
 
@@ -119,9 +138,10 @@ async function resumePausedJob(jobId: string) {
       updated_at: resumedAt
     })
     .eq("id", jobId)
+    .eq("processing_origin", processingOrigin)
     .eq("status", "paused")
     .select(
-      "id,campaign_id,batch_id,status,total_items,processed_items,success_items,error_items,include_errors"
+      "id,campaign_id,batch_id,status,total_items,processed_items,success_items,error_items,include_errors,processing_origin"
     )
     .maybeSingle();
 
@@ -143,12 +163,15 @@ export async function enqueueBatchJob(input: {
   const processingOrigin = input.processingOrigin ?? "manual";
   const config = await getProcessingConfig();
 
+  // Um fluxo so pode reutilizar ou retomar jobs da propria origem. Este era o
+  // principal ponto de vazamento entre a sincronizacao geral e comandos manuais.
   const { data: activeJob, error: activeJobError } = await supabase
     .from("processing_jobs")
     .select(
-      "id,campaign_id,batch_id,status,total_items,processed_items,success_items,error_items,include_errors"
+      "id,campaign_id,batch_id,status,total_items,processed_items,success_items,error_items,include_errors,processing_origin"
     )
     .eq("batch_id", input.batchId)
+    .eq("processing_origin", processingOrigin)
     .in("status", ["queued", "running", "paused"])
     .order("created_at", { ascending: false })
     .limit(1)
@@ -166,13 +189,14 @@ export async function enqueueBatchJob(input: {
     }
 
     if (activeJob.status === "paused") {
-      const resumedJob = await resumePausedJob(activeJob.id);
+      const resumedJob = await resumePausedJob(activeJob.id, processingOrigin);
       if (!resumedJob) {
         throw new Error("Job pausado não pôde ser retomado.");
       }
 
       return {
         ...resumedJob,
+        processing_origin: resumedJob.processing_origin as ProcessingOrigin,
         status: resumedJob.status as ProcessingJobStatus,
         created: false,
         resumed: true
@@ -187,6 +211,7 @@ export async function enqueueBatchJob(input: {
           .from("processing_jobs")
           .update({ status: "completed", finished_at: finishedAt, next_run_at: null, updated_at: finishedAt })
           .eq("id", activeJob.id)
+          .eq("processing_origin", processingOrigin)
           .eq("status", "queued");
         if (finalizeError) throw finalizeError;
         return null;
@@ -195,9 +220,34 @@ export async function enqueueBatchJob(input: {
 
     return {
       ...activeJob,
+      processing_origin: activeJob.processing_origin as ProcessingOrigin,
       status: activeJob.status as ProcessingJobStatus,
       created: false
     };
+  }
+
+  // Enquanto a outra origem estiver efetivamente executando/enfileirada,
+  // evitamos dois workers disputando o mesmo conjunto de membros. Um job do
+  // dashboard PAUSADO nao bloqueia um comando manual, conforme a regra 18.
+  const otherOrigin: ProcessingOrigin = processingOrigin === "manual" ? "dashboard" : "manual";
+  const { data: conflictingJob, error: conflictingJobError } = await supabase
+    .from("processing_jobs")
+    .select("id,processing_origin,status")
+    .eq("batch_id", input.batchId)
+    .eq("processing_origin", otherOrigin)
+    .in("status", ["queued", "running"])
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (conflictingJobError) throw conflictingJobError;
+  if (conflictingJob) {
+    throw new ProcessingJobOriginConflictError(
+      input.batchId,
+      conflictingJob.id,
+      conflictingJob.processing_origin as ProcessingOrigin,
+      processingOrigin
+    );
   }
 
   if (!includeErrors) {
@@ -240,12 +290,14 @@ export async function enqueueBatchJob(input: {
       next_run_at: new Date().toISOString()
     })
     .select(
-      "id,campaign_id,batch_id,status,total_items,processed_items,success_items,error_items,include_errors"
+      "id,campaign_id,batch_id,status,total_items,processed_items,success_items,error_items,include_errors,processing_origin"
     )
     .single();
 
   if (insertError || !job) {
     if (insertError?.code === "23505") {
+      // Corrida de criacao da mesma origem: a segunda chamada encontra o job
+      // recem-criado e o reutiliza de forma idempotente.
       return enqueueBatchJob(input);
     }
     throw insertError ?? new Error("Job não criado.");
@@ -253,6 +305,7 @@ export async function enqueueBatchJob(input: {
 
   return {
     ...job,
+    processing_origin: job.processing_origin as ProcessingOrigin,
     status: job.status as ProcessingJobStatus,
     created: true
   };
