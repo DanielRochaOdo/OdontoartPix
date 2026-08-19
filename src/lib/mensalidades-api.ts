@@ -81,6 +81,27 @@ function readPaginationMetadata(input: unknown) {
   };
 }
 
+function payloadContainsTargetInstallment(input: unknown, targetInstallmentId?: string) {
+  const target = String(targetInstallmentId ?? "").trim();
+  if (!target || !input || typeof input !== "object") return false;
+
+  const dados = (input as { dados?: unknown }).dados;
+  if (!dados || typeof dados !== "object") return false;
+  const data = (dados as { Data?: unknown }).Data;
+  if (!Array.isArray(data)) return false;
+
+  return data.some((item) => {
+    if (!item || typeof item !== "object") return false;
+    const row = item as {
+      Id?: unknown;
+      CodigoParcela?: unknown;
+      cod_parcela?: unknown;
+    };
+    return [row.Id, row.CodigoParcela, row.cod_parcela]
+      .some((value) => String(value ?? "").trim() === target);
+  });
+}
+
 function parseRetryAfterMs(value: string | null) {
   if (!value) return null;
 
@@ -388,6 +409,11 @@ export async function consultMonthlyByAssociatedCode(
           response.status
         );
       }
+
+      // A consulta existe para resolver uma unica target_installment_id. Assim
+      // que a parcela alvo aparece em uma pagina, as paginas posteriores nao
+      // agregam informacao necessaria para classificar essa parcela.
+      if (payloadContainsTargetInstallment(payload, targetInstallmentId)) break;
 
       if (metadata.totalPages === 0 || requestedPage >= metadata.totalPages) break;
       requestedPage += 1;
