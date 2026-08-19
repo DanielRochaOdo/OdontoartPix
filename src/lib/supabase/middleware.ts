@@ -1,6 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { fetchWithSupabaseTimeout, isTransientSupabaseError } from "@/lib/supabase/fetch";
+import { hasSupabaseAuthCookie } from "@/lib/supabase/session";
 
 export async function updateSession(request: NextRequest) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -11,6 +12,22 @@ export async function updateSession(request: NextRequest) {
   }
 
   let response = NextResponse.next({ request });
+  const pathname = request.nextUrl.pathname;
+  const isLogin = pathname === "/login";
+  const isApi = pathname.startsWith("/api");
+  const hasAuthCookie = hasSupabaseAuthCookie(request.cookies.getAll());
+
+  // Login and API handlers can work without a middleware Auth round trip.
+  // Avoid spending the timeout budget validating a missing session.
+  if (isApi || !hasAuthCookie) {
+    if (!isApi && !isLogin) {
+      const redirectUrl = request.nextUrl.clone();
+      redirectUrl.pathname = "/login";
+      redirectUrl.searchParams.set("next", pathname);
+      return NextResponse.redirect(redirectUrl);
+    }
+    return response;
+  }
 
   const supabase = createServerClient(url, anon, {
     global: {
@@ -53,10 +70,6 @@ export async function updateSession(request: NextRequest) {
     });
     return response;
   }
-
-  const pathname = request.nextUrl.pathname;
-  const isLogin = pathname === "/login";
-  const isApi = pathname.startsWith("/api");
 
   if (!user && !isLogin && !isApi) {
     const redirectUrl = request.nextUrl.clone();
