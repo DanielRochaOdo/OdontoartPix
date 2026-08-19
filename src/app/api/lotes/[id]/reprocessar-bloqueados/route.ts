@@ -1,10 +1,6 @@
 import { z } from "zod";
 import { requireApiUser } from "@/lib/auth/require-api-user";
-import {
-  enqueueBatchJob,
-  ProcessingJobModeConflictError,
-  ProcessingJobOriginConflictError
-} from "@/lib/batch-job-service";
+import { enqueueBatchJob, PROCESSING_PRIORITIES } from "@/lib/batch-job-service";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getProcessingConfig } from "@/lib/processing-config";
 import { fail, ok } from "@/lib/http/api-response";
@@ -55,7 +51,9 @@ export async function POST(
       batchId: batch.id,
       requestedBy: auth.profile.id,
       includeErrors: false,
-      processingOrigin: "manual"
+      processingOrigin: "manual",
+      processingScope: "batch",
+      processingPriority: PROCESSING_PRIORITIES.batch
     });
     if (!job) return fail("CONFLICT", "Os registros bloqueados nao ficaram elegiveis para processamento.", 422);
 
@@ -70,16 +68,18 @@ export async function POST(
       includeGeneralSync: false
     });
     return ok(
-      { converted: Number(converted), jobId: job.id, kickoff, durableDispatch },
-      durableDispatch.ok
-        ? "Registros bloqueados convertidos para o fluxo manual e entregues ao worker duravel."
-        : "Registros bloqueados convertidos e enfileirados; o acionamento do worker duravel falhou e foi registrado.",
+      {
+        converted: Number(converted),
+        jobId: job.id,
+        kickoff,
+        durableDispatch,
+        priority: job.processing_priority,
+        scope: job.processing_scope
+      },
+      "Registros bloqueados foram enfileirados com prioridade de lote.",
       202
     );
   } catch (error) {
-    if (error instanceof ProcessingJobModeConflictError || error instanceof ProcessingJobOriginConflictError) {
-      return fail(error.code, error.message, 409);
-    }
     console.error("[BATCH_BLOCKED_REPROCESS_FAILED]", {
       batchId: parsed.data.id,
       message: error instanceof Error ? error.message : "Erro desconhecido"
