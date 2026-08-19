@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { requireApiUser } from "@/lib/auth/require-api-user";
 import { fail, ok } from "@/lib/http/api-response";
@@ -38,10 +39,13 @@ export async function POST(
       .order("position", { ascending: true });
     if (batchesError) throw batchesError;
 
+    // Um clique = um snapshot fechado. O mesmo requestId acompanha todos os
+    // erros elegiveis encontrados em todos os lotes desta onda neste instante.
+    const requestId = randomUUID();
     let requestedCount = 0;
     let absorbedBatchCount = 0;
     for (const batch of batches ?? []) {
-      const result = await absorbBatchErrorsIntoActiveDashboard(batch.batch_id);
+      const result = await absorbBatchErrorsIntoActiveDashboard(batch.batch_id, requestId);
       if (!result.absorbed) continue;
       absorbedBatchCount += 1;
       requestedCount += result.requestedCount;
@@ -50,12 +54,14 @@ export async function POST(
     return ok(
       {
         runId: parsed.data.runId,
+        requestId,
         requestedCount,
         absorbedBatchCount,
-        priority: 100
+        priority: 100,
+        snapshotClosed: true
       },
       requestedCount > 0
-        ? `${requestedCount} erro(s) foram reinseridos na propria onda atual do dashboard.`
+        ? `${requestedCount} erro(s) foram incluidos neste pedido fechado de reprocessamento.`
         : "Nao ha erros novos elegiveis para reprocessar nesta onda neste momento.",
       202
     );
