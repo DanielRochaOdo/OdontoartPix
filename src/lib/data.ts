@@ -31,6 +31,16 @@ type MembersListItem = {
   campaign: { id: string; name: string } | { id: string; name: string }[] | null;
 };
 
+type TargetReceiptRow = {
+  campaign_batch_member_id: string;
+  cod_parcela: string | null;
+  situation: string | null;
+  payment_description: string | null;
+  paid_amount_cents: number | null;
+  updated_at: string | null;
+  created_at: string | null;
+};
+
 export async function getCampaigns() {
   const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase
@@ -184,51 +194,56 @@ export async function getMembers(filters: {
 
     const chunk = (data ?? []) as Omit<MembersListItem, "payment_description">[];
     const chunkIds = chunk.map((item) => item.id);
-    const installmentsByMember = new Map<
-      string,
-      Array<{ cod_parcela: string | null; situation: string | null; created_at: string | null }>
-    >();
+    const targetIdByMember = new Map(
+      chunk.map((item) => [item.id, String(item.target_installment_id ?? "").trim()])
+    );
+    const targetReceiptByMember = new Map<string, TargetReceiptRow>();
 
+    // Histórico completo pode ter centenas de parcelas por associado. Para a
+    // listagem precisamos somente da target_installment_id; nunca carregamos o
+    // histórico inteiro aqui. O detalhe do associado continua podendo fazê-lo.
     if (chunkIds.length > 0) {
       const lookupChunkSize = 100;
       for (let chunkStart = 0; chunkStart < chunkIds.length; chunkStart += lookupChunkSize) {
         const lookupIds = chunkIds.slice(chunkStart, chunkStart + lookupChunkSize);
+        const targetCodes = Array.from(new Set(
+          lookupIds.map((id) => targetIdByMember.get(id) ?? "").filter(Boolean)
+        ));
+        if (targetCodes.length === 0) continue;
 
-        for (let installmentFrom = 0; ; installmentFrom += pageSize) {
-          const { data: installmentRows, error: installmentError } = await supabase
-            .from("member_installments")
-            .select("campaign_batch_member_id,cod_parcela,situation,created_at")
-            .in("campaign_batch_member_id", lookupIds)
-            .order("created_at", { ascending: false })
-            .range(installmentFrom, installmentFrom + pageSize - 1);
+        const { data: installmentRows, error: installmentError } = await supabase
+          .from("member_installments")
+          .select(
+            "campaign_batch_member_id,cod_parcela,situation,payment_description,paid_amount_cents,updated_at,created_at"
+          )
+          .in("campaign_batch_member_id", lookupIds)
+          .in("cod_parcela", targetCodes)
+          .order("updated_at", { ascending: false })
+          .order("created_at", { ascending: false });
 
-          if (installmentError) {
-            throw new DataAccessError(
-              "Nao foi possivel carregar o tipo de pagamento dos associados.",
-              "getMembers.paymentDescription",
-              installmentError
-            );
+        if (installmentError) {
+          throw new DataAccessError(
+            "Nao foi possivel carregar a parcela alvo dos associados.",
+            "getMembers.targetPayment",
+            installmentError
+          );
+        }
+
+        for (const installment of (installmentRows ?? []) as TargetReceiptRow[]) {
+          const expectedTarget = targetIdByMember.get(installment.campaign_batch_member_id) ?? "";
+          if (String(installment.cod_parcela ?? "").trim() !== expectedTarget) continue;
+          if (!targetReceiptByMember.has(installment.campaign_batch_member_id)) {
+            targetReceiptByMember.set(installment.campaign_batch_member_id, installment);
           }
-
-          for (const installment of installmentRows ?? []) {
-            const memberInstallments = installmentsByMember.get(installment.campaign_batch_member_id) ?? [];
-            memberInstallments.push(installment);
-            installmentsByMember.set(installment.campaign_batch_member_id, memberInstallments);
-          }
-
-          if ((installmentRows ?? []).length < pageSize) break;
         }
       }
     }
 
     rows.push(
       ...chunk.map((item) => {
-        const installments = installmentsByMember.get(item.id) ?? [];
-        const targetInstallmentId = String(item.target_installment_id ?? "").trim();
-        const targetInstallment = installments.find(
-          (installment) => String(installment.cod_parcela ?? "").trim() === targetInstallmentId
-        );
-        const paymentDescription = targetInstallment?.situation?.trim() || null;
+        const target = targetReceiptByMember.get(item.id);
+        const paymentDescription =
+          target?.payment_description?.trim() || target?.situation?.trim() || null;
 
         return {
           ...item,
@@ -285,7 +300,7 @@ export async function getMemberDetail(campaignBatchMemberId: string) {
     supabase
       .from("member_installments")
       .select(
-        "id,cod_usuario,cod_parcela,due_date_text,installment_type,boleto_code,pix_code,card_payment_link,situation,base_amount_cents,fine_amount_cents,interest_amount_cents,additional_amount_cents,discount_amount_cents,final_amount_cents,plan_type,observation,created_at"
+        "id,cod_usuario,cod_parcela,due_date_text,installment_type,boleto_code,pix_code,card_payment_link,situation,payment_description,paid_amount_cents,base_amount_cents,fine_amount_cents,interest_amount_cents,additional_amount_cents,discount_amount_cents,final_amount_cents,plan_type,observation,created_at"
       )
       .in("campaign_batch_member_id", relatedLinkIds)
       .order("due_date_text", { ascending: true })
@@ -336,6 +351,8 @@ export async function getMemberDetail(campaignBatchMemberId: string) {
         item.payment_status === "unpaid"
           ? "open"
           : item.payment_status ?? item.processing_status,
+      payment_description: null,
+      paid_amount_cents: null,
       base_amount_cents: item.installment_amount_cents ?? 0,
       fine_amount_cents: 0,
       interest_amount_cents: 0,
