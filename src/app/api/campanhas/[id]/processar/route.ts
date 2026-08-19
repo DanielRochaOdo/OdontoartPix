@@ -10,6 +10,7 @@ import {
   dispatchDurableProcessingWorkflowSafely,
   runImmediateProcessingKickoff
 } from "@/lib/processing-kickoff";
+import { assertCampaignProcessingAvailable } from "@/lib/processing-preflight";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -29,6 +30,12 @@ export async function POST(
   }
 
   try {
+    await assertCampaignProcessingAvailable({
+      campaignId: parsed.data.id,
+      includeErrors: false,
+      processingOrigin: "manual"
+    });
+
     const result = await enqueueCampaignJobs({
       campaignId: parsed.data.id,
       requestedBy: auth.profile.id,
