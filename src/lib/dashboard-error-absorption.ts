@@ -18,7 +18,7 @@ export async function absorbBatchErrorsIntoActiveDashboard(
   batchId: string
 ): Promise<DashboardErrorAbsorptionResult> {
   const supabase = createSupabaseAdminClient();
-  const { data, error } = await supabase.rpc("absorb_batch_errors_into_dashboard_v3", {
+  const { data, error } = await supabase.rpc("absorb_batch_errors_into_dashboard_v4", {
     p_batch_id: batchId
   });
 
