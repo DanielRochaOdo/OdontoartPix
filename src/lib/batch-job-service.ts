@@ -2,6 +2,14 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getProcessingConfig } from "@/lib/processing-config";
 
 export type ProcessingOrigin = "manual" | "dashboard";
+export type ProcessingJobScope = "dashboard" | "campaign" | "batch" | "member";
+
+export const PROCESSING_PRIORITIES: Record<ProcessingJobScope, number> = {
+  dashboard: 100,
+  campaign: 80,
+  batch: 60,
+  member: 40
+};
 
 export type ProcessingJobStatus =
   | "queued"
@@ -22,10 +30,15 @@ export type EnqueuedJob = {
   error_items: number;
   include_errors: boolean;
   processing_origin: ProcessingOrigin;
+  processing_scope: ProcessingJobScope;
+  processing_priority: number;
   created: boolean;
   resumed?: boolean;
 };
 
+// Mantidas por compatibilidade com rotas antigas. A fila priorizada nao usa
+// conflito de origem como controle de concorrencia; a arbitragem agora ocorre
+// no banco e o worker cede cooperativamente a prioridades maiores.
 export class ProcessingJobModeConflictError extends Error {
   readonly code = "PROCESSING_JOB_MODE_CONFLICT";
 
@@ -35,11 +48,7 @@ export class ProcessingJobModeConflictError extends Error {
     readonly activeIncludesErrors: boolean,
     readonly requestedIncludesErrors: boolean
   ) {
-    super(
-      requestedIncludesErrors
-        ? "O lote possui um processamento normal ativo. Aguarde a conclusao antes de reprocessar os erros."
-        : "O lote possui um reprocessamento de erros ativo. Aguarde a conclusao antes de iniciar o processamento normal."
-    );
+    super("O modo do processamento ativo nao pode ser alterado com seguranca.");
     this.name = "ProcessingJobModeConflictError";
   }
 }
@@ -53,11 +62,7 @@ export class ProcessingJobOriginConflictError extends Error {
     readonly activeOrigin: ProcessingOrigin,
     readonly requestedOrigin: ProcessingOrigin
   ) {
-    super(
-      requestedOrigin === "manual"
-        ? "Este lote esta sendo processado pela sincronizacao do dashboard. Pause a sincronizacao geral para executar o processamento manual isoladamente."
-        : "Este lote possui um processamento manual ativo. A sincronizacao do dashboard aguardara a conclusao do processamento manual."
-    );
+    super("O processamento foi enfileirado e aguardara a prioridade atualmente em execucao.");
     this.name = "ProcessingJobOriginConflictError";
   }
 }
@@ -67,6 +72,28 @@ type ClaimableSummary = {
   technical_retry_count?: number | string;
   processing_count?: number | string;
 };
+
+function resolveScope(input: {
+  processingOrigin: ProcessingOrigin;
+  processingScope?: ProcessingJobScope;
+}) {
+  return input.processingScope ?? (input.processingOrigin === "dashboard" ? "dashboard" : "batch");
+}
+
+function resolvePriority(scope: ProcessingJobScope, requested?: number) {
+  const base = PROCESSING_PRIORITIES[scope];
+  if (requested == null || !Number.isFinite(requested)) return base;
+  return Math.max(1, Math.min(100, Math.round(requested)));
+}
+
+function higherPriorityScope(
+  currentScope: ProcessingJobScope,
+  currentPriority: number,
+  requestedScope: ProcessingJobScope,
+  requestedPriority: number
+) {
+  return requestedPriority > currentPriority ? requestedScope : currentScope;
+}
 
 async function getClaimableSummary(batchId: string, includeErrors: boolean, maxAttempts: number) {
   const supabase = createSupabaseAdminClient();
@@ -122,6 +149,24 @@ async function reopenUnpaidMembersForManualProcessing(batchId: string, resetAtte
   if (error) throw error;
 }
 
+async function requestErroredMembers(batchId: string) {
+  const supabase = createSupabaseAdminClient();
+  const requestedAt = new Date().toISOString();
+  const { error } = await supabase
+    .from("campaign_batch_members")
+    .update({
+      error_reprocess_requested_at: requestedAt,
+      processing_attempts: 0,
+      updated_at: requestedAt
+    })
+    .eq("batch_id", batchId)
+    .is("deleted_at", null)
+    .eq("processing_status", "error")
+    .or("payment_status.is.null,payment_status.neq.paid");
+
+  if (error) throw error;
+}
+
 async function resumePausedJob(jobId: string, processingOrigin: ProcessingOrigin) {
   const supabase = createSupabaseAdminClient();
   const resumedAt = new Date().toISOString();
@@ -141,7 +186,7 @@ async function resumePausedJob(jobId: string, processingOrigin: ProcessingOrigin
     .eq("processing_origin", processingOrigin)
     .eq("status", "paused")
     .select(
-      "id,campaign_id,batch_id,status,total_items,processed_items,success_items,error_items,include_errors,processing_origin"
+      "id,campaign_id,batch_id,status,total_items,processed_items,success_items,error_items,include_errors,processing_origin,processing_scope,processing_priority"
     )
     .maybeSingle();
 
@@ -156,118 +201,119 @@ export async function enqueueBatchJob(input: {
   includeErrors?: boolean;
   scheduledRecheck?: boolean;
   processingOrigin?: ProcessingOrigin;
+  processingScope?: ProcessingJobScope;
+  processingPriority?: number;
 }): Promise<EnqueuedJob | null> {
   const supabase = createSupabaseAdminClient();
   const includeErrors = input.includeErrors ?? false;
   const scheduledRecheck = input.scheduledRecheck ?? false;
   const processingOrigin = input.processingOrigin ?? "manual";
+  const processingScope = resolveScope({ processingOrigin, processingScope: input.processingScope });
+  const processingPriority = resolvePriority(processingScope, input.processingPriority);
   const config = await getProcessingConfig();
 
-  // Um fluxo so pode reutilizar ou retomar jobs da propria origem. Este era o
-  // principal ponto de vazamento entre a sincronizacao geral e comandos manuais.
   const { data: activeJob, error: activeJobError } = await supabase
     .from("processing_jobs")
     .select(
-      "id,campaign_id,batch_id,status,total_items,processed_items,success_items,error_items,include_errors,processing_origin"
+      "id,campaign_id,batch_id,status,total_items,processed_items,success_items,error_items,include_errors,processing_origin,processing_scope,processing_priority"
     )
     .eq("batch_id", input.batchId)
     .eq("processing_origin", processingOrigin)
     .in("status", ["queued", "running", "paused"])
+    .order("processing_priority", { ascending: false })
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
 
   if (activeJobError) throw activeJobError;
   if (activeJob) {
-    if (activeJob.include_errors !== includeErrors) {
-      throw new ProcessingJobModeConflictError(
-        input.batchId,
-        activeJob.id,
-        activeJob.include_errors,
-        includeErrors
-      );
+    const activeScope = activeJob.processing_scope as ProcessingJobScope;
+    const activePriority = Number(activeJob.processing_priority ?? PROCESSING_PRIORITIES[activeScope] ?? 60);
+    const mergedIncludeErrors = Boolean(activeJob.include_errors || includeErrors);
+
+    // Uma solicitacao mais ampla pode aproveitar o mesmo job do lote. Isso
+    // evita dois jobs manuais concorrendo pelos mesmos associados.
+    if (!includeErrors) {
+      await reopenUnpaidMembersForManualProcessing(input.batchId, scheduledRecheck);
+      await normalizeExhaustedMembers(input.batchId, config.maxAttemptsPerItem);
+    }
+    if (includeErrors && !activeJob.include_errors) {
+      await requestErroredMembers(input.batchId);
     }
 
-    if (activeJob.status === "paused") {
-      const resumedJob = await resumePausedJob(activeJob.id, processingOrigin);
-      if (!resumedJob) {
-        throw new Error("Job pausado não pôde ser retomado.");
-      }
+    const mergedPriority = Math.max(activePriority, processingPriority);
+    const mergedScope = higherPriorityScope(
+      activeScope,
+      activePriority,
+      processingScope,
+      processingPriority
+    );
+    const summary = await getClaimableSummary(input.batchId, mergedIncludeErrors, config.maxAttemptsPerItem);
 
+    const { data: promoted, error: promoteError } = await supabase
+      .from("processing_jobs")
+      .update({
+        include_errors: mergedIncludeErrors,
+        processing_priority: mergedPriority,
+        processing_scope: mergedScope,
+        total_items: Math.max(
+          Number(activeJob.total_items ?? 0),
+          Number(activeJob.processed_items ?? 0) + summary.claimable
+        ),
+        requested_by: input.requestedBy,
+        updated_at: new Date().toISOString()
+      })
+      .eq("id", activeJob.id)
+      .select(
+        "id,campaign_id,batch_id,status,total_items,processed_items,success_items,error_items,include_errors,processing_origin,processing_scope,processing_priority"
+      )
+      .single();
+
+    if (promoteError) throw promoteError;
+
+    if (promoted.status === "paused") {
+      const resumedJob = await resumePausedJob(promoted.id, processingOrigin);
+      if (!resumedJob) throw new Error("Job pausado não pôde ser retomado.");
       return {
         ...resumedJob,
         processing_origin: resumedJob.processing_origin as ProcessingOrigin,
+        processing_scope: resumedJob.processing_scope as ProcessingJobScope,
+        processing_priority: Number(resumedJob.processing_priority),
         status: resumedJob.status as ProcessingJobStatus,
         created: false,
         resumed: true
       };
     }
 
-    if (activeJob.status === "queued") {
-      const summary = await getClaimableSummary(input.batchId, includeErrors, config.maxAttemptsPerItem);
-      if (summary.claimable === 0 && summary.processing === 0 && summary.technicalRetry === 0) {
-        const finishedAt = new Date().toISOString();
-        const { error: finalizeError } = await supabase
-          .from("processing_jobs")
-          .update({ status: "completed", finished_at: finishedAt, next_run_at: null, updated_at: finishedAt })
-          .eq("id", activeJob.id)
-          .eq("processing_origin", processingOrigin)
-          .eq("status", "queued");
-        if (finalizeError) throw finalizeError;
-        return null;
-      }
+    if (promoted.status === "queued" && summary.claimable === 0 && summary.processing === 0 && summary.technicalRetry === 0) {
+      const finishedAt = new Date().toISOString();
+      const { error: finalizeError } = await supabase
+        .from("processing_jobs")
+        .update({ status: "completed", finished_at: finishedAt, next_run_at: null, updated_at: finishedAt })
+        .eq("id", promoted.id)
+        .eq("processing_origin", processingOrigin)
+        .eq("status", "queued");
+      if (finalizeError) throw finalizeError;
+      return null;
     }
 
     return {
-      ...activeJob,
-      processing_origin: activeJob.processing_origin as ProcessingOrigin,
-      status: activeJob.status as ProcessingJobStatus,
+      ...promoted,
+      processing_origin: promoted.processing_origin as ProcessingOrigin,
+      processing_scope: promoted.processing_scope as ProcessingJobScope,
+      processing_priority: Number(promoted.processing_priority),
+      status: promoted.status as ProcessingJobStatus,
       created: false
     };
   }
 
-  // Enquanto a outra origem estiver efetivamente executando/enfileirada,
-  // evitamos dois workers disputando o mesmo conjunto de membros. Um job do
-  // dashboard PAUSADO nao bloqueia um comando manual, conforme a regra 18.
-  const otherOrigin: ProcessingOrigin = processingOrigin === "manual" ? "dashboard" : "manual";
-  const { data: conflictingJob, error: conflictingJobError } = await supabase
-    .from("processing_jobs")
-    .select("id,processing_origin,status")
-    .eq("batch_id", input.batchId)
-    .eq("processing_origin", otherOrigin)
-    .in("status", ["queued", "running"])
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (conflictingJobError) throw conflictingJobError;
-  if (conflictingJob) {
-    throw new ProcessingJobOriginConflictError(
-      input.batchId,
-      conflictingJob.id,
-      conflictingJob.processing_origin as ProcessingOrigin,
-      processingOrigin
-    );
-  }
-
+  // Origens diferentes podem coexistir na fila. A funcao SQL que reivindica
+  // jobs garante exclusao de execucao e respeita a prioridade global.
   if (!includeErrors) {
     await reopenUnpaidMembersForManualProcessing(input.batchId, scheduledRecheck);
     await normalizeExhaustedMembers(input.batchId, config.maxAttemptsPerItem);
   } else {
-    const requestedAt = new Date().toISOString();
-    const { error: requestError } = await supabase
-      .from("campaign_batch_members")
-      .update({
-        error_reprocess_requested_at: requestedAt,
-        processing_attempts: 0,
-        updated_at: requestedAt
-      })
-      .eq("batch_id", input.batchId)
-      .is("deleted_at", null)
-      .eq("processing_status", "error")
-      .or("payment_status.is.null,payment_status.neq.paid");
-
-    if (requestError) throw requestError;
+    await requestErroredMembers(input.batchId);
   }
 
   const summary = await getClaimableSummary(input.batchId, includeErrors, config.maxAttemptsPerItem);
@@ -286,18 +332,18 @@ export async function enqueueBatchJob(input: {
       error_items: 0,
       include_errors: includeErrors,
       processing_origin: processingOrigin,
+      processing_scope: processingScope,
+      processing_priority: processingPriority,
       requested_by: input.requestedBy,
       next_run_at: new Date().toISOString()
     })
     .select(
-      "id,campaign_id,batch_id,status,total_items,processed_items,success_items,error_items,include_errors,processing_origin"
+      "id,campaign_id,batch_id,status,total_items,processed_items,success_items,error_items,include_errors,processing_origin,processing_scope,processing_priority"
     )
     .single();
 
   if (insertError || !job) {
     if (insertError?.code === "23505") {
-      // Corrida de criacao da mesma origem: a segunda chamada encontra o job
-      // recem-criado e o reutiliza de forma idempotente.
       return enqueueBatchJob(input);
     }
     throw insertError ?? new Error("Job não criado.");
@@ -306,6 +352,8 @@ export async function enqueueBatchJob(input: {
   return {
     ...job,
     processing_origin: job.processing_origin as ProcessingOrigin,
+    processing_scope: job.processing_scope as ProcessingJobScope,
+    processing_priority: Number(job.processing_priority),
     status: job.status as ProcessingJobStatus,
     created: true
   };
@@ -316,6 +364,9 @@ export async function enqueueCampaignJobs(input: {
   requestedBy: string;
   includeErrors?: boolean;
   processingOrigin?: ProcessingOrigin;
+  processingScope?: ProcessingJobScope;
+  processingPriority?: number;
+  skipBatchIds?: string[];
 }) {
   const supabase = createSupabaseAdminClient();
 
@@ -338,14 +389,18 @@ export async function enqueueCampaignJobs(input: {
 
   if (batchesError) throw batchesError;
 
+  const skipped = new Set(input.skipBatchIds ?? []);
   const jobs: EnqueuedJob[] = [];
   for (const batch of batches ?? []) {
+    if (skipped.has(batch.id)) continue;
     const job = await enqueueBatchJob({
       campaignId: batch.campaign_id,
       batchId: batch.id,
       requestedBy: input.requestedBy,
       includeErrors: input.includeErrors,
-      processingOrigin: input.processingOrigin
+      processingOrigin: input.processingOrigin,
+      processingScope: input.processingScope,
+      processingPriority: input.processingPriority
     });
     if (job) jobs.push(job);
   }
