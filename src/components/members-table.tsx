@@ -17,6 +17,7 @@ type MemberItem = {
   processing_status: string;
   payment_status: string | null;
   payment_description: string | null;
+  payment_date_text: string | null;
   total_pending_amount_cents: number;
   member: Relation<{
     cpf: string | null;
@@ -41,6 +42,7 @@ type Row = {
   status: string;
   payment: string;
   receiptDescription: string;
+  paymentDate: string;
   pending: number;
 };
 
@@ -244,6 +246,7 @@ export function MembersTable({
           status: normalizeStatus(item.processing_status),
           payment: normalizePayment(item.payment_status ?? "-"),
           receiptDescription: String(item.payment_description ?? "").trim() || "-",
+          paymentDate: formatDueDate(item.payment_date_text ?? "") || "-",
           pending: item.total_pending_amount_cents ?? 0
         };
       }),
@@ -275,7 +278,8 @@ export function MembersTable({
             row.batch,
             row.status,
             row.payment,
-            row.receiptDescription
+            row.receiptDescription,
+            row.paymentDate
           ]
             .join(" ")
             .toLowerCase();
@@ -411,6 +415,7 @@ export function MembersTable({
     ["status", "Status"],
     ["payment", "Pagamento"],
     ["receiptDescription", "Tipo de Pagto"],
+    ["paymentDate", "Data de Pagamento"],
     ["pending", "Pendencia"]
   ];
 
@@ -510,6 +515,7 @@ export function MembersTable({
         Status: statusLabel(row.status),
         Pagamento: paymentLabel(row.payment),
         "Tipo de Pagto": row.receiptDescription,
+        "Data de Pagamento": row.paymentDate === "-" ? "" : row.paymentDate,
         Pendencia: `R$ ${(row.pending / 100).toFixed(2).replace(".", ",")}`
       }))
     );
@@ -524,6 +530,7 @@ export function MembersTable({
       { wch: 16 },
       { wch: 16 },
       { wch: 22 },
+      { wch: 20 },
       { wch: 16 }
     ];
 
@@ -827,7 +834,7 @@ export function MembersTable({
       ) : null}
 
       <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <table className="min-w-[1420px] divide-y divide-slate-200 text-sm">
+        <table className="min-w-[1580px] divide-y divide-slate-200 text-sm">
           <thead className="bg-slate-50 text-slate-600">
             <tr>
               {columns.map(([key, label]) => (
@@ -864,6 +871,7 @@ export function MembersTable({
                   <td className="px-4 py-3">{statusLabel(row.status)}</td>
                   <td className="px-4 py-3">{paymentLabel(row.payment)}</td>
                   <td className="px-4 py-3">{row.receiptDescription}</td>
+                  <td className="px-4 py-3">{row.paymentDate}</td>
                   <td className="px-4 py-3">
                     R$ {(row.pending / 100).toFixed(2).replace(".", ",")}
                   </td>
