@@ -123,11 +123,15 @@ export async function POST(
       targetInstallmentId,
       memberLink.due_date_text ?? undefined
     );
+    // O banco mantém uma assinatura legada de 4 argumentos e a implementação
+    // canônica de 5 argumentos. Informar p_recalculate explicitamente evita
+    // qualquer ambiguidade de resolução do RPC no PostgREST.
     const { error: persistError } = await supabase.rpc("persist_member_processing_success", {
       p_campaign_batch_member_id: memberLink.id,
       p_http_status: result.httpStatus,
       p_duration_ms: Math.round(result.durationMs),
-      p_analysis: result.analysis
+      p_analysis: result.analysis,
+      p_recalculate: true
     });
 
     if (persistError) {
