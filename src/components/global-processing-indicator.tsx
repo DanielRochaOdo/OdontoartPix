@@ -8,6 +8,8 @@ type SyncMode = "full_sync" | "scheduled_recheck" | "error_reprocess";
 type ActiveProcessing = {
   active: boolean;
   jobCount: number;
+  executableJobCount?: number;
+  deferredJobCount?: number;
   campaignCount: number;
   batchCount: number;
   totalItems: number;
@@ -18,6 +20,12 @@ type ActiveProcessing = {
     manual: number;
     dashboard: number;
     unknown: number;
+  };
+  scopes?: {
+    campaign: number;
+    batch: number;
+    member: number;
+    dashboard: number;
   };
   generalSync?: {
     id: string;
@@ -34,6 +42,8 @@ const PROCESSING_INDICATOR_POLL_INTERVAL_MS = 10_000;
 const EMPTY: ActiveProcessing = {
   active: false,
   jobCount: 0,
+  executableJobCount: 0,
+  deferredJobCount: 0,
   campaignCount: 0,
   batchCount: 0,
   totalItems: 0,
@@ -41,6 +51,7 @@ const EMPTY: ActiveProcessing = {
   successItems: 0,
   errorItems: 0,
   origins: { manual: 0, dashboard: 0, unknown: 0 },
+  scopes: { campaign: 0, batch: 0, member: 0, dashboard: 0 },
   generalSync: null
 };
 
@@ -53,6 +64,10 @@ function processingSourceLabel(processing: ActiveProcessing) {
     return processing.generalSync.triggerSource === "scheduled"
       ? "Sincronização geral agendada"
       : "Sincronização geral iniciada no dashboard";
+  }
+
+  if ((processing.deferredJobCount ?? 0) > 0 && (processing.executableJobCount ?? 0) === 0) {
+    return "Processamento aguardando prioridade";
   }
 
   const manual = processing.origins?.manual ?? 0;
@@ -104,13 +119,14 @@ export function GlobalProcessingIndicator() {
     ? (progress.processedItems / progress.totalItems) * 100
     : 0;
   const sourceLabel = processingSourceLabel(processing);
+  const deferredCount = processing.deferredJobCount ?? 0;
 
   return (
     <>
       <button
         type="button"
         aria-label="Ver processamento ativo"
-        title={`${sourceLabel} — ${Math.round(percentage)}%`}
+        title={`${sourceLabel} — ${Math.round(percentage)}%${deferredCount ? ` · ${deferredCount} aguardando prioridade` : ""}`}
         onClick={() => setOpen(true)}
         className="global-processing-orb fixed right-5 top-5 z-[60] h-12 w-12 rounded-full border border-[#00E5C3]/80 bg-[#00a98f] shadow-[0_0_18px_rgba(0,229,195,0.7)]"
       >
@@ -133,13 +149,13 @@ export function GlobalProcessingIndicator() {
             <div className="flex items-start justify-between gap-4">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#00a98f] dark:text-[#00E5C3]">
-                  Processamento ativo
+                  Processamento
                 </p>
                 <h2 id="global-processing-title" className="mt-1 text-xl font-semibold">
                   {sourceLabel}
                 </h2>
                 <p className="mt-1 text-sm text-[#5d7184] dark:text-[#9bb2c7]">
-                  O sistema continua trabalhando mesmo que você esteja em outra tela.
+                  A fila respeita Dashboard + erros, Campanha, Lote e Associado, nessa ordem.
                 </p>
               </div>
               <button
@@ -166,13 +182,27 @@ export function GlobalProcessingIndicator() {
                     </strong>
                   </div>
                 ) : null}
+                {deferredCount > 0 ? (
+                  <div className="mt-2 flex items-center justify-between gap-3">
+                    <span className="text-[#5d7184] dark:text-[#9bb2c7]">Aguardando a onda</span>
+                    <strong>{integer(deferredCount)} job(s)</strong>
+                  </div>
+                ) : null}
               </div>
             ) : (
               <div className="mt-4 grid grid-cols-2 gap-3">
-                <Metric label="Jobs manuais" value={integer(processing.origins?.manual ?? 0)} />
-                <Metric label="Jobs dashboard" value={integer(processing.origins?.dashboard ?? 0)} />
+                <Metric label="Jobs executáveis" value={integer(processing.executableJobCount ?? 0)} />
+                <Metric label="Aguardando prioridade" value={integer(deferredCount)} />
               </div>
             )}
+
+            {deferredCount > 0 ? (
+              <div className="mt-3 grid grid-cols-3 gap-2">
+                <Metric label="Campanha · P2" value={integer(processing.scopes?.campaign ?? 0)} />
+                <Metric label="Lote · P3" value={integer(processing.scopes?.batch ?? 0)} />
+                <Metric label="Associado · P4" value={integer(processing.scopes?.member ?? 0)} />
+              </div>
+            ) : null}
 
             <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
               <Metric label="Campanhas" value={integer(processing.campaignCount)} />
