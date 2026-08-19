@@ -88,6 +88,8 @@ Para reduzir invocacoes, o indicador global usa polling adaptativo:
 - eventos internos de processamento: atualizacao imediata;
 - painel detalhado de erros aberto: atualizacao a cada 5 segundos.
 
+Essas regras reduzem invocacoes sem alterar o ritmo real do worker, que continua seguindo o preset ativo do modulo Configuracoes.
+
 ## Validacao
 
 ```bash
