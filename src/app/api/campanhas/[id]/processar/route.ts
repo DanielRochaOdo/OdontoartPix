@@ -2,7 +2,8 @@ import { z } from "zod";
 import { requireApiUser } from "@/lib/auth/require-api-user";
 import {
   enqueueCampaignJobs,
-  ProcessingJobModeConflictError
+  ProcessingJobModeConflictError,
+  ProcessingJobOriginConflictError
 } from "@/lib/batch-job-service";
 import { fail, ok } from "@/lib/http/api-response";
 import {
@@ -31,7 +32,8 @@ export async function POST(
     const result = await enqueueCampaignJobs({
       campaignId: parsed.data.id,
       requestedBy: auth.profile.id,
-      includeErrors: false
+      includeErrors: false,
+      processingOrigin: "manual"
     });
 
     if (!result.found) {
@@ -60,7 +62,7 @@ export async function POST(
             created: job.created
           }))
         },
-        "A campanha ja possui processamento em execucao.",
+        "A campanha já possui processamento manual em execução.",
         202
       );
     }
@@ -92,12 +94,12 @@ export async function POST(
         }))
       },
       durableDispatch.ok
-        ? "O processamento foi colocado na fila, iniciado localmente e entregue ao worker duravel ate o fim."
-        : "O processamento foi colocado na fila e iniciado localmente. O worker duravel falhou ao ser acionado e foi registrado para diagnostico.",
+        ? "O processamento manual da campanha foi enfileirado e entregue ao worker durável."
+        : "O processamento manual foi enfileirado, mas o worker durável não pôde ser acionado; a falha foi registrada.",
       202
     );
   } catch (error) {
-    if (error instanceof ProcessingJobModeConflictError) {
+    if (error instanceof ProcessingJobModeConflictError || error instanceof ProcessingJobOriginConflictError) {
       return fail(error.code, error.message, 409);
     }
     console.error("[CAMPAIGN_ENQUEUE_FAILED]", {
