@@ -1,4 +1,4 @@
-const DEFAULT_SUPABASE_AUTH_TIMEOUT_MS = 5_000;
+const DEFAULT_SUPABASE_AUTH_TIMEOUT_MS = 10_000;
 const DEFAULT_SUPABASE_REQUEST_TIMEOUT_MS = 15_000;
 
 function getSupabaseRequestTimeoutMs(input: RequestInfo | URL) {

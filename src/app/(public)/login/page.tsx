@@ -1,26 +1,32 @@
 import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
 import { LoginForm } from "@/components/login-form";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { hasSupabaseAuthCookie } from "@/lib/supabase/session";
 
 const ALLOWED_ROLES = new Set(["administrador", "operador", "visualizador"]);
 
 export default async function LoginPage() {
-  const supabase = await createSupabaseServerClient();
+  const cookieStore = await cookies();
+  const hasAuthCookie = hasSupabaseAuthCookie(cookieStore.getAll());
+  const supabase = hasAuthCookie ? await createSupabaseServerClient() : null;
   let blockedMessage: string | null = null;
   let user = null;
 
-  try {
-    const result = await supabase.auth.getUser();
-    user = result.data.user;
-  } catch (error) {
-    console.warn("[LOGIN_AUTH_PROVIDER_UNAVAILABLE]", {
-      message: error instanceof Error ? error.message : String(error)
-    });
+  if (supabase) {
+    try {
+      const result = await supabase.auth.getUser();
+      user = result.data.user;
+    } catch (error) {
+      console.warn("[LOGIN_AUTH_PROVIDER_UNAVAILABLE]", {
+        message: error instanceof Error ? error.message : String(error)
+      });
     blockedMessage =
       "O serviÃ§o de autenticaÃ§Ã£o estÃ¡ temporariamente indisponÃ­vel. Tente novamente em instantes.";
+    }
   }
 
-  if (user) {
+  if (user && supabase) {
     const { data: profile, error } = await supabase
       .from("profiles")
       .select("role,ativo")
