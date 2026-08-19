@@ -13,8 +13,9 @@ export async function GET() {
   const supabase = createSupabaseAdminClient();
   const { data: jobs, error } = await supabase
     .from("processing_jobs")
-    .select("id,campaign_id,batch_id,status,processing_origin,total_items,processed_items,success_items,error_items,include_errors,created_at")
-    .in("status", ["queued", "running"])
+    .select("id,campaign_id,batch_id,status,processing_origin,processing_scope,processing_priority,total_items,processed_items,success_items,error_items,include_errors,created_at")
+    .in("status", ["queued", "running", "deferred"])
+    .order("processing_priority", { ascending: false })
     .order("created_at", { ascending: true });
 
   if (error) {
@@ -42,7 +43,9 @@ export async function GET() {
   }
 
   const rows = jobs ?? [];
-  const summary = rows.reduce(
+  const executableRows = rows.filter((job) => job.status === "queued" || job.status === "running");
+  const deferredRows = rows.filter((job) => job.status === "deferred");
+  const summary = executableRows.reduce(
     (total, job) => ({
       totalItems: total.totalItems + Number(job.total_items ?? 0),
       processedItems: total.processedItems + Number(job.processed_items ?? 0),
@@ -64,6 +67,12 @@ export async function GET() {
   const manualJobCount = rows.filter((job) => job.processing_origin === "manual").length;
   const dashboardJobCount = rows.filter((job) => job.processing_origin === "dashboard").length;
   const unknownJobCount = Math.max(rows.length - manualJobCount - dashboardJobCount, 0);
+  const scopeCounts = {
+    campaign: rows.filter((job) => job.processing_scope === "campaign").length,
+    batch: rows.filter((job) => job.processing_scope === "batch").length,
+    member: rows.filter((job) => job.processing_scope === "member").length,
+    dashboard: rows.filter((job) => job.processing_scope === "dashboard").length
+  };
   const hasActiveRun = Boolean(activeRun);
   const progress = normalizeProcessingProgress({
     totalItems: hasActiveRun ? Number(activeRun?.record_count ?? summary.totalItems) : summary.totalItems,
@@ -71,13 +80,15 @@ export async function GET() {
     successItems: hasActiveRun ? Number(activeRun?.success_count ?? summary.successItems) : summary.successItems,
     errorItems: hasActiveRun ? Number(activeRun?.error_count ?? summary.errorItems) : summary.errorItems
   });
-  const hasActiveJobs = rows.length > 0;
+  const hasExecutableJobs = executableRows.length > 0;
 
   return NextResponse.json({
     success: true,
     data: {
-      active: hasActiveJobs || hasActiveRun,
+      active: hasExecutableJobs || hasActiveRun || deferredRows.length > 0,
       jobCount: rows.length,
+      executableJobCount: executableRows.length,
+      deferredJobCount: deferredRows.length,
       campaignCount: hasActiveRun
         ? Number(activeRun?.campaign_count ?? summary.campaigns.size)
         : summary.campaigns.size,
@@ -93,6 +104,7 @@ export async function GET() {
         dashboard: dashboardJobCount,
         unknown: unknownJobCount
       },
+      scopes: scopeCounts,
       generalSync: activeRun
         ? {
             id: activeRun.id,
@@ -109,6 +121,8 @@ export async function GET() {
         batchId: job.batch_id,
         status: job.status,
         origin: job.processing_origin,
+        scope: job.processing_scope,
+        priority: Number(job.processing_priority ?? 0),
         totalItems: Number(job.total_items ?? 0),
         processedItems: Number(job.processed_items ?? 0),
         includeErrors: Boolean(job.include_errors)
