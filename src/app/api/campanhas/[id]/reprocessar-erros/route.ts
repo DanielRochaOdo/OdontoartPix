@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { requireApiUser } from "@/lib/auth/require-api-user";
 import { enqueueCampaignJobs, PROCESSING_PRIORITIES } from "@/lib/batch-job-service";
@@ -43,10 +44,11 @@ export async function POST(
       .order("created_at", { ascending: true });
     if (batchesError) throw batchesError;
 
+    const requestId = randomUUID();
     const absorbedBatchIds: string[] = [];
     let absorbedErrorCount = 0;
     for (const batch of batches ?? []) {
-      const absorbed = await absorbBatchErrorsIntoActiveDashboard(batch.id);
+      const absorbed = await absorbBatchErrorsIntoActiveDashboard(batch.id, requestId);
       if (!absorbed.absorbed) continue;
       absorbedBatchIds.push(batch.id);
       absorbedErrorCount += absorbed.requestedCount;
@@ -85,6 +87,7 @@ export async function POST(
     return ok(
       {
         campaignId: parsed.data.id,
+        requestId,
         absorbedIntoDashboard: absorbedBatchIds.length > 0,
         absorbedBatchIds,
         absorbedErrorCount,
