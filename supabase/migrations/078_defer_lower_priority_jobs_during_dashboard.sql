@@ -3,6 +3,14 @@
 -- mesmo lote e nao criam espera circular. Ao finalizar/cancelar o run, voltam
 -- automaticamente para queued.
 
+-- Garante a compatibilidade do novo estado antes da primeira gravacao. Se uma
+-- versao anterior do schema nao possuir essa constraint, o DROP e inofensivo.
+alter table public.processing_jobs
+  drop constraint if exists processing_jobs_status_check;
+alter table public.processing_jobs
+  add constraint processing_jobs_status_check
+  check (status in ('queued', 'running', 'deferred', 'completed', 'failed', 'paused', 'cancelled'));
+
 create unique index if not exists uq_processing_jobs_one_open_per_origin
   on public.processing_jobs(batch_id, processing_origin)
   where status in ('queued', 'running', 'deferred');
