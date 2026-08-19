@@ -10,8 +10,14 @@ function sleep(ms: number) {
 async function main() {
   const startedAt = Date.now();
   const systemUserId = process.env.PROCESSING_SYSTEM_USER_ID?.trim() || null;
+  const allowScheduledSync = process.env.PROCESSING_ALLOW_SCHEDULED_SYNC?.trim().toLowerCase() !== "false";
   let cycle = 0;
   let finalStatus: "idle" | "queued" | "completed" | "failed" | "paused" = "idle";
+
+  console.info("[DURABLE_WORKER_STARTED]", {
+    allowScheduledSync,
+    systemUserConfigured: Boolean(systemUserId)
+  });
 
   while (Date.now() - startedAt < MAX_EXECUTION_MS) {
     cycle += 1;
@@ -20,7 +26,7 @@ async function main() {
       maxRuns: 10_000,
       budgetMs: Math.min(CYCLE_BUDGET_MS, remaining),
       systemUserId,
-      allowScheduledSync: true
+      allowScheduledSync
     });
 
     finalStatus = result.lastStatus;
