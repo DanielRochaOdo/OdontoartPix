@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { requireApiUser } from "@/lib/auth/require-api-user";
 import { enqueueBatchJob, PROCESSING_PRIORITIES } from "@/lib/batch-job-service";
@@ -36,7 +37,8 @@ export async function POST(
     if (error) throw error;
     if (!batch) return fail("NOT_FOUND", "Lote nao encontrado.", 404);
 
-    const absorbed = await absorbBatchErrorsIntoActiveDashboard(batch.id);
+    const requestId = randomUUID();
+    const absorbed = await absorbBatchErrorsIntoActiveDashboard(batch.id, requestId);
     if (absorbed.absorbed) {
       return ok(
         {
@@ -45,6 +47,7 @@ export async function POST(
           jobId: absorbed.jobId,
           batchId: batch.id,
           requestedCount: absorbed.requestedCount,
+          requestId: absorbed.requestId,
           priority: PROCESSING_PRIORITIES.dashboard
         },
         absorbed.requestedCount > 0
