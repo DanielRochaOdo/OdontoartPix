@@ -20,10 +20,6 @@ on:
         required: false
         default: ""
   schedule:
-    # Pulso de recuperação. A frequência efetiva da sincronização agendada
-    # continua sendo controlada por processing_scheduler_state no banco.
-    # Pulsos mais frequentes reduzem o impacto de atrasos/perdas do scheduler
-    # do GitHub sem iniciar uma nova sincronização antes da janela configurada.
     - cron: "*/5 * * * *"
 
 permissions:
@@ -41,28 +37,77 @@ jobs:
     environment: Production
 
     steps:
-      - name: Validate scheduler secrets
+      - name: Detect durable worker mode
+        id: worker_mode
+        env:
+          SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          MENSALIDADES_API_BASE_URL: ${{ secrets.MENSALIDADES_API_BASE_URL }}
+          MENSALIDADES_API_TOKEN: ${{ secrets.MENSALIDADES_API_TOKEN }}
+        shell: bash
+        run: |
+          if [ -n "$SUPABASE_URL" ] \
+             && [ -n "$SUPABASE_SERVICE_ROLE_KEY" ] \
+             && [ -n "$MENSALIDADES_API_BASE_URL" ] \
+             && [ -n "$MENSALIDADES_API_TOKEN" ]; then
+            echo "direct=true" >> "$GITHUB_OUTPUT"
+            echo "Using direct GitHub durable worker."
+          else
+            echo "direct=false" >> "$GITHUB_OUTPUT"
+            echo "Direct worker secrets are incomplete; using Vercel endpoint fallback."
+          fi
+
+      - name: Checkout
+        if: steps.worker_mode.outputs.direct == 'true'
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        if: steps.worker_mode.outputs.direct == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        if: steps.worker_mode.outputs.direct == 'true'
+        run: npm ci
+
+      - name: Run durable worker directly
+        if: steps.worker_mode.outputs.direct == 'true'
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          MENSALIDADES_API_BASE_URL: ${{ secrets.MENSALIDADES_API_BASE_URL }}
+          MENSALIDADES_API_TOKEN: ${{ secrets.MENSALIDADES_API_TOKEN }}
+          PROCESSING_SYSTEM_USER_ID: ${{ secrets.PROCESSING_SYSTEM_USER_ID }}
+          PROCESSING_WORKER_COUNT: ${{ vars.PROCESSING_WORKER_COUNT }}
+          PROCESSING_BLOCK_SIZE: ${{ vars.PROCESSING_BLOCK_SIZE }}
+          PROCESSING_CONCURRENCY: ${{ vars.PROCESSING_CONCURRENCY }}
+          PROCESSING_ERP_CONCURRENCY: ${{ vars.PROCESSING_ERP_CONCURRENCY }}
+        run: npx --yes tsx@4.20.5 scripts/process-batches-worker.ts
+
+      - name: Validate fallback secrets
+        if: steps.worker_mode.outputs.direct != 'true'
         env:
           PROCESS_BATCHES_URL: ${{ secrets.PROCESS_BATCHES_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           PROCESSING_SYSTEM_USER_ID: ${{ secrets.PROCESSING_SYSTEM_USER_ID }}
         run: |
           if [ -z "$PROCESS_BATCHES_URL" ]; then
-            echo "GitHub secret PROCESS_BATCHES_URL is required."
+            echo "GitHub secret PROCESS_BATCHES_URL is required for fallback mode."
             exit 1
           fi
-
           if [ -z "$CRON_SECRET" ]; then
-            echo "GitHub secret CRON_SECRET is required."
+            echo "GitHub secret CRON_SECRET is required for fallback mode."
             exit 1
           fi
-
           if [ -z "$PROCESSING_SYSTEM_USER_ID" ]; then
             echo "GitHub secret PROCESSING_SYSTEM_USER_ID is required."
             exit 1
           fi
 
-      - name: Trigger processing endpoint
+      - name: Trigger Vercel processing endpoint fallback
+        if: steps.worker_mode.outputs.direct != 'true'
         id: trigger_processing
         env:
           PROCESS_BATCHES_URL: ${{ secrets.PROCESS_BATCHES_URL }}
@@ -79,7 +124,7 @@ jobs:
 
           url = os.environ["PROCESS_BATCHES_URL"]
           token = os.environ["CRON_SECRET"]
-          max_calls = 240
+          max_calls = 60
           final_status = "idle"
           final_calls = 0
 
@@ -96,8 +141,7 @@ jobs:
             )
             try:
               with urllib.request.urlopen(req, timeout=115) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-                return payload
+                return json.loads(response.read().decode("utf-8"))
             except urllib.error.HTTPError as error:
               if error.code in (502, 503, 504):
                 return {
@@ -139,7 +183,7 @@ jobs:
             if status in ("idle", "failed", "paused"):
               break
 
-            time.sleep(0.25)
+            time.sleep(1)
 
           needs_continuation = "true" if final_status == "queued" else "false"
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
@@ -148,8 +192,8 @@ jobs:
             output.write(f"needs_continuation={needs_continuation}\n")
           PY
 
-      - name: Dispatch continuation
-        if: steps.trigger_processing.outputs.needs_continuation == 'true'
+      - name: Dispatch fallback continuation
+        if: steps.worker_mode.outputs.direct != 'true' && steps.trigger_processing.outputs.needs_continuation == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
