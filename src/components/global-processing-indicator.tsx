@@ -2,59 +2,18 @@
 
 import { useEffect, useState } from "react";
 import { listenMetricsSync } from "@/lib/metrics-sync";
+import {
+  getDashboardErrorReplaySnapshot,
+  getProcessingActiveSnapshot,
+  subscribeProcessingRealtime,
+  type DashboardErrorReplaySnapshot,
+  type ProcessingActiveSnapshot
+} from "@/lib/processing-realtime";
 import { normalizeProcessingProgress } from "@/lib/processing-progress";
 
 type SyncMode = "full_sync" | "scheduled_recheck" | "error_reprocess";
-
-type ActiveProcessing = {
-  active: boolean;
-  jobCount: number;
-  executableJobCount?: number;
-  deferredJobCount?: number;
-  campaignCount: number;
-  batchCount: number;
-  totalItems: number;
-  processedItems: number;
-  successItems: number;
-  errorItems: number;
-  origins?: {
-    manual: number;
-    dashboard: number;
-    unknown: number;
-  };
-  scopes?: {
-    campaign: number;
-    batch: number;
-    member: number;
-    dashboard: number;
-  };
-  generalSync?: {
-    id: string;
-    status: string;
-    triggerSource: "manual" | "scheduled";
-    syncMode: SyncMode;
-    currentBatchName: string | null;
-    lastHeartbeatAt: string | null;
-  } | null;
-};
-
-type ErrorReplayStatus = {
-  requestedCount: number;
-  queuedCount: number;
-  processingCount: number;
-  resolvedCount: number;
-  failedCount: number;
-  activities: Array<{
-    id: string;
-    type: string;
-    label: string;
-    createdAt: string;
-  }>;
-};
-
-const PROCESSING_INDICATOR_ACTIVE_POLL_INTERVAL_MS = 10_000;
-const PROCESSING_INDICATOR_IDLE_POLL_INTERVAL_MS = 60_000;
-const ERROR_REPLAY_POLL_INTERVAL_MS = 5_000;
+type ActiveProcessing = ProcessingActiveSnapshot;
+type ErrorReplayStatus = DashboardErrorReplaySnapshot;
 
 const EMPTY: ActiveProcessing = {
   active: false,
@@ -125,71 +84,37 @@ export function GlobalProcessingIndicator() {
   useEffect(() => {
     let mounted = true;
     let loading = false;
-    let timer: number | null = null;
-    let lastKnownActive = false;
-
-    function clearTimer() {
-      if (timer !== null) {
-        window.clearTimeout(timer);
-        timer = null;
-      }
-    }
-
-    function scheduleNext(active: boolean) {
-      clearTimer();
-      if (!mounted || document.visibilityState !== "visible") return;
-      timer = window.setTimeout(
-        () => void load(),
-        active
-          ? PROCESSING_INDICATOR_ACTIVE_POLL_INTERVAL_MS
-          : PROCESSING_INDICATOR_IDLE_POLL_INTERVAL_MS
-      );
-    }
 
     async function load() {
       if (!mounted || loading || document.visibilityState !== "visible") return;
       loading = true;
-      let activeForNextPoll = lastKnownActive;
-
       try {
-        const response = await fetch("/api/processing/active", { cache: "no-store" });
-        const payload = await response.json();
-        if (mounted && payload.success && payload.data) {
-          activeForNextPoll = Boolean(payload.data.active);
-          lastKnownActive = activeForNextPoll;
-          setProcessing(payload.data);
-          if (!payload.data.generalSync?.id) setErrorReplay(EMPTY_ERROR_REPLAY);
+        const snapshot = await getProcessingActiveSnapshot();
+        if (mounted && snapshot) {
+          setProcessing(snapshot);
+          if (!snapshot.generalSync?.id) setErrorReplay(EMPTY_ERROR_REPLAY);
         }
       } catch {
-        // A falha de leitura não deve interromper a navegação global.
+        // Realtime/observabilidade nao deve interromper a navegacao global.
       } finally {
         loading = false;
-        if (mounted) scheduleNext(activeForNextPoll);
       }
     }
 
-    const refreshNow = () => {
-      if (!mounted || document.visibilityState !== "visible") return;
-      clearTimer();
-      void load();
-    };
-
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible") {
-        refreshNow();
-      } else {
-        clearTimer();
-      }
-    };
-
+    const refreshNow = () => void load();
     const stopMetricsSync = listenMetricsSync(refreshNow);
+    const stopRealtime = subscribeProcessingRealtime(refreshNow);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") void load();
+    };
+
     document.addEventListener("visibilitychange", handleVisibilityChange);
     void load();
 
     return () => {
       mounted = false;
-      clearTimer();
       stopMetricsSync();
+      stopRealtime();
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, []);
@@ -200,32 +125,31 @@ export function GlobalProcessingIndicator() {
     if (!open || !generalSyncId) return;
 
     let mounted = true;
+    let loading = false;
     async function loadReplayStatus() {
+      if (loading || document.visibilityState !== "visible") return;
+      loading = true;
       try {
-        const response = await fetch(
-          `/api/dashboard/general-sync/${generalSyncId}/error-reprocess-status`,
-          { cache: "no-store" }
-        );
-        const payload = await response.json();
-        if (mounted && response.ok && payload.success && payload.data) {
-          setErrorReplay(payload.data);
-        }
+        const snapshot = await getDashboardErrorReplaySnapshot(generalSyncId);
+        if (mounted && snapshot) setErrorReplay(snapshot);
       } catch {
-        // A observabilidade dos erros não deve interromper o processamento.
+        // A observabilidade dos erros nao deve interromper o processamento.
+      } finally {
+        loading = false;
       }
     }
 
-    void loadReplayStatus();
-    const pollWhenVisible = () => {
+    const stopRealtime = subscribeProcessingRealtime(() => void loadReplayStatus());
+    const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") void loadReplayStatus();
     };
-    const timer = window.setInterval(pollWhenVisible, ERROR_REPLAY_POLL_INTERVAL_MS);
-    document.addEventListener("visibilitychange", pollWhenVisible);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    void loadReplayStatus();
 
     return () => {
       mounted = false;
-      window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", pollWhenVisible);
+      stopRealtime();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, [generalSyncId, open]);
 
@@ -355,7 +279,7 @@ export function GlobalProcessingIndicator() {
                       Tratativa de erros desta onda
                     </p>
                     <p className="mt-1 text-xs text-amber-800/80 dark:text-amber-200/80">
-                      Atualização automática enquanto este painel estiver aberto.
+                      Atualização por evento enquanto este painel estiver aberto.
                     </p>
                   </div>
                   {errorReplay.processingCount > 0 ? (
