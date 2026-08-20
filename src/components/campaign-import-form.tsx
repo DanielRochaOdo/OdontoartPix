@@ -75,6 +75,7 @@ export function CampaignImportForm({
         `Base importada: ${imported} registros aguardando processamento.${invalid ? ` ${invalid} registro(s) foram ignorados.` : ""}${skipped ? ` ${skipped} parcela(s) foram ignoradas por ja estarem vinculadas a outra campanha.` : ""}`
       );
       form.reset();
+      setSelectedFile("");
 
       if (json.data?.campaignId) {
         try {
@@ -88,9 +89,13 @@ export function CampaignImportForm({
           );
           window.dispatchEvent(new Event("campaign-import-report-updated"));
         } catch {}
-        router.push(`/campanhas/${json.data.campaignId}`);
-        router.refresh();
       }
+
+      // Durante a migracao para PostgreSQL proprio, a listagem de campanhas ja
+      // usa o banco local. O detalhe ainda sera migrado na proxima etapa, entao
+      // permanecemos na listagem apos a importacao para evitar rotas legadas.
+      router.replace("/campanhas");
+      router.refresh();
     } catch {
       setStatus("Falha de comunicacao durante a importacao.");
     } finally {
