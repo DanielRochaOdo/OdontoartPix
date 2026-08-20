@@ -1,17 +1,15 @@
-import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { fail } from "@/lib/http/api-response";
-import type { Role } from "@/lib/auth";
-import { isTransientSupabaseError } from "@/lib/supabase/fetch";
+import { getSessionUser } from "@/lib/auth/session";
+import type { Role } from "@/lib/auth/types";
 
 export async function requireApiUser(allowedRoles: Role[]) {
-  const supabase = await createSupabaseServerClient();
-  let claimsResult: Awaited<ReturnType<typeof supabase.auth.getClaims>>;
+  let user;
 
   try {
-    claimsResult = await supabase.auth.getClaims();
-  } catch (authError) {
-    console.warn("[AUTH_API_PROVIDER_UNAVAILABLE]", {
-      message: authError instanceof Error ? authError.message : "Erro desconhecido"
+    user = await getSessionUser();
+  } catch (error) {
+    console.error("[AUTH_DATABASE_UNAVAILABLE]", {
+      message: error instanceof Error ? error.message : "Erro desconhecido"
     });
     return {
       ok: false as const,
@@ -19,31 +17,31 @@ export async function requireApiUser(allowedRoles: Role[]) {
     };
   }
 
-  if (claimsResult.error && isTransientSupabaseError(claimsResult.error)) {
+  if (!user) {
     return {
       ok: false as const,
-      response: fail("AUTH_PROVIDER_UNAVAILABLE", "O serviço de autenticação está temporariamente indisponível.", 503)
+      response: fail("UNAUTHENTICATED", "Você precisa estar autenticado.", 401)
     };
   }
 
-  const userId = claimsResult.data?.claims?.sub;
-  if (claimsResult.error || typeof userId !== "string" || !userId) {
-    return { ok: false as const, response: fail("UNAUTHENTICATED", "Você precisa estar autenticado.", 401) };
+  if (!allowedRoles.includes(user.role)) {
+    return {
+      ok: false as const,
+      response: fail("FORBIDDEN", "Você não possui permissão para executar esta ação.", 403)
+    };
   }
 
-  const { data: profile, error: profileError } = await supabase
-    .from("profiles")
-    .select("id,nome,email,role,ativo")
-    .eq("id", userId)
-    .maybeSingle();
+  const profile = {
+    id: user.id,
+    nome: user.name,
+    email: user.email,
+    role: user.role,
+    ativo: user.active
+  };
 
-  if (profileError || !profile || !profile.ativo) {
-    return { ok: false as const, response: fail("FORBIDDEN", "Acesso negado.", 403) };
-  }
-
-  if (!allowedRoles.includes(profile.role as Role)) {
-    return { ok: false as const, response: fail("FORBIDDEN", "Você não possui permissão para executar esta ação.", 403) };
-  }
-
-  return { ok: true as const, user: { id: userId }, profile };
+  return {
+    ok: true as const,
+    user: { id: user.id },
+    profile
+  };
 }
