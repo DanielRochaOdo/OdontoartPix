@@ -89,19 +89,22 @@ export function getActiveGeneralSyncRunSnapshot() {
   return rpcJson<GeneralSyncRunDetail>("get_active_general_sync_run_detail_v1");
 }
 
-export function getGeneralSyncRunSnapshot(runId: string) {
+export function getGeneralSyncRunSnapshot(runId: string | null) {
+  if (!runId) return Promise.resolve(null);
   return rpcJson<GeneralSyncRunDetail>("get_general_sync_run_detail_v1", {
     p_run_id: runId
   });
 }
 
-export function getDashboardErrorReplaySnapshot(runId: string) {
+export function getDashboardErrorReplaySnapshot(runId: string | null) {
+  if (!runId) return Promise.resolve(null);
   return rpcJson<DashboardErrorReplaySnapshot>("get_dashboard_error_reprocess_status_v1", {
     p_run_id: runId
   });
 }
 
-export function getFilteredErrorReplaySnapshot(requestId: string) {
+export function getFilteredErrorReplaySnapshot(requestId: string | null) {
+  if (!requestId) return Promise.resolve(null);
   return rpcJson<FilteredErrorReplaySnapshot>("get_filtered_error_reprocess_status_v1", {
     p_request_id: requestId
   });
@@ -140,7 +143,7 @@ export function subscribeProcessingRealtime(onChange: () => void) {
       },
       notify
     )
-    .subscribe((status) => {
+    .subscribe((status: string) => {
       if (status === "SUBSCRIBED") notify();
     });
 
