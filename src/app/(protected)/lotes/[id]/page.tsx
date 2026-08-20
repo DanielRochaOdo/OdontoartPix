@@ -6,7 +6,6 @@ import { RenameBatchForm } from "@/components/rename-batch-form";
 import { CampaignImportReport } from "@/components/campaign-import-report";
 import { getBatchById, getMemberPreviewByBatch } from "@/lib/data";
 import { DataAccessError } from "@/lib/errors/data-access-error";
-import { getEventLogs } from "@/lib/event-logs";
 import { getBatchMetrics } from "@/lib/metrics";
 import { formatCurrencyBR } from "@/lib/money";
 import { PageSurface } from "@/components/page-surface";
@@ -25,19 +24,13 @@ export default async function BatchDetailPage({
   let batch: Awaited<ReturnType<typeof getBatchById>> = null;
   let metrics: Awaited<ReturnType<typeof getBatchMetrics>> = null;
   let members: Awaited<ReturnType<typeof getMemberPreviewByBatch>> = [];
-  let recentIgnoredEvents: Awaited<ReturnType<typeof getEventLogs>> = [];
   let errorMessage: string | null = null;
 
   try {
-    [batch, metrics, members, recentIgnoredEvents] = await Promise.all([
+    [batch, metrics, members] = await Promise.all([
       getBatchById(id),
       getBatchMetrics(id),
-      getMemberPreviewByBatch(id, 50),
-      getEventLogs({
-        batchId: id,
-        eventType: "ignored_installment_import",
-        limit: 20
-      })
+      getMemberPreviewByBatch(id, 50)
     ]);
   } catch (error) {
     console.error("[BATCH_PAGE_LOAD_FAILED]", {
@@ -114,48 +107,6 @@ export default async function BatchDetailPage({
             initialMetrics={metrics}
             errorHref={`/associados?status=error&batch=${batch.id}`}
           />
-
-          {recentIgnoredEvents.length > 0 ? (
-            <section className="mt-8 rounded-2xl border border-amber-200 bg-amber-50 p-5 shadow-sm">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-lg font-semibold text-amber-950">Faturas ignoradas na importacao do lote</h2>
-                  <p className="mt-1 text-sm text-amber-900/80">
-                    Ultimos {recentIgnoredEvents.length} registros ignorados neste lote.
-                  </p>
-                </div>
-                <Link
-                  href={`/eventos?batch=${batch.id}`}
-                  className="text-sm font-medium text-amber-900 underline"
-                >
-                  Ver todos em Eventos
-                </Link>
-              </div>
-
-              <div className="mt-4 overflow-hidden rounded-xl border border-amber-200 bg-white">
-                <table className="min-w-full text-sm">
-                  <thead className="bg-amber-100/70 text-left text-amber-900">
-                    <tr>
-                      <th className="px-4 py-3 font-medium">Linha</th>
-                      <th className="px-4 py-3 font-medium">Codigo</th>
-                      <th className="px-4 py-3 font-medium">Parcela</th>
-                      <th className="px-4 py-3 font-medium">Motivo</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {recentIgnoredEvents.map((event) => (
-                      <tr key={event.id} className="border-t border-amber-100">
-                        <td className="px-4 py-3">{event.line_number ?? "-"}</td>
-                        <td className="px-4 py-3">{event.associated_code ?? "-"}</td>
-                        <td className="px-4 py-3">{event.target_installment_id ?? "-"}</td>
-                        <td className="px-4 py-3">{event.reason ?? "-"}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          ) : null}
 
           <section className="mt-8 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <h2 className="text-lg font-semibold">Associados do lote</h2>
