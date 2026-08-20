@@ -56,7 +56,12 @@ export async function getProcessingScheduleView() {
 
   try {
     const supabase = createSupabaseAdminClient();
-    const [{ data: settings }, { data: state }, { data: lastRun }] = await Promise.all([
+    const [
+      { data: settings },
+      { data: schedulerState },
+      { data: lastStartedRun },
+      { data: lastFinishedRun }
+    ] = await Promise.all([
       supabase
         .from("processing_settings")
         .select("scheduled_interval_minutes")
@@ -64,13 +69,19 @@ export async function getProcessingScheduleView() {
         .maybeSingle(),
       supabase
         .from("processing_scheduler_state")
-        .select("last_checked_at,last_pulse_started_at,last_pulse_finished_at,last_pulse_status")
+        .select("next_run_at")
         .eq("settings_key", "default")
         .maybeSingle(),
       supabase
         .from("general_sync_runs")
-        .select("started_at,finished_at,created_at")
-        .eq("trigger_source", "scheduled")
+        .select("started_at,status")
+        .not("started_at", "is", null)
+        .order("started_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      supabase
+        .from("general_sync_runs")
+        .select("finished_at,status")
         .not("finished_at", "is", null)
         .order("finished_at", { ascending: false })
         .limit(1)
@@ -82,17 +93,16 @@ export async function getProcessingScheduleView() {
     const intervalMinutes = storedInterval === 1 || storedInterval === 5 || storedInterval === 30 || storedInterval === 60 || storedInterval === 120
       ? storedInterval
       : 60;
-    const lastPulseAt = (state as {
-      last_pulse_started_at?: string | null;
-      last_pulse_finished_at?: string | null;
-    } | null)?.last_pulse_finished_at
-      ?? (state as { last_pulse_started_at?: string | null } | null)?.last_pulse_started_at
-      ?? null;
-    const lastPulseStatus = (state as { last_pulse_status?: string | null } | null)?.last_pulse_status ?? null;
-    const scheduledRunFinishedAt = (lastRun as { finished_at?: string | null } | null)?.finished_at ?? null;
-    let nextProcessingAt = scheduledRunFinishedAt
-      ? new Date(new Date(scheduledRunFinishedAt).getTime() + intervalMinutes * 60_000)
-      : null;
+
+    const lastProcessingAt = (lastStartedRun as { started_at?: string | null } | null)?.started_at ?? null;
+    const lastPulseAt = (lastFinishedRun as { finished_at?: string | null } | null)?.finished_at ?? null;
+    const lastPulseStatus = (lastFinishedRun as { status?: string | null } | null)?.status ?? null;
+    const schedulerNextRunAt = (schedulerState as { next_run_at?: string | null } | null)?.next_run_at ?? null;
+    let nextProcessingAt = schedulerNextRunAt ? new Date(schedulerNextRunAt) : null;
+
+    if (nextProcessingAt && Number.isNaN(nextProcessingAt.getTime())) {
+      nextProcessingAt = null;
+    }
 
     const nextProcessingDue = Boolean(nextProcessingAt && nextProcessingAt.getTime() <= Date.now());
     if (nextProcessingDue) nextProcessingAt = null;
@@ -100,9 +110,7 @@ export async function getProcessingScheduleView() {
     return {
       lastPulseAt,
       lastPulseStatus,
-      lastProcessingAt: (lastRun as { started_at?: string | null; finished_at?: string | null; created_at?: string | null } | null)
-        ?.finished_at ?? (lastRun as { started_at?: string | null } | null)?.started_at
-        ?? (lastRun as { created_at?: string | null } | null)?.created_at ?? null,
+      lastProcessingAt,
       nextProcessingAt: nextProcessingAt?.toISOString() ?? null,
       nextProcessingDue,
       intervalMinutes
