@@ -276,6 +276,22 @@ function monetaryValue(value: unknown, field: string, warnings: string[]) {
   return result.cents;
 }
 
+function requiredApiValorCents(value: unknown, installmentCode: string) {
+  if (!hasValue(value)) {
+    throw new MonthlyResponseError(
+      `A parcela ${installmentCode} não possui Valor informado pelo ERP.`
+    );
+  }
+
+  const parsed = toCents(value);
+  if (parsed.warning) {
+    throw new MonthlyResponseError(
+      `A parcela ${installmentCode} possui Valor inválido.`
+    );
+  }
+  return parsed.cents;
+}
+
 function normalizeMonthlyPayload(input: unknown): NormalizedLegacyPayload | NormalizedPaginatedPayload {
   const legacy = MonthlyLegacyResponseSchema.safeParse(input);
   if (legacy.success) {
@@ -381,7 +397,7 @@ function analyzeLegacyPayload(payload: NormalizedLegacyPayload, targetInstallmen
       totalAmountCents: 0
     };
     current.installmentsCount += 1;
-    current.totalAmountCents += installment.finalAmountCents;
+    current.totalAmountCents += installment.baseAmountCents;
     grouped.set(installment.planType, current);
   }
 
@@ -390,7 +406,7 @@ function analyzeLegacyPayload(payload: NormalizedLegacyPayload, targetInstallmen
     paymentStatusSource: "legacy_contract",
     message: payload.message || "Associado possui mensalidades em aberto.",
     installmentsCount: installments.length,
-    totalPendingAmountCents: installments.reduce((sum, installment) => sum + installment.finalAmountCents, 0),
+    totalPendingAmountCents: installments.reduce((sum, installment) => sum + installment.baseAmountCents, 0),
     totalPaidAmountCents: 0,
     totalsByPlan: [...grouped.entries()].map(([planType, total]) => ({ planType, ...total })),
     installments,
@@ -450,17 +466,12 @@ function analyzePaginatedPayload(
 
   const explicitlyPaid = isExplicitlyPaid(matched);
   const paidValue = toCents(matched.ValorPago);
+  const baseAmountCents = requiredApiValorCents(matched.Valor, String(targetInstallmentId).trim());
   const finalAmount = toCents(matched.ValorFinal);
   if (explicitlyPaid && paidValue.warning) {
     throw new MonthlyResponseError(`A parcela ${targetInstallmentId} possui ValorPago inválido.`);
   }
-  if (!explicitlyPaid && finalAmount.warning) {
-    throw new MonthlyResponseError(
-      `A parcela ${targetInstallmentId} possui ValorFinal inválido.`
-    );
-  }
 
-  const amountCents = finalAmount.warning && explicitlyPaid ? paidValue.cents : finalAmount.cents;
   const description = optionalText(matched.DescricaoRecebimento);
   const installment: MonthlyInstallment = {
     userCode: optionalText(matched.cod_usuario),
@@ -470,13 +481,13 @@ function analyzePaginatedPayload(
     situation: description,
     paymentDescription: description,
     paymentDate: optionalText(matched.DataPagamento),
-    baseAmountCents: monetaryValue(matched.Valor ?? matched.ValorFinal, "Valor", []),
+    baseAmountCents,
     fineAmountCents: monetaryValue(matched.Multa ?? matched.ValorMultaJuros, "Multa", []),
     interestAmountCents: monetaryValue(matched.Juros, "Juros", []),
     additionalAmountCents: monetaryValue(matched.AcrescimoAvulso, "AcrescimoAvulso", []),
     discountAmountCents: monetaryValue(matched.DescontoAvulso ?? matched.ValorDescontoAvulso, "DescontoAvulso", []),
     paidAmountCents: explicitlyPaid ? paidValue.cents : null,
-    finalAmountCents: amountCents,
+    finalAmountCents: finalAmount.warning ? baseAmountCents : finalAmount.cents,
     planType: optionalText(matched.Tipo_plano) ?? optionalText(matched.DescricaoParcela) ?? "Não informado",
     observation: optionalText(matched.Observacao) ?? optionalText(matched.DescricaoPagamento)
   };
@@ -486,13 +497,15 @@ function analyzePaginatedPayload(
     paymentStatusSource: explicitlyPaid ? "erp_explicit" : "erp_open_invoice",
     message: payload.message || (explicitlyPaid ? "Parcela paga conforme o ERP." : "Parcela localizada como pendente."),
     installmentsCount: 1,
-    totalPendingAmountCents: explicitlyPaid ? Math.max(amountCents - paidValue.cents, 0) : amountCents,
+    totalPendingAmountCents: explicitlyPaid ? 0 : baseAmountCents,
     totalPaidAmountCents: explicitlyPaid ? paidValue.cents : 0,
     totalsByPlan: explicitlyPaid
       ? []
-      : [{ planType: installment.planType, installmentsCount: 1, totalAmountCents: amountCents }],
+      : [{ planType: installment.planType, installmentsCount: 1, totalAmountCents: baseAmountCents }],
     installments: [installment],
-    warnings: [],
+    warnings: finalAmount.warning && hasValue(matched.ValorFinal)
+      ? [`ValorFinal da parcela ${targetInstallmentId}: ${finalAmount.warning}`]
+      : [],
     paginationComplete: payload.totalPages === 0 || payload.totalPages === 1,
     currentPage: payload.currentPage,
     totalPages: payload.totalPages,
@@ -509,6 +522,7 @@ function analyzeCompleteHistoryPayload(
   const warnings: string[] = [];
   const seen = new Set<string>();
   const installments: MonthlyInstallment[] = [];
+  const normalizedTargetId = targetInstallmentId.trim();
 
   for (const item of payload.items) {
     const installmentCode = installmentCodeFromApiItem(item);
@@ -525,54 +539,60 @@ function analyzeCompleteHistoryPayload(
       throw new MonthlyResponseError(`A parcela ${installmentCode} possui ValorPago inválido.`);
     }
 
-    const finalValue = toCents(item.ValorFinal);
-    if (!explicitlyPaid && finalValue.warning && hasValue(item.ValorFinal)) {
-      throw new MonthlyResponseError(`A parcela ${installmentCode} possui ValorFinal inválido.`);
+    const isTarget = installmentCode === normalizedTargetId;
+    const baseValue = toCents(item.Valor);
+    if (isTarget && (!hasValue(item.Valor) || baseValue.warning)) {
+      throw new MonthlyResponseError(
+        `A parcela ${installmentCode} ${!hasValue(item.Valor) ? "não possui Valor informado pelo ERP" : "possui Valor inválido"}.`
+      );
     }
+    if (!isTarget && baseValue.warning && hasValue(item.Valor)) {
+      warnings.push(`Valor da parcela ${installmentCode}: ${baseValue.warning}`);
+    }
+
+    const finalValue = toCents(item.ValorFinal);
     if (finalValue.warning && hasValue(item.ValorFinal)) {
       warnings.push(`ValorFinal da parcela ${installmentCode}: ${finalValue.warning}`);
     }
 
+    const baseAmountCents = baseValue.warning ? 0 : baseValue.cents;
     const description = optionalText(item.DescricaoRecebimento);
     installments.push({
       userCode: optionalText(item.cod_usuario),
       installmentCode,
-      dueDate: optionalText(item.vencimento) ?? optionalText(item.DataVencimento) ?? (installmentCode === targetInstallmentId.trim() ? optionalText(fallbackDueDate) : undefined),
+      dueDate: optionalText(item.vencimento) ?? optionalText(item.DataVencimento) ?? (isTarget ? optionalText(fallbackDueDate) : undefined),
       installmentType: optionalText(item.tipo_parcela) ?? optionalText(item.DescricaoParcela),
       situation: description,
       paymentDescription: description,
       paymentDate: optionalText(item.DataPagamento),
-      baseAmountCents: monetaryValue(item.Valor ?? item.ValorFinal, "Valor", warnings),
+      baseAmountCents,
       fineAmountCents: monetaryValue(item.Multa ?? item.ValorMultaJuros, "Multa", warnings),
       interestAmountCents: monetaryValue(item.Juros, "Juros", warnings),
       additionalAmountCents: monetaryValue(item.AcrescimoAvulso, "AcrescimoAvulso", warnings),
       discountAmountCents: monetaryValue(item.DescontoAvulso ?? item.ValorDescontoAvulso, "DescontoAvulso", warnings),
-      finalAmountCents: finalValue.warning && explicitlyPaid ? paidValue.cents : finalValue.cents,
+      finalAmountCents: finalValue.warning ? baseAmountCents : finalValue.cents,
       planType: optionalText(item.Tipo_plano) ?? optionalText(item.DescricaoParcela) ?? "Não informado",
       observation: optionalText(item.Observacao) ?? optionalText(item.DescricaoPagamento),
       paidAmountCents: explicitlyPaid ? paidValue.cents : null
     });
   }
 
-  const target = installments.find((item) => item.installmentCode === targetInstallmentId.trim());
-  const pendingInstallments = installments.filter((item) => item.paidAmountCents === null);
-  const grouped = new Map<string, { installmentsCount: number; totalAmountCents: number }>();
-  for (const installment of pendingInstallments) {
-    const current = grouped.get(installment.planType) ?? { installmentsCount: 0, totalAmountCents: 0 };
-    current.installmentsCount += 1;
-    current.totalAmountCents += installment.finalAmountCents;
-    grouped.set(installment.planType, current);
-  }
-
+  const target = installments.find((item) => item.installmentCode === normalizedTargetId);
   const targetIsPaid = target?.paidAmountCents !== null && target?.paidAmountCents !== undefined;
+  const targetPendingAmountCents = target && !targetIsPaid ? target.baseAmountCents : 0;
+  const targetPaidAmountCents = targetIsPaid ? (target?.paidAmountCents ?? 0) : 0;
+  const targetPlanTotals = target && !targetIsPaid
+    ? [{ planType: target.planType, installmentsCount: 1, totalAmountCents: target.baseAmountCents }]
+    : [];
+
   return {
     paymentStatus: targetIsPaid ? "paid" : "unpaid",
     paymentStatusSource: "erp_explicit",
     message: payload.message || (targetIsPaid ? "Parcela paga conforme o historico do ERP." : "Parcela em aberto conforme o historico do ERP."),
     installmentsCount: installments.length,
-    totalPendingAmountCents: pendingInstallments.reduce((sum, installment) => sum + installment.finalAmountCents, 0),
-    totalPaidAmountCents: installments.reduce((sum, installment) => sum + (installment.paidAmountCents ?? 0), 0),
-    totalsByPlan: [...grouped.entries()].map(([planType, total]) => ({ planType, ...total })),
+    totalPendingAmountCents: targetPendingAmountCents,
+    totalPaidAmountCents: targetPaidAmountCents,
+    totalsByPlan: targetPlanTotals,
     installments,
     warnings,
     paginationComplete: payload.totalPages === 0 || payload.totalPages === 1,
