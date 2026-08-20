@@ -397,7 +397,7 @@ function analyzeLegacyPayload(payload: NormalizedLegacyPayload, targetInstallmen
       totalAmountCents: 0
     };
     current.installmentsCount += 1;
-    current.totalAmountCents += installment.baseAmountCents;
+    current.totalAmountCents += installment.finalAmountCents;
     grouped.set(installment.planType, current);
   }
 
@@ -406,7 +406,7 @@ function analyzeLegacyPayload(payload: NormalizedLegacyPayload, targetInstallmen
     paymentStatusSource: "legacy_contract",
     message: payload.message || "Associado possui mensalidades em aberto.",
     installmentsCount: installments.length,
-    totalPendingAmountCents: installments.reduce((sum, installment) => sum + installment.baseAmountCents, 0),
+    totalPendingAmountCents: installments.reduce((sum, installment) => sum + installment.finalAmountCents, 0),
     totalPaidAmountCents: 0,
     totalsByPlan: [...grouped.entries()].map(([planType, total]) => ({ planType, ...total })),
     installments,
@@ -578,21 +578,24 @@ function analyzeCompleteHistoryPayload(
   }
 
   const target = installments.find((item) => item.installmentCode === normalizedTargetId);
-  const targetIsPaid = target?.paidAmountCents !== null && target?.paidAmountCents !== undefined;
-  const targetPendingAmountCents = target && !targetIsPaid ? target.baseAmountCents : 0;
-  const targetPaidAmountCents = targetIsPaid ? (target?.paidAmountCents ?? 0) : 0;
-  const targetPlanTotals = target && !targetIsPaid
-    ? [{ planType: target.planType, installmentsCount: 1, totalAmountCents: target.baseAmountCents }]
-    : [];
+  const pendingInstallments = installments.filter((item) => item.paidAmountCents === null);
+  const grouped = new Map<string, { installmentsCount: number; totalAmountCents: number }>();
+  for (const installment of pendingInstallments) {
+    const current = grouped.get(installment.planType) ?? { installmentsCount: 0, totalAmountCents: 0 };
+    current.installmentsCount += 1;
+    current.totalAmountCents += installment.baseAmountCents;
+    grouped.set(installment.planType, current);
+  }
 
+  const targetIsPaid = target?.paidAmountCents !== null && target?.paidAmountCents !== undefined;
   return {
     paymentStatus: targetIsPaid ? "paid" : "unpaid",
     paymentStatusSource: "erp_explicit",
     message: payload.message || (targetIsPaid ? "Parcela paga conforme o historico do ERP." : "Parcela em aberto conforme o historico do ERP."),
     installmentsCount: installments.length,
-    totalPendingAmountCents: targetPendingAmountCents,
-    totalPaidAmountCents: targetPaidAmountCents,
-    totalsByPlan: targetPlanTotals,
+    totalPendingAmountCents: pendingInstallments.reduce((sum, installment) => sum + installment.baseAmountCents, 0),
+    totalPaidAmountCents: installments.reduce((sum, installment) => sum + (installment.paidAmountCents ?? 0), 0),
+    totalsByPlan: [...grouped.entries()].map(([planType, total]) => ({ planType, ...total })),
     installments,
     warnings,
     paginationComplete: payload.totalPages === 0 || payload.totalPages === 1,
