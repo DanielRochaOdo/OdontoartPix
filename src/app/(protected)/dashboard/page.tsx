@@ -5,7 +5,7 @@ import { canAdmin, getCurrentProfile } from "@/lib/auth";
 import { getBatches, getCampaigns } from "@/lib/data";
 import { DataAccessError } from "@/lib/errors/data-access-error";
 import { getActiveGeneralSyncRun } from "@/lib/general-sync";
-import { getDashboardMetrics, getDashboardPixPaidMetrics, getDashboardReceiptStatusMetrics, recordDashboardPaidMetric } from "@/lib/metrics";
+import { getDashboardMetrics, getDashboardPixPaidMetrics, getDashboardReceiptStatusMetrics } from "@/lib/metrics";
 import { getProcessingScheduleView } from "@/lib/processing-settings";
 import { formatCurrencyBR } from "@/lib/money";
 import { ManualDashboardIcon, type ManualDashboardIconName } from "@/components/manual-dashboard-icon";
@@ -150,21 +150,6 @@ export default async function DashboardPage({
     : [];
 
   const membersErrorHref = buildMembersErrorHref(selectedCampaignIds, selectedBatchIds);
-
-  if (metrics) {
-    const scopeKey = `campaigns:${selectedCampaignIds.slice().sort().join(",") || "all"}|batches:${selectedBatchIds.slice().sort().join(",") || "all"}`;
-    try {
-      await recordDashboardPaidMetric({
-        scopeKey,
-        paidCount: metrics.paid,
-        paidAmountCents: metrics.totalPaidAmountCents
-      });
-    } catch (error) {
-      console.error("[DASHBOARD_PAID_EVENT_RECORD_FAILED]", {
-        message: error instanceof Error ? error.message : "Erro desconhecido"
-      });
-    }
-  }
 
   return (
     <PageSurface className="p-6 lg:p-7">
