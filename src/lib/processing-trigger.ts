@@ -1,6 +1,5 @@
 import { calculateMinimumEntryBudgetMs, processNextJobBlock } from "@/lib/batch-processing";
 import { advanceGeneralSyncRuns, startScheduledGeneralSync } from "@/lib/general-sync";
-import { dispatchDurableProcessingWorkflowSafely } from "@/lib/durable-processing-dispatch";
 import { getProcessingConfig } from "@/lib/processing-config";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { ProcessingOrigin } from "@/lib/batch-job-service";
@@ -84,64 +83,6 @@ type ActiveProcessingJobRow = {
   locked_by: string | null;
 };
 
-function eventIsRecent(createdAt: string | null | undefined, windowMs: number) {
-  if (!createdAt) return false;
-  const timestamp = new Date(createdAt).getTime();
-  if (!Number.isFinite(timestamp)) return false;
-  return Date.now() - timestamp < windowMs;
-}
-
-async function logProcessingInfrastructureEvent(input: {
-  eventType: string;
-  severity: "info" | "warning" | "error";
-  reason: string;
-  run?: ActiveGeneralSyncRunRow | null;
-  job?: ActiveProcessingJobRow | null;
-  dedupeWindowMs?: number;
-}) {
-  const supabase = createSupabaseAdminClient();
-  const dedupeWindowMs = input.dedupeWindowMs ?? 300000;
-  const { data: recent } = await supabase
-    .from("event_logs")
-    .select("id,created_at")
-    .eq("event_type", input.eventType)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (recent && eventIsRecent(recent.created_at, dedupeWindowMs)) {
-    return false;
-  }
-
-  const { error } = await supabase.from("event_logs").insert({
-    event_type: input.eventType,
-    category: "processing",
-    severity: input.severity,
-    campaign_id: null,
-    campaign_name: null,
-    batch_id: input.run?.current_batch_id ?? input.job?.batch_id ?? null,
-    batch_name: input.run?.current_batch_name ?? null,
-    reason: input.reason,
-    details: {
-      runId: input.run?.id ?? null,
-      jobId: input.job?.id ?? null,
-      jobStatus: input.job?.status ?? null
-    },
-    created_by: input.run?.requested_by ?? null
-  });
-
-  if (error) {
-    console.error("[PROCESSING_INFRA_EVENT_LOG_FAILED]", {
-      eventType: input.eventType,
-      reason: input.reason,
-      message: error.message
-    });
-    return false;
-  }
-
-  return true;
-}
-
 async function loadLatestActiveGeneralSyncRun() {
   const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase
@@ -203,7 +144,6 @@ async function recoverStalledProcessingIfNeeded() {
   const reason = noJobsButRunActive
     ? "Sincronizacao geral ativa sem job de lote e sem heartbeat recente."
     : "Job de lote sem heartbeat acima do limite configurado.";
-  let recoveredStalledJob = false;
 
   if (targetJob) {
     const supabase = createSupabaseAdminClient();
@@ -228,49 +168,15 @@ async function recoverStalledProcessingIfNeeded() {
         recoveredAt,
         releasedClaims: recoveryRow.released_claims ?? 0
       });
-      recoveredStalledJob = true;
+      return;
     }
   }
 
-  if (targetJob && !recoveredStalledJob) return;
-
-  const shouldLog = await logProcessingInfrastructureEvent({
-    eventType: "processing_queue_stalled_detected",
-    severity: "warning",
+  console.warn("[PROCESSING_QUEUE_STALLED_DETECTED]", {
     reason,
-    run,
-    job: targetJob,
-    dedupeWindowMs: Math.max(60000, Math.floor(staleThresholdMs / 2))
-  });
-
-  if (!shouldLog) {
-    return;
-  }
-
-  const dispatch = await dispatchDurableProcessingWorkflowSafely(
-    targetJob && recoveredStalledJob
-      ? {
-          source: "batch",
-          campaignId: targetJob.campaign_id,
-          batchId: targetJob.batch_id,
-          requestedBy: targetJob.requested_by ?? undefined
-        }
-      : {
-          source: "dashboard-general-sync",
-          batchId: run?.current_batch_id ?? undefined,
-          requestedBy: run?.requested_by ?? undefined
-        }
-  );
-
-  await logProcessingInfrastructureEvent({
-    eventType: dispatch.ok
-      ? "processing_queue_restart_requested"
-      : "processing_queue_restart_failed",
-    severity: dispatch.ok ? "info" : "error",
-    reason,
-    run,
-    job: targetJob,
-    dedupeWindowMs: Math.max(60000, Math.floor(staleThresholdMs / 2))
+    runId: run?.id ?? null,
+    jobId: targetJob?.id ?? null,
+    batchId: targetJob?.batch_id ?? run?.current_batch_id ?? null
   });
 }
 
