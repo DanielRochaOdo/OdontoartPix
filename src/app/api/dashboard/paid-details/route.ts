@@ -30,8 +30,10 @@ export async function GET(request: Request) {
   const supabase = createSupabaseAdminClient();
   let query = supabase
     .from("campaign_batch_members")
-    .select("id,campaign_id,batch_id,target_installment_id,installment_amount_cents,updated_at,last_checked_at,member:members(name,cpf,external_user_code),campaign:campaigns(name),batch:campaign_batches(name),installments:member_installments(id,cod_parcela,final_amount_cents,paid_amount_cents,payment_description,situation,updated_at)")
-    .eq("processing_status", "completed")
+    .select("id,campaign_id,batch_id,target_installment_id,installment_amount_cents,updated_at,last_checked_at,member:members(name,cpf,external_user_code),campaign:campaigns(name),batch:campaign_batches(name),installments:member_installments(id,cod_parcela,base_amount_cents,paid_amount_cents,payment_description,situation,updated_at)")
+    // O estado tecnico pode mudar para pending/processing/error durante uma
+    // nova tentativa. A ultima verdade financeira confirmada deve permanecer
+    // visivel; por isso o detalhe nao depende de processing_status=completed.
     .eq("payment_status", "paid")
     .is("deleted_at", null)
     .order("last_checked_at", { ascending: false, nullsFirst: false })
@@ -71,7 +73,8 @@ export async function GET(request: Request) {
       campaignName: campaign?.name ?? null,
       batchName: batch?.name ?? null,
       invoiceCode: target.cod_parcela ?? row.target_installment_id ?? null,
-      invoiceAmountCents: target.final_amount_cents ?? row.installment_amount_cents ?? 0,
+      // Valor da parcela e API.Valor. ValorFinal nao participa do Dashboard.
+      invoiceAmountCents: target.base_amount_cents ?? row.installment_amount_cents ?? 0,
       paidAmountCents: target.paid_amount_cents ?? 0,
       paymentDescription: target.payment_description ?? target.situation ?? null
     }];
@@ -82,7 +85,6 @@ export async function GET(request: Request) {
     let baselineQuery = supabase
       .from("campaign_batch_members")
       .select("id", { count: "exact", head: true })
-      .eq("processing_status", "completed")
       .eq("payment_status", "paid")
       .is("deleted_at", null)
       .lt("updated_at", startedAt);
