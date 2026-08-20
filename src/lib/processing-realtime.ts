@@ -72,6 +72,8 @@ export type FilteredErrorReplaySnapshot = {
   finishedAt?: string | null;
 };
 
+let realtimeSubscriptionSequence = 0;
+
 async function rpcJson<T>(name: string, args?: Record<string, unknown>) {
   const supabase = createSupabaseBrowserClient();
   const { data, error } = await supabase.rpc(name, args ?? {});
@@ -107,6 +109,7 @@ export function getFilteredErrorReplaySnapshot(requestId: string) {
 
 export function subscribeProcessingRealtime(onChange: () => void) {
   const supabase = createSupabaseBrowserClient();
+  const subscriptionId = ++realtimeSubscriptionSequence;
   let disposed = false;
   let pendingWhileHidden = false;
   let debounceTimer: number | null = null;
@@ -126,7 +129,7 @@ export function subscribeProcessingRealtime(onChange: () => void) {
   };
 
   const channel = supabase
-    .channel("processing-realtime-global")
+    .channel(`processing-realtime-global-${subscriptionId}`)
     .on(
       "postgres_changes",
       {
