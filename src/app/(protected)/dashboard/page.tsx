@@ -68,6 +68,11 @@ export default async function DashboardPage({
   const resolvedSearchParams = (await searchParams) ?? {};
   const selectedCampaignIds = readSearchParamArray(resolvedSearchParams.campaignId);
   const selectedBatchIds = readSearchParamArray(resolvedSearchParams.batchId);
+  const localDatabaseMode = Boolean(
+    process.env.DATABASE_HOST?.trim() &&
+    process.env.DATABASE_NAME?.trim() &&
+    process.env.DATABASE_USER?.trim()
+  );
 
   let metrics: Awaited<ReturnType<typeof getDashboardMetrics>> | null = null;
   let campaigns: Awaited<ReturnType<typeof getCampaigns>> = [];
@@ -79,42 +84,64 @@ export default async function DashboardPage({
   let processingSchedule = await getProcessingScheduleView();
   let errorMessage: string | null = null;
 
-  try {
-    [metrics, campaigns, batches, profile, activeGeneralSyncRun, processingSchedule, receiptStatuses, pixPaidMetrics] = await Promise.all([
-      getDashboardMetrics({
-        campaignIds: selectedCampaignIds,
-        batchIds: selectedBatchIds
-      }),
-      getCampaigns(),
-      getBatches(),
-      getCurrentProfile(),
-      getActiveGeneralSyncRun(),
-      getProcessingScheduleView(),
-      getDashboardReceiptStatusMetrics({
-        campaignIds: selectedCampaignIds,
-        batchIds: selectedBatchIds
-      }).catch((error) => {
-        console.error("[DASHBOARD_RECEIPT_STATUS_LOAD_FAILED]", {
-          message: error instanceof Error ? error.message : "Erro desconhecido"
-        });
-        return [];
-      }),
-      getDashboardPixPaidMetrics({
-        campaignIds: selectedCampaignIds,
-        batchIds: selectedBatchIds
-      }).catch((error) => {
-        console.error("[DASHBOARD_PIX_PAID_LOAD_FAILED]", {
-          message: error instanceof Error ? error.message : "Erro desconhecido"
-        });
-        return { pixPaidAmountCents: 0 };
-      })
-    ]);
-  } catch (error) {
-    console.error("[DASHBOARD_METRICS_LOAD_FAILED]", {
-      operation: error instanceof DataAccessError ? error.operation : "unknown",
-      message: error instanceof Error ? error.message : "Erro desconhecido"
-    });
-    errorMessage = "Nao foi possivel carregar os indicadores do dashboard.";
+  if (localDatabaseMode) {
+    profile = await getCurrentProfile();
+    metrics = {
+      totalCampaigns: 0,
+      campaignsInProgress: 0,
+      uniqueCpfs: 0,
+      totalCpfs: 0,
+      paid: 0,
+      unpaid: 0,
+      errored: 0,
+      utilizationPercentage: 0,
+      totalPendingAmountCents: 0,
+      totalPaidAmountCents: 0,
+      totalBatchAmountCents: 0
+    };
+    campaigns = [];
+    batches = [];
+    activeGeneralSyncRun = null;
+    receiptStatuses = [];
+    pixPaidMetrics = { pixPaidAmountCents: 0 };
+  } else {
+    try {
+      [metrics, campaigns, batches, profile, activeGeneralSyncRun, processingSchedule, receiptStatuses, pixPaidMetrics] = await Promise.all([
+        getDashboardMetrics({
+          campaignIds: selectedCampaignIds,
+          batchIds: selectedBatchIds
+        }),
+        getCampaigns(),
+        getBatches(),
+        getCurrentProfile(),
+        getActiveGeneralSyncRun(),
+        getProcessingScheduleView(),
+        getDashboardReceiptStatusMetrics({
+          campaignIds: selectedCampaignIds,
+          batchIds: selectedBatchIds
+        }).catch((error) => {
+          console.error("[DASHBOARD_RECEIPT_STATUS_LOAD_FAILED]", {
+            message: error instanceof Error ? error.message : "Erro desconhecido"
+          });
+          return [];
+        }),
+        getDashboardPixPaidMetrics({
+          campaignIds: selectedCampaignIds,
+          batchIds: selectedBatchIds
+        }).catch((error) => {
+          console.error("[DASHBOARD_PIX_PAID_LOAD_FAILED]", {
+            message: error instanceof Error ? error.message : "Erro desconhecido"
+          });
+          return { pixPaidAmountCents: 0 };
+        })
+      ]);
+    } catch (error) {
+      console.error("[DASHBOARD_METRICS_LOAD_FAILED]", {
+        operation: error instanceof DataAccessError ? error.operation : "unknown",
+        message: error instanceof Error ? error.message : "Erro desconhecido"
+      });
+      errorMessage = "Nao foi possivel carregar os indicadores do dashboard.";
+    }
   }
 
   const cards = metrics
