@@ -5,11 +5,13 @@ import { createPortal } from "react-dom";
 import { emitMetricsSync } from "@/lib/metrics-sync";
 import { formatDateTime } from "@/lib/date-time";
 import type { GeneralSyncPreview, GeneralSyncRunDetail } from "@/lib/general-sync";
+import {
+  getActiveGeneralSyncRunSnapshot,
+  getGeneralSyncRunSnapshot,
+  subscribeProcessingRealtime
+} from "@/lib/processing-realtime";
 import { normalizeProcessingProgress } from "@/lib/processing-progress";
 import { ManualDashboardIcon, type ManualDashboardIconName } from "@/components/manual-dashboard-icon";
-
-const GENERAL_SYNC_DISCOVERY_INTERVAL_MS = 15_000;
-const GENERAL_SYNC_PROGRESS_INTERVAL_MS = 5_000;
 
 type ApiSuccess<T> = {
   success?: boolean;
@@ -238,58 +240,59 @@ export function GeneralSyncButton({
   }, [selectedBatchIds.length, selectedCampaignIds.length]);
 
   const runId = run?.id ?? null;
-  const shouldPollRun = Boolean(run?.canCancel || run?.canResume);
+  const shouldObserveRun = Boolean(run?.canCancel || run?.canResume);
   const shouldDiscoverActiveRun = !run || (!run.canCancel && !run.canResume);
 
   useEffect(() => {
     if (!shouldDiscoverActiveRun) return;
 
     let active = true;
+    let loading = false;
     async function discover() {
+      if (loading || document.visibilityState !== "visible") return;
+      loading = true;
       try {
-        const response = await fetch("/api/dashboard/general-sync/active", {
-          headers: { Accept: "application/json" },
-          cache: "no-store"
-        });
-        const payload = (await response.json().catch(() => null)) as ApiSuccess<GeneralSyncRunDetail> | null;
-        if (!active || !response.ok || !payload?.success) return;
-        if (payload.data) setRun(payload.data);
+        const snapshot = await getActiveGeneralSyncRunSnapshot();
+        if (!active) return;
+        setRun(snapshot);
       } catch {
-        // Polling transitorio nao remove o estado atual.
+        // Realtime transitorio nao remove o estado atual.
+      } finally {
+        loading = false;
       }
     }
 
-    void discover();
-    const pollWhenVisible = () => {
+    const stopRealtime = subscribeProcessingRealtime(() => void discover());
+    const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") void discover();
     };
-    const timer = window.setInterval(pollWhenVisible, GENERAL_SYNC_DISCOVERY_INTERVAL_MS);
-    document.addEventListener("visibilitychange", pollWhenVisible);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    void discover();
 
     return () => {
       active = false;
-      window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", pollWhenVisible);
+      stopRealtime();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, [shouldDiscoverActiveRun]);
 
   useEffect(() => {
-    if (!runId || !shouldPollRun) return;
+    if (!runId || !shouldObserveRun) return;
 
     let active = true;
+    let loading = false;
     async function refresh() {
+      if (loading || document.visibilityState !== "visible") return;
+      loading = true;
       try {
-        const response = await fetch(`/api/dashboard/general-sync/${runId}`, {
-          headers: { Accept: "application/json" },
-          cache: "no-store"
-        });
-        const payload = (await response.json().catch(() => null)) as ApiSuccess<GeneralSyncRunDetail> | null;
+        const snapshot = await getGeneralSyncRunSnapshot(runId);
         if (!active) return;
-        if (!response.ok || !payload?.success || !payload.data) {
-          setError(payload?.error?.message ?? "Falha ao atualizar a sincronizacao geral.");
+        if (!snapshot) {
+          setRun(null);
           return;
         }
-        setRun(payload.data);
+        setRun(snapshot);
+        setError(null);
       } catch (refreshError) {
         if (!active) return;
         setError(
@@ -297,22 +300,24 @@ export function GeneralSyncButton({
             ? refreshError.message
             : "Falha de comunicacao ao atualizar a sincronizacao geral."
         );
+      } finally {
+        loading = false;
       }
     }
 
-    void refresh();
-    const pollWhenVisible = () => {
+    const stopRealtime = subscribeProcessingRealtime(() => void refresh());
+    const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") void refresh();
     };
-    const timer = window.setInterval(pollWhenVisible, GENERAL_SYNC_PROGRESS_INTERVAL_MS);
-    document.addEventListener("visibilitychange", pollWhenVisible);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    void refresh();
 
     return () => {
       active = false;
-      window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", pollWhenVisible);
+      stopRealtime();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [runId, shouldPollRun]);
+  }, [runId, shouldObserveRun]);
 
   async function loadPreview() {
     if (loadingPreview || starting) return;
@@ -407,8 +412,6 @@ export function GeneralSyncButton({
         return;
       }
 
-      // Interromper encerra definitivamente a onda. O proximo clique em
-      // Sincronizar geral carregara uma nova previa e criara um novo run.
       setRun(null);
       setPreview(null);
       setSelectedMetric(null);
@@ -546,7 +549,7 @@ export function GeneralSyncButton({
                 {run.status === "paused"
                   ? "Execucao pausada legada. Novas interrupcoes encerram definitivamente a onda."
                   : run.triggerSource === "scheduled"
-                  ? "Iniciada pelo cron horario. O dashboard atualiza o progresso automaticamente."
+                  ? "Iniciada pelo agendador automatico. O dashboard atualiza o progresso por eventos do banco."
                   : run.scopeType === "all"
                   ? "Processando toda a base"
                   : `Processando ${run.campaignCount} campanhas e ${run.batchCount} lotes selecionados`}
@@ -662,7 +665,7 @@ export function GeneralSyncButton({
             </div>
           ) : (
             <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
-              Nenhum lote está sendo processado agora. A sincronização está aguardando a próxima execução do orquestrador.
+              Nenhum lote está sendo processado agora. A sincronização está aguardando o worker durável.
             </div>
           )}
 
