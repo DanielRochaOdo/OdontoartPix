@@ -32,7 +32,7 @@ async function main() {
     await pool.query(
       `insert into users (name, email, password_hash, role, active)
        values ($1, $2, $3, 'administrador', true)
-       on conflict (lower(email)) do update
+       on conflict ((lower(email))) do update
          set name = excluded.name,
              password_hash = excluded.password_hash,
              role = 'administrador',
