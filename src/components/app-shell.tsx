@@ -56,24 +56,6 @@ function MembersIcon({ className = "h-5 w-5" }: { className?: string }) {
   );
 }
 
-function EventsIcon({ className = "h-5 w-5" }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden="true">
-      <path
-        d="M6 5.5h12A1.5 1.5 0 0 1 19.5 7v10a1.5 1.5 0 0 1-1.5 1.5H6A1.5 1.5 0 0 1 4.5 17V7A1.5 1.5 0 0 1 6 5.5Z"
-        className="stroke-current"
-        strokeWidth="1.8"
-      />
-      <path
-        d="M8 3.5v4M16 3.5v4M4.5 9h15M8 13h3M13 13h3M8 16h3"
-        className="stroke-current"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
-
 function LayersIcon({ className = "h-5 w-5" }: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden="true">
@@ -105,7 +87,6 @@ const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: DashboardIcon },
   { href: "/campanhas", label: "Campanhas", icon: CampaignsIcon },
   { href: "/associados", label: "Associados", icon: MembersIcon },
-  { href: "/eventos", label: "Eventos", icon: EventsIcon },
   { href: "/configuracoes", label: "Configurações", icon: SettingsIcon }
 ];
 
