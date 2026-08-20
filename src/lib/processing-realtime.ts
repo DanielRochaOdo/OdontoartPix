@@ -1,7 +1,6 @@
 "use client";
 
 import type { GeneralSyncRunDetail } from "@/lib/general-sync";
-import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
 export type ProcessingActiveSnapshot = {
   active: boolean;
@@ -72,90 +71,39 @@ export type FilteredErrorReplaySnapshot = {
   finishedAt?: string | null;
 };
 
-let realtimeSubscriptionSequence = 0;
-
-async function rpcJson<T>(name: string, args?: Record<string, unknown>) {
-  const supabase = createSupabaseBrowserClient();
-  const { data, error } = await supabase.rpc(name, args ?? {});
-  if (error) throw new Error(error.message);
-  return (data ?? null) as T | null;
+// A antiga implementação dependia do Supabase Realtime e de RPCs acessados
+// diretamente pelo navegador. Durante a migração para PostgreSQL próprio,
+// essa observabilidade fica desativada no cliente até ser substituída por
+// endpoints internos do Next.js (e posteriormente SSE/WebSocket, se necessário).
+// O restante da aplicação continua funcional e não tenta inicializar Supabase.
+export function getProcessingActiveSnapshot(): Promise<ProcessingActiveSnapshot | null> {
+  return Promise.resolve(null);
 }
 
-export function getProcessingActiveSnapshot() {
-  return rpcJson<ProcessingActiveSnapshot>("get_processing_active_snapshot_v1");
+export function getActiveGeneralSyncRunSnapshot(): Promise<GeneralSyncRunDetail | null> {
+  return Promise.resolve(null);
 }
 
-export function getActiveGeneralSyncRunSnapshot() {
-  return rpcJson<GeneralSyncRunDetail>("get_active_general_sync_run_detail_v1");
+export function getGeneralSyncRunSnapshot(runId: string | null): Promise<GeneralSyncRunDetail | null> {
+  void runId;
+  return Promise.resolve(null);
 }
 
-export function getGeneralSyncRunSnapshot(runId: string | null) {
-  if (!runId) return Promise.resolve(null);
-  return rpcJson<GeneralSyncRunDetail>("get_general_sync_run_detail_v1", {
-    p_run_id: runId
-  });
+export function getDashboardErrorReplaySnapshot(
+  runId: string | null
+): Promise<DashboardErrorReplaySnapshot | null> {
+  void runId;
+  return Promise.resolve(null);
 }
 
-export function getDashboardErrorReplaySnapshot(runId: string | null) {
-  if (!runId) return Promise.resolve(null);
-  return rpcJson<DashboardErrorReplaySnapshot>("get_dashboard_error_reprocess_status_v1", {
-    p_run_id: runId
-  });
-}
-
-export function getFilteredErrorReplaySnapshot(requestId: string | null) {
-  if (!requestId) return Promise.resolve(null);
-  return rpcJson<FilteredErrorReplaySnapshot>("get_filtered_error_reprocess_status_v1", {
-    p_request_id: requestId
-  });
+export function getFilteredErrorReplaySnapshot(
+  requestId: string | null
+): Promise<FilteredErrorReplaySnapshot | null> {
+  void requestId;
+  return Promise.resolve(null);
 }
 
 export function subscribeProcessingRealtime(onChange: () => void) {
-  const supabase = createSupabaseBrowserClient();
-  const subscriptionId = ++realtimeSubscriptionSequence;
-  let disposed = false;
-  let pendingWhileHidden = false;
-  let debounceTimer: number | null = null;
-
-  const notify = () => {
-    if (disposed) return;
-    if (document.visibilityState !== "visible") {
-      pendingWhileHidden = true;
-      return;
-    }
-    pendingWhileHidden = false;
-    if (debounceTimer !== null) window.clearTimeout(debounceTimer);
-    debounceTimer = window.setTimeout(() => {
-      debounceTimer = null;
-      if (!disposed) onChange();
-    }, 120);
-  };
-
-  const channel = supabase
-    .channel(`processing-realtime-global-${subscriptionId}`)
-    .on(
-      "postgres_changes",
-      {
-        event: "UPDATE",
-        schema: "public",
-        table: "processing_realtime_signal",
-        filter: "signal_key=eq.global"
-      },
-      notify
-    )
-    .subscribe((status: string) => {
-      if (status === "SUBSCRIBED") notify();
-    });
-
-  const handleVisibility = () => {
-    if (document.visibilityState === "visible" && pendingWhileHidden) notify();
-  };
-  document.addEventListener("visibilitychange", handleVisibility);
-
-  return () => {
-    disposed = true;
-    if (debounceTimer !== null) window.clearTimeout(debounceTimer);
-    document.removeEventListener("visibilitychange", handleVisibility);
-    void supabase.removeChannel(channel);
-  };
+  void onChange;
+  return () => undefined;
 }
