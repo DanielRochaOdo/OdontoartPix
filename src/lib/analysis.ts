@@ -46,6 +46,7 @@ const MonthlyApiDataItemSchema = z
     DescricaoRecebimento: z.string().nullish(),
     DescricaoParcela: z.string().nullish(),
     DescricaoPagamento: z.string().nullish(),
+    DataPagamento: z.string().nullish(),
     Situacao: z.string().nullish(),
     Tipo_plano: z.string().nullish(),
     tipo_parcela: z.string().nullish(),
@@ -96,6 +97,7 @@ export type MonthlyInstallment = {
   cardPaymentLink?: string;
   situation?: string;
   paymentDescription?: string;
+  paymentDate?: string;
   paidAmountCents: number | null;
   baseAmountCents: number;
   fineAmountCents: number;
@@ -417,7 +419,9 @@ function analyzePaginatedPayload(
     return analyzeCompleteHistoryPayload(payload, targetInstallmentId, fallbackDueDate);
   }
 
-  const matched = payload.items.find((item) => optionalText(item.Id) === String(targetInstallmentId).trim());
+  const matched = payload.items.find(
+    (item) => installmentCodeFromApiItem(item) === String(targetInstallmentId).trim()
+  );
   if (!matched) {
     const paginationComplete =
       payload.totalPages === 0 || payload.totalPages === 1;
@@ -444,41 +448,50 @@ function analyzePaginatedPayload(
     };
   }
 
+  const explicitlyPaid = isExplicitlyPaid(matched);
+  const paidValue = toCents(matched.ValorPago);
   const finalAmount = toCents(matched.ValorFinal);
-  if (finalAmount.warning) {
+  if (explicitlyPaid && paidValue.warning) {
+    throw new MonthlyResponseError(`A parcela ${targetInstallmentId} possui ValorPago inválido.`);
+  }
+  if (!explicitlyPaid && finalAmount.warning) {
     throw new MonthlyResponseError(
       `A parcela ${targetInstallmentId} possui ValorFinal inválido.`
     );
   }
 
+  const amountCents = finalAmount.warning && explicitlyPaid ? paidValue.cents : finalAmount.cents;
+  const description = optionalText(matched.DescricaoRecebimento);
+  const installment: MonthlyInstallment = {
+    userCode: optionalText(matched.cod_usuario),
+    installmentCode: String(targetInstallmentId).trim(),
+    dueDate: optionalText(matched.vencimento) ?? optionalText(matched.DataVencimento) ?? optionalText(fallbackDueDate),
+    installmentType: optionalText(matched.tipo_parcela) ?? optionalText(matched.DescricaoParcela),
+    situation: description,
+    paymentDescription: description,
+    paymentDate: optionalText(matched.DataPagamento),
+    baseAmountCents: monetaryValue(matched.Valor ?? matched.ValorFinal, "Valor", []),
+    fineAmountCents: monetaryValue(matched.Multa ?? matched.ValorMultaJuros, "Multa", []),
+    interestAmountCents: monetaryValue(matched.Juros, "Juros", []),
+    additionalAmountCents: monetaryValue(matched.AcrescimoAvulso, "AcrescimoAvulso", []),
+    discountAmountCents: monetaryValue(matched.DescontoAvulso ?? matched.ValorDescontoAvulso, "DescontoAvulso", []),
+    paidAmountCents: explicitlyPaid ? paidValue.cents : null,
+    finalAmountCents: amountCents,
+    planType: optionalText(matched.Tipo_plano) ?? optionalText(matched.DescricaoParcela) ?? "Não informado",
+    observation: optionalText(matched.Observacao) ?? optionalText(matched.DescricaoPagamento)
+  };
+
   return {
-    paymentStatus: "unpaid",
-    paymentStatusSource: "erp_open_invoice",
-    message: payload.message || "Parcela localizada como pendente.",
+    paymentStatus: explicitlyPaid ? "paid" : "unpaid",
+    paymentStatusSource: explicitlyPaid ? "erp_explicit" : "erp_open_invoice",
+    message: payload.message || (explicitlyPaid ? "Parcela paga conforme o ERP." : "Parcela localizada como pendente."),
     installmentsCount: 1,
-    totalPendingAmountCents: finalAmount.cents,
-    totalPaidAmountCents: 0,
-    totalsByPlan: [
-      {
-        planType: "Não informado",
-        installmentsCount: 1,
-        totalAmountCents: finalAmount.cents
-      }
-    ],
-    installments: [
-      {
-        installmentCode: targetInstallmentId,
-        dueDate: optionalText(matched.vencimento) ?? optionalText(matched.DataVencimento) ?? optionalText(fallbackDueDate),
-        baseAmountCents: finalAmount.cents,
-        fineAmountCents: 0,
-        interestAmountCents: 0,
-        additionalAmountCents: 0,
-        discountAmountCents: 0,
-        paidAmountCents: null,
-        finalAmountCents: finalAmount.cents,
-        planType: "Não informado"
-      }
-    ],
+    totalPendingAmountCents: explicitlyPaid ? Math.max(amountCents - paidValue.cents, 0) : amountCents,
+    totalPaidAmountCents: explicitlyPaid ? paidValue.cents : 0,
+    totalsByPlan: explicitlyPaid
+      ? []
+      : [{ planType: installment.planType, installmentsCount: 1, totalAmountCents: amountCents }],
+    installments: [installment],
     warnings: [],
     paginationComplete: payload.totalPages === 0 || payload.totalPages === 1,
     currentPage: payload.currentPage,
@@ -528,6 +541,7 @@ function analyzeCompleteHistoryPayload(
       installmentType: optionalText(item.tipo_parcela) ?? optionalText(item.DescricaoParcela),
       situation: description,
       paymentDescription: description,
+      paymentDate: optionalText(item.DataPagamento),
       baseAmountCents: monetaryValue(item.Valor ?? item.ValorFinal, "Valor", warnings),
       fineAmountCents: monetaryValue(item.Multa ?? item.ValorMultaJuros, "Multa", warnings),
       interestAmountCents: monetaryValue(item.Juros, "Juros", warnings),
@@ -613,18 +627,27 @@ export function analyzeMonthlyResponses(
     throw new MonthlyResponseError("Os metadados de paginacao variaram entre as paginas do ERP.");
   }
 
+  const mergedItems = pages.flatMap((page) => page.items);
+  const targetId = String(targetInstallmentId ?? "").trim();
+  const targetFound = Boolean(
+    targetId && mergedItems.some((item) => installmentCodeFromApiItem(item) === targetId)
+  );
+
   const analysis = analyzePaginatedPayload(
     {
       ...firstPage,
-      items: pages.flatMap((page) => page.items)
+      items: mergedItems,
+      currentPage: pages.at(-1)?.currentPage ?? firstPage.currentPage
     },
     targetInstallmentId,
     fallbackDueDate,
-    options?.historyComplete === true && pagesComplete
+    options?.historyComplete === true && (pagesComplete || targetFound)
   );
 
   return {
     ...analysis,
+    // false aqui significa apenas que nao percorremos o restante do historico.
+    // A classificacao da parcela alvo continua conclusiva quando targetFound.
     paginationComplete: pagesComplete
   };
 }

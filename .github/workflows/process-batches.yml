@@ -1,6 +1,9 @@
 name: Process Batches
 
 on:
+  # Nao existe mais cron periodico no GitHub. Acoes do usuario despacham este
+  # workflow imediatamente e o Supabase Cron o despacha somente quando
+  # processing_scheduler_state.next_run_at vencer.
   workflow_dispatch:
     inputs:
       source:
@@ -19,15 +22,8 @@ on:
         description: Requested by profile id
         required: false
         default: ""
-  schedule:
-    # Pulso de recuperação. A frequência efetiva da sincronização agendada
-    # continua sendo controlada por processing_scheduler_state no banco.
-    # Pulsos mais frequentes reduzem o impacto de atrasos/perdas do scheduler
-    # do GitHub sem iniciar uma nova sincronização antes da janela configurada.
-    - cron: "*/5 * * * *"
 
 permissions:
-  actions: write
   contents: read
 
 concurrency:
@@ -39,159 +35,67 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     environment: Production
+    env:
+      # Somente o dispatch do scheduler pode criar uma nova onda automatica.
+      # Campanha, lote, associado, erros e dashboard apenas consomem o trabalho
+      # explicitamente solicitado pelo usuario.
+      PROCESSING_ALLOW_SCHEDULED_SYNC: ${{ github.event.inputs.source == 'scheduler' && 'true' || 'false' }}
 
     steps:
-      - name: Validate scheduler secrets
+      - name: Validate direct durable worker secrets
         env:
-          PROCESS_BATCHES_URL: ${{ secrets.PROCESS_BATCHES_URL }}
-          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          MENSALIDADES_API_BASE_URL: ${{ secrets.MENSALIDADES_API_BASE_URL }}
+          MENSALIDADES_API_TOKEN: ${{ secrets.MENSALIDADES_API_TOKEN }}
           PROCESSING_SYSTEM_USER_ID: ${{ secrets.PROCESSING_SYSTEM_USER_ID }}
+        shell: bash
         run: |
-          if [ -z "$PROCESS_BATCHES_URL" ]; then
-            echo "GitHub secret PROCESS_BATCHES_URL is required."
+          missing=0
+          for name in \
+            NEXT_PUBLIC_SUPABASE_URL \
+            SUPABASE_SERVICE_ROLE_KEY \
+            MENSALIDADES_API_BASE_URL \
+            MENSALIDADES_API_TOKEN \
+            PROCESSING_SYSTEM_USER_ID
+          do
+            if [ -z "${!name}" ]; then
+              echo "Missing required Production secret: $name"
+              missing=1
+            fi
+          done
+
+          if [ "$missing" -ne 0 ]; then
+            echo "Direct durable worker is mandatory. Vercel processing fallback is disabled to protect Fluid Active CPU usage."
             exit 1
           fi
 
-          if [ -z "$CRON_SECRET" ]; then
-            echo "GitHub secret CRON_SECRET is required."
-            exit 1
-          fi
+          echo "Using direct GitHub durable worker."
+          echo "Trigger source: ${{ github.event.inputs.source }}"
+          echo "Scheduled sync allowed: $PROCESSING_ALLOW_SCHEDULED_SYNC"
 
-          if [ -z "$PROCESSING_SYSTEM_USER_ID" ]; then
-            echo "GitHub secret PROCESSING_SYSTEM_USER_ID is required."
-            exit 1
-          fi
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Trigger processing endpoint
-        id: trigger_processing
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run durable worker directly
         env:
-          PROCESS_BATCHES_URL: ${{ secrets.PROCESS_BATCHES_URL }}
-          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          MENSALIDADES_API_BASE_URL: ${{ secrets.MENSALIDADES_API_BASE_URL }}
+          MENSALIDADES_API_TOKEN: ${{ secrets.MENSALIDADES_API_TOKEN }}
           PROCESSING_SYSTEM_USER_ID: ${{ secrets.PROCESSING_SYSTEM_USER_ID }}
-        run: |
-          python - <<'PY'
-          import json
-          import os
-          import time
-          import urllib.request
-          import urllib.error
-          import socket
-
-          url = os.environ["PROCESS_BATCHES_URL"]
-          token = os.environ["CRON_SECRET"]
-          max_calls = 240
-          final_status = "idle"
-          final_calls = 0
-
-          def call_endpoint():
-            req = urllib.request.Request(
-              url,
-              headers={
-                "Authorization": f"Bearer {token}",
-                "X-Processing-System-User-Id": os.environ["PROCESSING_SYSTEM_USER_ID"],
-                "Accept": "application/json",
-                "User-Agent": "odontoartpix-process-batches-workflow",
-              },
-              method="GET",
-            )
-            try:
-              with urllib.request.urlopen(req, timeout=115) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-                return payload
-            except urllib.error.HTTPError as error:
-              if error.code in (502, 503, 504):
-                return {
-                  "success": True,
-                  "data": {
-                    "status": "queued",
-                    "lastStatus": "queued",
-                    "note": f"gateway-http-{error.code}"
-                  }
-                }
-              response_body = error.read().decode("utf-8", errors="replace")
-              print(json.dumps({
-                "http_status": error.code,
-                "response_body": response_body[:4000]
-              }, ensure_ascii=False))
-              raise
-            except socket.timeout:
-              return {
-                "success": True,
-                "data": {
-                  "status": "queued",
-                  "lastStatus": "queued",
-                  "note": "socket-timeout"
-                }
-              }
-
-          for index in range(1, max_calls + 1):
-            payload = call_endpoint()
-            print(json.dumps({"call": index, "payload": payload}, ensure_ascii=False))
-            final_calls = index
-
-            if not payload.get("success"):
-              raise SystemExit("Processing endpoint returned success=false.")
-
-            data = payload.get("data") or {}
-            status = data.get("lastStatus") or data.get("status") or "idle"
-            final_status = status
-
-            if status in ("idle", "failed", "paused"):
-              break
-
-            time.sleep(0.25)
-
-          needs_continuation = "true" if final_status == "queued" else "false"
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-            output.write(f"final_status={final_status}\n")
-            output.write(f"final_calls={final_calls}\n")
-            output.write(f"needs_continuation={needs_continuation}\n")
-          PY
-
-      - name: Dispatch continuation
-        if: steps.trigger_processing.outputs.needs_continuation == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
-          WORKFLOW_ID: process-batches.yml
-          REF_NAME: ${{ github.ref_name }}
-          INPUT_SOURCE: ${{ github.event.inputs.source || 'scheduler' }}
-          INPUT_CAMPAIGN_ID: ${{ github.event.inputs.campaign_id || '' }}
-          INPUT_BATCH_ID: ${{ github.event.inputs.batch_id || '' }}
-          INPUT_REQUESTED_BY: ${{ github.event.inputs.requested_by || '' }}
-        run: |
-          python - <<'PY'
-          import json
-          import os
-          import urllib.request
-
-          repository = os.environ["REPOSITORY"]
-          workflow_id = os.environ["WORKFLOW_ID"]
-          ref_name = os.environ["REF_NAME"]
-          token = os.environ["GH_TOKEN"]
-
-          body = json.dumps({
-            "ref": ref_name,
-            "inputs": {
-              "source": os.environ.get("INPUT_SOURCE", "scheduler"),
-              "campaign_id": os.environ.get("INPUT_CAMPAIGN_ID", ""),
-              "batch_id": os.environ.get("INPUT_BATCH_ID", ""),
-              "requested_by": os.environ.get("INPUT_REQUESTED_BY", "")
-            }
-          }).encode("utf-8")
-
-          req = urllib.request.Request(
-            f"https://api.github.com/repos/{repository}/actions/workflows/{workflow_id}/dispatches",
-            data=body,
-            headers={
-              "Accept": "application/vnd.github+json",
-              "Authorization": f"Bearer {token}",
-              "Content-Type": "application/json",
-              "User-Agent": "odontoartpix-process-batches-workflow"
-            },
-            method="POST"
-          )
-
-          with urllib.request.urlopen(req, timeout=30) as response:
-            print(f"Continuation dispatched with status {response.status}")
-          PY
+          PROCESSING_WORKER_COUNT: ${{ vars.PROCESSING_WORKER_COUNT }}
+          PROCESSING_BLOCK_SIZE: ${{ vars.PROCESSING_BLOCK_SIZE }}
+          PROCESSING_CONCURRENCY: ${{ vars.PROCESSING_CONCURRENCY }}
+          PROCESSING_ERP_CONCURRENCY: ${{ vars.PROCESSING_ERP_CONCURRENCY }}
+          PROCESSING_ALLOW_SCHEDULED_SYNC: ${{ env.PROCESSING_ALLOW_SCHEDULED_SYNC }}
+        run: npx --yes tsx@4.20.5 scripts/process-batches-worker.ts

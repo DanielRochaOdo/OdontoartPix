@@ -5,11 +5,13 @@ import { createPortal } from "react-dom";
 import { emitMetricsSync } from "@/lib/metrics-sync";
 import { formatDateTime } from "@/lib/date-time";
 import type { GeneralSyncPreview, GeneralSyncRunDetail } from "@/lib/general-sync";
+import {
+  getActiveGeneralSyncRunSnapshot,
+  getGeneralSyncRunSnapshot,
+  subscribeProcessingRealtime
+} from "@/lib/processing-realtime";
 import { normalizeProcessingProgress } from "@/lib/processing-progress";
 import { ManualDashboardIcon, type ManualDashboardIconName } from "@/components/manual-dashboard-icon";
-
-const GENERAL_SYNC_DISCOVERY_INTERVAL_MS = 15_000;
-const GENERAL_SYNC_PROGRESS_INTERVAL_MS = 5_000;
 
 type ApiSuccess<T> = {
   success?: boolean;
@@ -218,9 +220,6 @@ export function GeneralSyncButton({
   initialRun: GeneralSyncRunDetail | null;
   processingCardCollapsed?: boolean;
 }) {
-  // A execução ativa deve ser acompanhada no card persistente do dashboard.
-  // O modal só abre por ação explícita do usuário, evitando cobrir a tela
-  // assim que o dashboard é carregado ou atualizado.
   const [open, setOpen] = useState(false);
   const [preview, setPreview] = useState<GeneralSyncPreview | null>(null);
   const [run, setRun] = useState<GeneralSyncRunDetail | null>(initialRun);
@@ -228,7 +227,9 @@ export function GeneralSyncButton({
   const [starting, setStarting] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [resuming, setResuming] = useState(false);
+  const [reprocessingErrors, setReprocessingErrors] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [selectedMetric, setSelectedMetric] = useState<"success" | "error" | "processing" | null>(null);
 
   const scopeLabel = useMemo(() => {
@@ -239,89 +240,90 @@ export function GeneralSyncButton({
   }, [selectedBatchIds.length, selectedCampaignIds.length]);
 
   const runId = run?.id ?? null;
-  const shouldPollRun = Boolean(run?.canCancel || run?.canResume);
+  const shouldObserveRun = Boolean(run?.canCancel || run?.canResume);
   const shouldDiscoverActiveRun = !run || (!run.canCancel && !run.canResume);
 
   useEffect(() => {
     if (!shouldDiscoverActiveRun) return;
 
     let active = true;
+    let loading = false;
     async function discover() {
+      if (loading || document.visibilityState !== "visible") return;
+      loading = true;
       try {
-        const response = await fetch("/api/dashboard/general-sync/active", {
-          headers: { Accept: "application/json" },
-          cache: "no-store"
-        });
-        const payload = (await response.json().catch(() => null)) as ApiSuccess<GeneralSyncRunDetail> | null;
-        if (!active || !response.ok || !payload?.success) return;
-
-        if (payload.data) {
-          setRun(payload.data);
-        }
+        const snapshot = await getActiveGeneralSyncRunSnapshot();
+        if (!active) return;
+        setRun(snapshot);
       } catch {
-        // A transient polling failure must not remove the current dashboard state.
+        // Realtime transitorio nao remove o estado atual.
+      } finally {
+        loading = false;
       }
     }
 
-    void discover();
-    const pollWhenVisible = () => {
+    const stopRealtime = subscribeProcessingRealtime(() => void discover());
+    const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") void discover();
     };
-    const timer = window.setInterval(pollWhenVisible, GENERAL_SYNC_DISCOVERY_INTERVAL_MS);
-    document.addEventListener("visibilitychange", pollWhenVisible);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    void discover();
 
     return () => {
       active = false;
-      window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", pollWhenVisible);
+      stopRealtime();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, [shouldDiscoverActiveRun]);
 
   useEffect(() => {
-    if (!runId || !shouldPollRun) return;
+    if (!runId || !shouldObserveRun) return;
 
     let active = true;
+    let loading = false;
     async function refresh() {
+      if (loading || document.visibilityState !== "visible") return;
+      loading = true;
       try {
-        const response = await fetch(`/api/dashboard/general-sync/${runId}`, {
-          headers: { Accept: "application/json" },
-          cache: "no-store"
-        });
-        const payload = (await response.json().catch(() => null)) as ApiSuccess<GeneralSyncRunDetail> | null;
+        const snapshot = await getGeneralSyncRunSnapshot(runId);
         if (!active) return;
-        if (!response.ok || !payload?.success || !payload.data) {
-          setError(payload?.error?.message ?? "Falha ao atualizar a sincronizacao geral.");
+        if (!snapshot) {
+          setRun(null);
           return;
         }
-        setRun(payload.data);
-      } catch (error) {
+        setRun(snapshot);
+        setError(null);
+      } catch (refreshError) {
         if (!active) return;
         setError(
-          error instanceof Error
-            ? error.message
+          refreshError instanceof Error
+            ? refreshError.message
             : "Falha de comunicacao ao atualizar a sincronizacao geral."
         );
+      } finally {
+        loading = false;
       }
     }
 
-    void refresh();
-    const pollWhenVisible = () => {
+    const stopRealtime = subscribeProcessingRealtime(() => void refresh());
+    const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") void refresh();
     };
-    const timer = window.setInterval(pollWhenVisible, GENERAL_SYNC_PROGRESS_INTERVAL_MS);
-    document.addEventListener("visibilitychange", pollWhenVisible);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    void refresh();
 
     return () => {
       active = false;
-      window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", pollWhenVisible);
+      stopRealtime();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [runId, shouldPollRun]);
+  }, [runId, shouldObserveRun]);
 
   async function loadPreview() {
     if (loadingPreview || starting) return;
     setLoadingPreview(true);
     setError(null);
+    setActionMessage(null);
 
     try {
       const response = await fetch("/api/dashboard/general-sync/preview", {
@@ -355,6 +357,7 @@ export function GeneralSyncButton({
     if (!preview || starting) return;
     setStarting(true);
     setError(null);
+    setActionMessage(null);
 
     try {
       const response = await fetch("/api/dashboard/general-sync", {
@@ -390,6 +393,7 @@ export function GeneralSyncButton({
     if (!run || cancelling || !run.canCancel) return;
     setCancelling(true);
     setError(null);
+    setActionMessage(null);
 
     try {
       const response = await fetch(`/api/dashboard/general-sync/${run.id}/pause`, {
@@ -404,15 +408,50 @@ export function GeneralSyncButton({
       });
       const payload = (await response.json().catch(() => null)) as ApiSuccess<GeneralSyncRunDetail> | null;
       if (!response.ok || !payload?.success || !payload.data) {
-        setError(payload?.error?.message ?? "Nao foi possivel pausar a sincronizacao geral.");
+        setError(payload?.error?.message ?? "Nao foi possivel interromper a sincronizacao geral.");
         return;
       }
-      setRun(payload.data);
+
+      setRun(null);
+      setPreview(null);
+      setSelectedMetric(null);
+      setOpen(false);
       emitMetricsSync();
     } catch {
-      setError("Falha de comunicacao ao pausar a sincronizacao geral.");
+      setError("Falha de comunicacao ao interromper a sincronizacao geral.");
     } finally {
       setCancelling(false);
+    }
+  }
+
+  async function reprocessErrors() {
+    if (!run || reprocessingErrors || !run.canCancel) return;
+    setSelectedMetric("error");
+    setReprocessingErrors(true);
+    setError(null);
+    setActionMessage(null);
+
+    try {
+      const response = await fetch(`/api/dashboard/general-sync/${run.id}/reprocess-errors`, {
+        method: "POST",
+        headers: { Accept: "application/json" }
+      });
+      const payload = (await response.json().catch(() => null)) as ApiSuccess<{
+        requestedCount: number;
+        absorbedBatchCount: number;
+      }> | null;
+
+      if (!response.ok || !payload?.success || !payload.data) {
+        setError(payload?.error?.message ?? "Nao foi possivel reinserir os erros na onda atual.");
+        return;
+      }
+
+      setActionMessage(payload.message ?? "Erros reinseridos na onda atual.");
+      emitMetricsSync();
+    } catch {
+      setError("Falha de comunicacao ao reinserir os erros na onda atual.");
+    } finally {
+      setReprocessingErrors(false);
     }
   }
 
@@ -420,6 +459,7 @@ export function GeneralSyncButton({
     if (!run || resuming || !run.canResume) return;
     setResuming(true);
     setError(null);
+    setActionMessage(null);
 
     try {
       const response = await fetch(`/api/dashboard/general-sync/${run.id}/resume`, {
@@ -478,7 +518,7 @@ export function GeneralSyncButton({
       <button
         type="button"
         onClick={() => {
-          if (run) setOpen(true);
+          if (activeRun && run) setOpen(true);
           else void loadPreview();
         }}
         disabled={loadingPreview || starting}
@@ -507,9 +547,9 @@ export function GeneralSyncButton({
               </div>
               <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
                 {run.status === "paused"
-                  ? "Pausada no dashboard. Somente o botao Retomar deste dashboard pode continuar o fluxo."
+                  ? "Execucao pausada legada. Novas interrupcoes encerram definitivamente a onda."
                   : run.triggerSource === "scheduled"
-                  ? "Iniciada pelo cron horario. O dashboard atualiza o progresso automaticamente."
+                  ? "Iniciada pelo agendador automatico. O dashboard atualiza o progresso por eventos do banco."
                   : run.scopeType === "all"
                   ? "Processando toda a base"
                   : `Processando ${run.campaignCount} campanhas e ${run.batchCount} lotes selecionados`}
@@ -524,7 +564,7 @@ export function GeneralSyncButton({
                 disabled={cancelling || resuming}
                 className={`mt-3 rounded-lg px-3 py-2 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-60 ${run.canResume ? "bg-emerald-700 hover:bg-emerald-800" : "bg-red-700 hover:bg-red-800"}`}
               >
-                {resuming ? "Retomando..." : cancelling ? "Pausando..." : run.canResume ? "Retomar sincronização" : "Interromper sincronização"}
+                {resuming ? "Retomando..." : cancelling ? "Interrompendo..." : run.canResume ? "Retomar sincronização legada" : "Interromper sincronização"}
               </button>
             </div>
           </div>
@@ -533,25 +573,25 @@ export function GeneralSyncButton({
             <div className="flex items-center gap-4 rounded-xl border border-slate-200 bg-slate-50 p-4 transition hover:border-emerald-300 hover:bg-emerald-50/40 dark:border-[#243650] dark:bg-[#111d30] dark:hover:border-emerald-500/50 dark:hover:bg-[#14263a]">
               <ProcessingIcon type="campaigns" tone="emerald" />
               <div>
-              <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Campanhas</p>
-              <p className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-50"><AnimatedNumber value={completedCampaignCount} /> / <AnimatedNumber value={run.campaignCount} /></p>
-              <p className="text-xs text-slate-500 dark:text-slate-400">campanhas concluídas</p>
+                <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Campanhas</p>
+                <p className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-50"><AnimatedNumber value={completedCampaignCount} /> / <AnimatedNumber value={run.campaignCount} /></p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">campanhas concluídas</p>
               </div>
             </div>
             <div className="flex items-center gap-4 rounded-xl border border-slate-200 bg-slate-50 p-4 transition hover:border-sky-300 hover:bg-sky-50/40 dark:border-[#243650] dark:bg-[#111d30] dark:hover:border-sky-500/50 dark:hover:bg-[#14263a]">
               <ProcessingIcon type="batches" tone="sky" />
               <div>
-              <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Lotes</p>
-              <p className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-50"><AnimatedNumber value={run.completedBatchCount} /> / <AnimatedNumber value={run.batchCount} /></p>
-              <p className="text-xs text-slate-500 dark:text-slate-400"><AnimatedNumber value={baseProgress} formatter={formatPercent} /> concluídos</p>
+                <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Lotes</p>
+                <p className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-50"><AnimatedNumber value={run.completedBatchCount} /> / <AnimatedNumber value={run.batchCount} /></p>
+                <p className="text-xs text-slate-500 dark:text-slate-400"><AnimatedNumber value={baseProgress} formatter={formatPercent} /> concluídos</p>
               </div>
             </div>
             <div className="flex items-center gap-4 rounded-xl border border-slate-200 bg-slate-50 p-4 transition hover:border-sky-300 hover:bg-sky-50/40 dark:border-[#243650] dark:bg-[#111d30] dark:hover:border-sky-500/50 dark:hover:bg-[#14263a]">
               <ProcessingIcon type="records" tone="sky" />
               <div>
-              <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Registros</p>
-              <p className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-50"><AnimatedNumber value={runCounters?.processedItems ?? 0} /> / <AnimatedNumber value={runCounters?.totalItems ?? 0} /></p>
-              <p className="text-xs text-slate-500 dark:text-slate-400"><AnimatedNumber value={runProgress} formatter={formatPercent} /> processados</p>
+                <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Registros</p>
+                <p className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-50"><AnimatedNumber value={runCounters?.processedItems ?? 0} /> / <AnimatedNumber value={runCounters?.totalItems ?? 0} /></p>
+                <p className="text-xs text-slate-500 dark:text-slate-400"><AnimatedNumber value={runProgress} formatter={formatPercent} /> processados</p>
               </div>
             </div>
           </div>
@@ -581,9 +621,30 @@ export function GeneralSyncButton({
                   <p className="mt-2 text-sm text-slate-600 dark:text-slate-300"><strong className="text-slate-900 dark:text-slate-50"><AnimatedNumber value={currentBatchCounters?.processedItems ?? 0} /></strong> / <AnimatedNumber value={currentBatchCounters?.totalItems ?? 0} /> registros processados</p>
                 </div>
                 <div className="grid gap-3 sm:grid-cols-3">
-                  <ProcessingMetricCard label="Sucessos" icon="success" value={<AnimatedNumber value={runCounters?.successItems ?? 0} />} selected={selectedMetric === "success"} tone="emerald" onSelect={() => setSelectedMetric(selectedMetric === "success" ? null : "success")} />
-                  <ProcessingMetricCard label="Erros" icon="error" value={<AnimatedNumber value={runCounters?.errorItems ?? 0} />} selected={selectedMetric === "error"} tone="red" onSelect={() => setSelectedMetric(selectedMetric === "error" ? null : "error")} />
-                  <ProcessingMetricCard label="Em processamento" icon="processing" value={<AnimatedNumber value={run?.processingCount ?? 0} />} selected={selectedMetric === "processing"} tone="sky" onSelect={() => setSelectedMetric(selectedMetric === "processing" ? null : "processing")} />
+                  <ProcessingMetricCard
+                    label="Sucessos"
+                    icon="success"
+                    value={<AnimatedNumber value={runCounters?.successItems ?? 0} />}
+                    selected={selectedMetric === "success"}
+                    tone="emerald"
+                    onSelect={() => setSelectedMetric(selectedMetric === "success" ? null : "success")}
+                  />
+                  <ProcessingMetricCard
+                    label={reprocessingErrors ? "Reenfileirando erros" : "Erros"}
+                    icon="error"
+                    value={<AnimatedNumber value={runCounters?.errorItems ?? 0} />}
+                    selected={selectedMetric === "error"}
+                    tone="red"
+                    onSelect={() => void reprocessErrors()}
+                  />
+                  <ProcessingMetricCard
+                    label="Em processamento"
+                    icon="processing"
+                    value={<AnimatedNumber value={run?.processingCount ?? 0} />}
+                    selected={selectedMetric === "processing"}
+                    tone="sky"
+                    onSelect={() => setSelectedMetric(selectedMetric === "processing" ? null : "processing")}
+                  />
                 </div>
               </div>
               {currentBatch.processedCount === 0 && currentBatch.processingCount > 0 ? (
@@ -591,10 +652,20 @@ export function GeneralSyncButton({
                   Preparando primeira etapa — {formatInteger(currentBatch.processingCount)} registros em andamento
                 </p>
               ) : null}
+              {actionMessage ? (
+                <p className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200">
+                  {actionMessage}
+                </p>
+              ) : null}
+              {error ? (
+                <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200">
+                  {error}
+                </p>
+              ) : null}
             </div>
           ) : (
             <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
-              Nenhum lote está sendo processado agora. A sincronização está aguardando a próxima execução do orquestrador.
+              Nenhum lote está sendo processado agora. A sincronização está aguardando o worker durável.
             </div>
           )}
 
@@ -695,7 +766,7 @@ export function GeneralSyncButton({
                     Lotes ativos no escopo no momento da previa: <strong>{formatInteger(preview.activeProcessingCount)}</strong>
                   </p>
                   <p className="mt-2 text-sm text-slate-600">
-                    Erros individuais nao interrompem a execucao geral. O lote seguinte sera liberado apenas apos o status final do lote atual.
+                    Erros que surgirem durante a onda podem ser reinseridos nela pelo card Erros sem criar um job concorrente.
                   </p>
                   <p className="mt-2 text-sm text-slate-600">
                     Lote mais antigo: <strong>{preview.oldestBatch?.name ?? "N/A"}</strong>
@@ -745,10 +816,7 @@ export function GeneralSyncButton({
                       </span>
                     </div>
                     <div className="h-2 overflow-hidden rounded-full bg-slate-100">
-                      <div
-                        className="h-full rounded-full bg-emerald-600 transition-[width]"
-                        style={{ width: `${baseProgress}%` }}
-                      />
+                      <div className="h-full rounded-full bg-emerald-600 transition-[width]" style={{ width: `${baseProgress}%` }} />
                     </div>
                     <p className="mt-2 text-right text-xs text-slate-500">
                       {baseProgress.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}% dos lotes concluidos
@@ -765,10 +833,7 @@ export function GeneralSyncButton({
                         </span>
                       </div>
                       <div className="h-2 overflow-hidden rounded-full bg-slate-100">
-                        <div
-                          className="h-full rounded-full bg-sky-500 transition-[width]"
-                          style={{ width: `${currentBatchProgress}%` }}
-                        />
+                        <div className="h-full rounded-full bg-sky-500 transition-[width]" style={{ width: `${currentBatchProgress}%` }} />
                       </div>
                       <p className="mt-2 text-right text-xs text-slate-500">
                         {currentBatchProgress.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}% do lote atual
@@ -784,10 +849,7 @@ export function GeneralSyncButton({
                       </span>
                     </div>
                     <div className="h-2 overflow-hidden rounded-full bg-slate-100">
-                      <div
-                        className="h-full rounded-full bg-amber-500 transition-[width]"
-                        style={{ width: `${runProgress}%` }}
-                      />
+                      <div className="h-full rounded-full bg-amber-500 transition-[width]" style={{ width: `${runProgress}%` }} />
                     </div>
                     <p className="mt-2 text-right text-xs text-slate-500">
                       {runProgress.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}% das faturas processadas
@@ -800,10 +862,15 @@ export function GeneralSyncButton({
                     <p className="text-xs uppercase tracking-wide text-slate-500">Sucessos</p>
                     <p className="mt-1 text-xl font-semibold text-slate-900">{formatInteger(run.successCount)}</p>
                   </article>
-                  <article className="rounded-xl bg-slate-50 p-3">
-                    <p className="text-xs uppercase tracking-wide text-slate-500">Erros</p>
+                  <button
+                    type="button"
+                    onClick={() => void reprocessErrors()}
+                    disabled={reprocessingErrors || !run.canCancel}
+                    className="rounded-xl bg-slate-50 p-3 text-left transition hover:bg-red-50 disabled:opacity-60"
+                  >
+                    <p className="text-xs uppercase tracking-wide text-slate-500">Erros · clique para reprocessar na onda</p>
                     <p className="mt-1 text-xl font-semibold text-slate-900">{formatInteger(run.errorCount)}</p>
-                  </article>
+                  </button>
                   <article className="rounded-xl bg-slate-50 p-3">
                     <p className="text-xs uppercase tracking-wide text-slate-500">Inicio</p>
                     <p className="mt-1 text-sm font-semibold text-slate-900">{formatDate(run.startedAt)}</p>
@@ -812,13 +879,14 @@ export function GeneralSyncButton({
               </>
             ) : null}
 
+            {actionMessage ? <p className="mt-4 text-sm text-emerald-700">{actionMessage}</p> : null}
             {error ? <p className="mt-4 text-sm text-red-600">{error}</p> : null}
 
             <div className="mt-6 flex justify-end gap-3">
               <button
                 type="button"
                 onClick={() => setOpen(false)}
-                disabled={starting || cancelling || resuming}
+                disabled={starting || cancelling || resuming || reprocessingErrors}
                 className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 disabled:opacity-60"
               >
                 Fechar
@@ -831,7 +899,7 @@ export function GeneralSyncButton({
                     disabled={resuming}
                     className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-800 disabled:opacity-60"
                   >
-                    {resuming ? "Retomando..." : "Retomar sincronizacao"}
+                    {resuming ? "Retomando..." : "Retomar sincronizacao legada"}
                   </button>
                 ) : run.canCancel ? (
                   <button
@@ -840,7 +908,7 @@ export function GeneralSyncButton({
                     disabled={cancelling || resuming}
                     className="rounded-lg bg-red-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-800 disabled:opacity-60"
                   >
-                    {cancelling ? "Pausando..." : "Interromper sincronizacao"}
+                    {cancelling ? "Interrompendo..." : "Interromper sincronizacao"}
                   </button>
                 ) : null
               ) : (

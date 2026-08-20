@@ -1,9 +1,6 @@
 import { z } from "zod";
 import { requireApiUser } from "@/lib/auth/require-api-user";
-import {
-  enqueueBatchJob,
-  ProcessingJobModeConflictError
-} from "@/lib/batch-job-service";
+import { enqueueBatchJob, PROCESSING_PRIORITIES } from "@/lib/batch-job-service";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { fail, ok } from "@/lib/http/api-response";
 import {
@@ -42,7 +39,10 @@ export async function POST(
       campaignId: batch.campaign_id,
       batchId: batch.id,
       requestedBy: auth.profile.id,
-      includeErrors: false
+      includeErrors: false,
+      processingOrigin: "manual",
+      processingScope: "batch",
+      processingPriority: PROCESSING_PRIORITIES.batch
     });
 
     if (!job) {
@@ -50,22 +50,6 @@ export async function POST(
         "CONFLICT",
         "Não existem faturas elegíveis para processamento neste lote.",
         422
-      );
-    }
-
-    if (!job.created && job.status === "running") {
-      return ok(
-        {
-          jobId: job.id,
-          batchId: job.batch_id,
-          campaignId: job.campaign_id,
-          kickoff: null,
-          status: job.status,
-          totalItems: job.total_items,
-          created: false
-        },
-        "O lote ja esta em execucao.",
-        202
       );
     }
 
@@ -91,17 +75,14 @@ export async function POST(
         durableDispatch,
         status: job.status,
         totalItems: job.total_items,
-        created: job.created
+        created: job.created,
+        priority: job.processing_priority,
+        scope: job.processing_scope
       },
-      durableDispatch.ok
-        ? "O processamento do lote foi colocado na fila, iniciado localmente e entregue ao worker duravel ate o fim."
-        : "O processamento do lote foi colocado na fila e iniciado localmente. O worker duravel falhou ao ser acionado e foi registrado para diagnostico.",
+      "O lote foi enfileirado com prioridade abaixo de campanha e acima de associado.",
       202
     );
   } catch (error) {
-    if (error instanceof ProcessingJobModeConflictError) {
-      return fail(error.code, error.message, 409);
-    }
     console.error("[BATCH_ENQUEUE_FAILED]", {
       batchId: parsed.data.id,
       message: error instanceof Error ? error.message : "Erro desconhecido"

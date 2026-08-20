@@ -81,6 +81,27 @@ function readPaginationMetadata(input: unknown) {
   };
 }
 
+function payloadContainsTargetInstallment(input: unknown, targetInstallmentId?: string) {
+  const target = String(targetInstallmentId ?? "").trim();
+  if (!target || !input || typeof input !== "object") return false;
+
+  const dados = (input as { dados?: unknown }).dados;
+  if (!dados || typeof dados !== "object") return false;
+  const data = (dados as { Data?: unknown }).Data;
+  if (!Array.isArray(data)) return false;
+
+  return data.some((item) => {
+    if (!item || typeof item !== "object") return false;
+    const row = item as {
+      Id?: unknown;
+      CodigoParcela?: unknown;
+      cod_parcela?: unknown;
+    };
+    return [row.Id, row.CodigoParcela, row.cod_parcela]
+      .some((value) => String(value ?? "").trim() === target);
+  });
+}
+
 function parseRetryAfterMs(value: string | null) {
   if (!value) return null;
 
@@ -127,6 +148,71 @@ function errorForStatus(status: number, retryAfterMs?: number | null) {
     false,
     status
   );
+}
+
+function errorFromAbort(
+  controller: AbortController,
+  externalSignal: AbortSignal | undefined,
+  error: unknown
+) {
+  const reason = controller.signal.reason;
+
+  if (externalSignal?.aborted || reason === "processing-stopped") {
+    return new ErpError(
+      "PROCESSING_STOPPED",
+      "A consulta foi interrompida pelo operador.",
+      false
+    );
+  }
+
+  // AbortController.abort(reason) pode fazer o fetch rejeitar com o proprio
+  // reason (inclusive uma string), em vez de um Error chamado AbortError.
+  // Por isso o estado do signal e a fonte do abort sao a referencia canonica.
+  if (
+    controller.signal.aborted ||
+    reason === "connect-timeout" ||
+    reason === "read-timeout" ||
+    (error instanceof Error && error.name === "AbortError")
+  ) {
+    return new ErpError(
+      "ERP_TIMEOUT",
+      "A consulta ao ERP excedeu o tempo limite.",
+      true
+    );
+  }
+
+  return null;
+}
+
+function readErrorDiagnostic(error: unknown) {
+  const direct = error instanceof Error ? error : null;
+  const cause = direct?.cause;
+  const causeRecord = cause && typeof cause === "object"
+    ? cause as { name?: unknown; message?: unknown; code?: unknown }
+    : null;
+
+  return {
+    errorName: direct?.name ?? typeof error,
+    errorMessage: direct?.message ?? String(error),
+    causeName: typeof causeRecord?.name === "string" ? causeRecord.name : null,
+    causeMessage: typeof causeRecord?.message === "string" ? causeRecord.message : null,
+    causeCode: typeof causeRecord?.code === "string" ? causeRecord.code : null
+  };
+}
+
+function logNetworkFailure(baseUrl: string, page: number, error: unknown) {
+  let host = "invalid-base-url";
+  try {
+    host = new URL(baseUrl).host;
+  } catch {
+    // Nunca registra token ou URL completa; somente o host quando valido.
+  }
+
+  console.error("[ERP_FETCH_NETWORK_FAILED]", {
+    host,
+    page,
+    ...readErrorDiagnostic(error)
+  });
 }
 
 async function readResponseBody(response: Response, controller: AbortController) {
@@ -215,18 +301,10 @@ async function consultMonthlyByAssociatedCodeSinglePage(
     clearTimeout(connectTimeout);
     if (error instanceof ErpError) throw error;
 
-    if (externalSignal?.aborted) {
-      throw new ErpError("PROCESSING_STOPPED", "A consulta foi interrompida pelo operador.", false);
-    }
+    const abortError = errorFromAbort(controller, externalSignal, error);
+    if (abortError) throw abortError;
 
-    if (error instanceof Error && error.name === "AbortError") {
-      throw new ErpError(
-        "ERP_TIMEOUT",
-        "A consulta ao ERP excedeu o tempo limite.",
-        true
-      );
-    }
-
+    logNetworkFailure(baseUrl, 1, error);
     throw new ErpError(
       "ERP_NETWORK_ERROR",
       "Não foi possível estabelecer comunicação com o ERP.",
@@ -332,6 +410,11 @@ export async function consultMonthlyByAssociatedCode(
         );
       }
 
+      // A consulta existe para resolver uma unica target_installment_id. Assim
+      // que a parcela alvo aparece em uma pagina, as paginas posteriores nao
+      // agregam informacao necessaria para classificar essa parcela.
+      if (payloadContainsTargetInstallment(payload, targetInstallmentId)) break;
+
       if (metadata.totalPages === 0 || requestedPage >= metadata.totalPages) break;
       requestedPage += 1;
     }
@@ -353,14 +436,10 @@ export async function consultMonthlyByAssociatedCode(
   } catch (error) {
     if (error instanceof ErpError) throw error;
 
-    if (externalSignal?.aborted) {
-      throw new ErpError("PROCESSING_STOPPED", "A consulta foi interrompida pelo operador.", false);
-    }
+    const abortError = errorFromAbort(controller, externalSignal, error);
+    if (abortError) throw abortError;
 
-    if (error instanceof Error && error.name === "AbortError") {
-      throw new ErpError("ERP_TIMEOUT", "A consulta ao ERP excedeu o tempo limite.", true);
-    }
-
+    logNetworkFailure(baseUrl, requestedPage, error);
     throw new ErpError("ERP_NETWORK_ERROR", "Nao foi possivel estabelecer comunicacao com o ERP.", true);
   } finally {
     externalSignal?.removeEventListener("abort", abortFromWorker);

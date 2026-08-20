@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { requireApiUser } from "@/lib/auth/require-api-user";
 import { fail, ok } from "@/lib/http/api-response";
-import { advanceGeneralSyncRuns, getGeneralSyncRun, pauseGeneralSyncRun } from "@/lib/general-sync";
+import { getGeneralSyncRun } from "@/lib/general-sync";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 const ParamsSchema = z.object({ runId: z.string().uuid() });
 
@@ -24,31 +25,31 @@ export async function POST(
       : "Sincronizacao geral interrompida manualmente.";
 
   try {
-    await pauseGeneralSyncRun(parsed.data.runId, reason, auth.profile.id);
-    let advancement: Awaited<ReturnType<typeof advanceGeneralSyncRuns>> | null = null;
-    try {
-      advancement = await advanceGeneralSyncRuns();
-    } catch (error) {
-      console.warn("[GENERAL_SYNC_CANCEL_ADVANCE_DEFERRED]", {
-        runId: parsed.data.runId,
-        message: error instanceof Error ? error.message : "Erro desconhecido"
-      });
-    }
-    const run = await getGeneralSyncRun(parsed.data.runId);
-
-    console.info("[GENERAL_SYNC_CANCEL_REQUESTED]", {
-      runId: parsed.data.runId,
-      status: run.status,
-      advancement
+    const supabase = createSupabaseAdminClient();
+    const { error } = await supabase.rpc("cancel_dashboard_general_sync_v1", {
+      p_run_id: parsed.data.runId,
+      p_requested_by: auth.profile.id,
+      p_reason: reason
     });
+    if (error) {
+      if (error.message.includes("general_sync_not_found")) {
+        return fail("NOT_FOUND", "Sincronizacao geral nao encontrada.", 404);
+      }
+      throw error;
+    }
 
-    return ok(run, "Sincronizacao geral pausada. Retome pelo proprio dashboard.", 202);
+    const run = await getGeneralSyncRun(parsed.data.runId);
+    return ok(
+      run,
+      "Sincronizacao geral interrompida e encerrada definitivamente.",
+      202
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : "Nao foi possivel cancelar a sincronizacao geral.";
     console.error("[GENERAL_SYNC_CANCEL_FAILED]", {
       runId: parsed.data.runId,
       message
     });
-    return fail(message.includes("nao encontrada") ? "NOT_FOUND" : "DATABASE_ERROR", message, message.includes("nao encontrada") ? 404 : 500);
+    return fail("DATABASE_ERROR", message, 500);
   }
 }

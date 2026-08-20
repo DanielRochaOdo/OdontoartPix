@@ -1,9 +1,6 @@
 import { z } from "zod";
 import { requireApiUser } from "@/lib/auth/require-api-user";
-import {
-  enqueueCampaignJobs,
-  ProcessingJobModeConflictError
-} from "@/lib/batch-job-service";
+import { enqueueCampaignJobs, PROCESSING_PRIORITIES } from "@/lib/batch-job-service";
 import { fail, ok } from "@/lib/http/api-response";
 import {
   dispatchDurableProcessingWorkflowSafely,
@@ -31,7 +28,10 @@ export async function POST(
     const result = await enqueueCampaignJobs({
       campaignId: parsed.data.id,
       requestedBy: auth.profile.id,
-      includeErrors: false
+      includeErrors: false,
+      processingOrigin: "manual",
+      processingScope: "campaign",
+      processingPriority: PROCESSING_PRIORITIES.campaign
     });
 
     if (!result.found) {
@@ -42,26 +42,6 @@ export async function POST(
         "CONFLICT",
         "Não existem faturas elegíveis para processamento nesta campanha.",
         422
-      );
-    }
-
-    const hasRunningJob = result.jobs.some((job) => !job.created && job.status === "running");
-    if (hasRunningJob) {
-      return ok(
-        {
-          campaignId: parsed.data.id,
-          jobsCreated: result.jobs.filter((job) => job.created).length,
-          kickoff: null,
-          jobs: result.jobs.map((job) => ({
-            jobId: job.id,
-            batchId: job.batch_id,
-            status: job.status,
-            totalItems: job.total_items,
-            created: job.created
-          }))
-        },
-        "A campanha ja possui processamento em execucao.",
-        202
       );
     }
 
@@ -83,23 +63,21 @@ export async function POST(
         jobsCreated: result.jobs.filter((job) => job.created).length,
         kickoff,
         durableDispatch,
+        priority: PROCESSING_PRIORITIES.campaign,
         jobs: result.jobs.map((job) => ({
           jobId: job.id,
           batchId: job.batch_id,
           status: job.status,
           totalItems: job.total_items,
-          created: job.created
+          created: job.created,
+          priority: job.processing_priority,
+          scope: job.processing_scope
         }))
       },
-      durableDispatch.ok
-        ? "O processamento foi colocado na fila, iniciado localmente e entregue ao worker duravel ate o fim."
-        : "O processamento foi colocado na fila e iniciado localmente. O worker duravel falhou ao ser acionado e foi registrado para diagnostico.",
+      "A campanha foi enfileirada com prioridade acima de lote e associado.",
       202
     );
   } catch (error) {
-    if (error instanceof ProcessingJobModeConflictError) {
-      return fail(error.code, error.message, 409);
-    }
     console.error("[CAMPAIGN_ENQUEUE_FAILED]", {
       campaignId: parsed.data.id,
       message: error instanceof Error ? error.message : "Erro desconhecido"

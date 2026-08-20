@@ -1,9 +1,9 @@
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { requireApiUser } from "@/lib/auth/require-api-user";
-import {
-  enqueueCampaignJobs,
-  ProcessingJobModeConflictError
-} from "@/lib/batch-job-service";
+import { enqueueCampaignJobs, PROCESSING_PRIORITIES } from "@/lib/batch-job-service";
+import { absorbBatchErrorsIntoActiveDashboard } from "@/lib/dashboard-error-absorption";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { fail, ok } from "@/lib/http/api-response";
 import {
   dispatchDurableProcessingWorkflowSafely,
@@ -26,52 +26,71 @@ export async function POST(
   if (!parsed.success) return fail("VALIDATION_ERROR", "Campanha inválida.", 400);
 
   try {
+    const supabase = createSupabaseAdminClient();
+    const { data: campaign, error: campaignError } = await supabase
+      .from("campaigns")
+      .select("id")
+      .eq("id", parsed.data.id)
+      .is("deleted_at", null)
+      .maybeSingle();
+    if (campaignError) throw campaignError;
+    if (!campaign) return fail("NOT_FOUND", "Campanha não encontrada.", 404);
+
+    const { data: batches, error: batchesError } = await supabase
+      .from("campaign_batches")
+      .select("id")
+      .eq("campaign_id", parsed.data.id)
+      .is("deleted_at", null)
+      .order("created_at", { ascending: true });
+    if (batchesError) throw batchesError;
+
+    const requestId = randomUUID();
+    const absorbedBatchIds: string[] = [];
+    let absorbedErrorCount = 0;
+    for (const batch of batches ?? []) {
+      const absorbed = await absorbBatchErrorsIntoActiveDashboard(batch.id, requestId);
+      if (!absorbed.absorbed) continue;
+      absorbedBatchIds.push(batch.id);
+      absorbedErrorCount += absorbed.requestedCount;
+    }
+
     const result = await enqueueCampaignJobs({
       campaignId: parsed.data.id,
       requestedBy: auth.profile.id,
-      includeErrors: true
+      includeErrors: true,
+      processingOrigin: "manual",
+      processingScope: "campaign",
+      processingPriority: PROCESSING_PRIORITIES.campaign,
+      skipBatchIds: absorbedBatchIds
     });
 
     if (!result.found) return fail("NOT_FOUND", "Campanha não encontrada.", 404);
-    if (result.jobs.length === 0) {
+    if (result.jobs.length === 0 && absorbedBatchIds.length === 0) {
       return fail("CONFLICT", "Não existem registros com erro para reprocessar.", 422);
     }
 
-    const hasRunningJob = result.jobs.some((job) => !job.created && job.status === "running");
-    if (hasRunningJob) {
-      return ok(
-        {
-          campaignId: parsed.data.id,
-          jobsCreated: result.jobs.filter((job) => job.created).length,
-          kickoff: null,
-          totalItems: result.jobs.reduce((total, job) => total + job.total_items, 0),
-          jobs: result.jobs.map((job) => ({
-            jobId: job.id,
-            batchId: job.batch_id,
-            totalItems: job.total_items,
-            created: job.created
-          }))
-        },
-        "A campanha ja possui reprocessamento em execucao.",
-        202
-      );
+    let kickoff = null;
+    let durableDispatch = null;
+    if (result.jobs.length > 0) {
+      const durableDispatchPromise = dispatchDurableProcessingWorkflowSafely({
+        source: "campaign-errors",
+        campaignId: parsed.data.id,
+        requestedBy: auth.profile.id
+      });
+      kickoff = await runImmediateProcessingKickoff({
+        processingOrigin: "manual",
+        includeGeneralSync: false
+      });
+      durableDispatch = await durableDispatchPromise;
     }
-
-    const durableDispatchPromise = dispatchDurableProcessingWorkflowSafely({
-      source: "campaign-errors",
-      campaignId: parsed.data.id,
-      requestedBy: auth.profile.id
-    });
-
-    const kickoff = await runImmediateProcessingKickoff({
-      processingOrigin: "manual",
-      includeGeneralSync: false
-    });
-    const durableDispatch = await durableDispatchPromise;
 
     return ok(
       {
         campaignId: parsed.data.id,
+        requestId,
+        absorbedIntoDashboard: absorbedBatchIds.length > 0,
+        absorbedBatchIds,
+        absorbedErrorCount,
         jobsCreated: result.jobs.filter((job) => job.created).length,
         kickoff,
         durableDispatch,
@@ -80,18 +99,17 @@ export async function POST(
           jobId: job.id,
           batchId: job.batch_id,
           totalItems: job.total_items,
-          created: job.created
+          created: job.created,
+          priority: job.processing_priority,
+          scope: job.processing_scope
         }))
       },
-      durableDispatch.ok
-        ? "Os registros com erro foram colocados novamente na fila, iniciados localmente e entregues ao worker duravel ate o fim."
-        : "Os registros com erro foram colocados novamente na fila e iniciados localmente. O worker duravel falhou ao ser acionado e foi registrado para diagnostico.",
+      absorbedBatchIds.length > 0
+        ? `${absorbedErrorCount} erro(s) foram incorporados à onda ativa do dashboard; os demais ficaram na fila de campanha.`
+        : "Os erros foram enfileirados com prioridade de campanha.",
       202
     );
   } catch (error) {
-    if (error instanceof ProcessingJobModeConflictError) {
-      return fail(error.code, error.message, 409);
-    }
     console.error("[CAMPAIGN_ERROR_REPROCESS_FAILED]", {
       campaignId: parsed.data.id,
       message: error instanceof Error ? error.message : "Erro desconhecido"

@@ -18,10 +18,17 @@ export function MemberActions({ memberId }: { memberId: string }) {
         const payload = (await response.json().catch(() => null)) as
           | { error?: { message?: string } }
           | null;
-        throw new Error(payload?.error?.message ?? "Nao foi possivel reprocessar o associado.");
+        const message = payload?.error?.message ?? "Nao foi possivel reprocessar o associado.";
+        window.alert(message);
+        return;
       }
       emitMetricsSync();
       router.refresh();
+    } catch (error) {
+      const message = error instanceof Error
+        ? error.message
+        : "Falha de comunicacao ao reprocessar o associado.";
+      window.alert(message);
     } finally {
       setBusy(false);
     }
