@@ -24,6 +24,7 @@ type ClaimedMember = {
   member_id: string;
   target_installment_id: string | null;
   due_date_text: string | null;
+  installment_amount_cents: number | string | null;
   processing_attempts: number;
   processing_owner: string | null;
   claim_token: string | null;
@@ -47,6 +48,19 @@ export type LocalWorkerRunResult = {
 
 function retryDelayMs(attempt: number) {
   return Math.min(60_000, 1000 * 2 ** Math.max(0, attempt - 1));
+}
+
+function getTargetPendingAmountCents(claimed: ClaimedMember, analysis: MonthlyAnalysis) {
+  if (analysis.paymentStatus === "paid") return 0;
+
+  const targetInstallmentId = String(claimed.target_installment_id ?? "").trim();
+  const targetInstallment = analysis.installments.find(
+    (installment) => String(installment.installmentCode).trim() === targetInstallmentId
+  );
+  if (targetInstallment) return targetInstallment.finalAmountCents;
+
+  const fallback = Number(claimed.installment_amount_cents ?? 0);
+  return Number.isFinite(fallback) ? Math.max(Math.round(fallback), 0) : 0;
 }
 
 async function runWithConcurrency<T>(
@@ -167,6 +181,7 @@ async function claimMembers(job: LocalJob, workerId: string, limit: number) {
                   member_id,
                   target_installment_id,
                   due_date_text,
+                  installment_amount_cents,
                   processing_attempts,
                   processing_owner::text,
                   claim_token::text`,
@@ -198,6 +213,7 @@ async function persistSuccess(input: {
   analysis: MonthlyAnalysis;
 }) {
   const { job, claimed, workerId, httpStatus, durationMs, analysis } = input;
+  const targetPendingAmountCents = getTargetPendingAmountCents(claimed, analysis);
 
   return withTransaction(async (client) => {
     const owned = await clientQuery<{ id: string }>(
@@ -377,7 +393,7 @@ async function persistSuccess(input: {
         workerId,
         claimed.claim_token,
         analysis.paymentStatus,
-        analysis.totalPendingAmountCents,
+        targetPendingAmountCents,
         analysis.installmentsCount
       ]
     );
@@ -405,7 +421,7 @@ async function persistSuccess(input: {
         httpStatus,
         Math.round(durationMs),
         claimed.processing_attempts,
-        analysis.totalPendingAmountCents
+        targetPendingAmountCents
       ]
     );
 
