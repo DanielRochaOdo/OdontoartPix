@@ -1,6 +1,6 @@
 import { requireApiUser } from "@/lib/auth/require-api-user";
+import { getActiveGeneralSyncRun } from "@/lib/general-sync-read";
 import { fail, ok } from "@/lib/http/api-response";
-import { getActiveGeneralSyncRun } from "@/lib/general-sync";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
