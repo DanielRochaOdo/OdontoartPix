@@ -497,11 +497,11 @@ function analyzePaginatedPayload(
     paymentStatusSource: explicitlyPaid ? "erp_explicit" : "erp_open_invoice",
     message: payload.message || (explicitlyPaid ? "Parcela paga conforme o ERP." : "Parcela localizada como pendente."),
     installmentsCount: 1,
-    totalPendingAmountCents: explicitlyPaid ? 0 : baseAmountCents,
+    totalPendingAmountCents: explicitlyPaid ? 0 : installment.finalAmountCents,
     totalPaidAmountCents: explicitlyPaid ? paidValue.cents : 0,
     totalsByPlan: explicitlyPaid
       ? []
-      : [{ planType: installment.planType, installmentsCount: 1, totalAmountCents: baseAmountCents }],
+      : [{ planType: installment.planType, installmentsCount: 1, totalAmountCents: installment.finalAmountCents }],
     installments: [installment],
     warnings: finalAmount.warning && hasValue(matched.ValorFinal)
       ? [`ValorFinal da parcela ${targetInstallmentId}: ${finalAmount.warning}`]
@@ -583,7 +583,7 @@ function analyzeCompleteHistoryPayload(
   for (const installment of pendingInstallments) {
     const current = grouped.get(installment.planType) ?? { installmentsCount: 0, totalAmountCents: 0 };
     current.installmentsCount += 1;
-    current.totalAmountCents += installment.baseAmountCents;
+    current.totalAmountCents += installment.finalAmountCents;
     grouped.set(installment.planType, current);
   }
 
@@ -593,7 +593,7 @@ function analyzeCompleteHistoryPayload(
     paymentStatusSource: "erp_explicit",
     message: payload.message || (targetIsPaid ? "Parcela paga conforme o historico do ERP." : "Parcela em aberto conforme o historico do ERP."),
     installmentsCount: installments.length,
-    totalPendingAmountCents: pendingInstallments.reduce((sum, installment) => sum + installment.baseAmountCents, 0),
+    totalPendingAmountCents: pendingInstallments.reduce((sum, installment) => sum + installment.finalAmountCents, 0),
     totalPaidAmountCents: installments.reduce((sum, installment) => sum + (installment.paidAmountCents ?? 0), 0),
     totalsByPlan: [...grouped.entries()].map(([planType, total]) => ({ planType, ...total })),
     installments,
