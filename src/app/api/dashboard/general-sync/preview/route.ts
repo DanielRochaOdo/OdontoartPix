@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { requireApiUser } from "@/lib/auth/require-api-user";
+import { getGeneralSyncPreview } from "@/lib/general-sync-preview";
 import { fail, ok } from "@/lib/http/api-response";
-import { getGeneralSyncPreview } from "@/lib/general-sync";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
