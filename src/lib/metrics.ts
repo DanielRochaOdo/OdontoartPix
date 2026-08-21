@@ -1,7 +1,11 @@
 import { z } from "zod";
 import { DataAccessError } from "@/lib/errors/data-access-error";
-import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { dbQuery } from "@/lib/db/pool";
+import {
+  getLocalBatchMetrics,
+  getLocalCampaignMetrics
+} from "@/lib/campaign-detail-read";
+import { listLocalCampaignsWithMetrics } from "@/lib/campaign-read";
 
 export const CalculatedStatusSchema = z.enum([
   "aguardando",
@@ -116,55 +120,51 @@ function normalizeDashboardFilter(values?: string[]) {
 }
 
 export async function getCampaignMetrics(campaignId: string) {
-  const supabase = createSupabaseAdminClient();
-  const { data, error } = await supabase.rpc("get_campaign_metrics", {
-    p_campaign_id: campaignId
-  });
+  try {
+    const data = await getLocalCampaignMetrics(campaignId);
+    if (!data) return null;
 
-  if (error) {
+    const parsed = CampaignMetricsSchema.safeParse(data);
+    if (!parsed.success) {
+      throw new DataAccessError(
+        "O banco retornou métricas de campanha inválidas.",
+        "getCampaignMetrics.parse",
+        parsed.error
+      );
+    }
+    return { ...parsed.data, processingBlockSize: getProcessingBlockSize() };
+  } catch (error) {
+    if (error instanceof DataAccessError) throw error;
     throw new DataAccessError(
       "Não foi possível carregar as métricas da campanha.",
       "getCampaignMetrics",
       error
     );
   }
-  if (!data) return null;
-
-  const parsed = CampaignMetricsSchema.safeParse(data);
-  if (!parsed.success) {
-    throw new DataAccessError(
-      "O banco retornou métricas de campanha inválidas.",
-      "getCampaignMetrics.parse",
-      parsed.error
-    );
-  }
-  return { ...parsed.data, processingBlockSize: getProcessingBlockSize() };
 }
 
 export async function getBatchMetrics(batchId: string) {
-  const supabase = createSupabaseAdminClient();
-  const { data, error } = await supabase.rpc("get_batch_metrics", {
-    p_batch_id: batchId
-  });
+  try {
+    const data = await getLocalBatchMetrics(batchId);
+    if (!data) return null;
 
-  if (error) {
+    const parsed = BatchMetricsSchema.safeParse(data);
+    if (!parsed.success) {
+      throw new DataAccessError(
+        "O banco retornou métricas de lote inválidas.",
+        "getBatchMetrics.parse",
+        parsed.error
+      );
+    }
+    return { ...parsed.data, processingBlockSize: getProcessingBlockSize() };
+  } catch (error) {
+    if (error instanceof DataAccessError) throw error;
     throw new DataAccessError(
       "Não foi possível carregar as métricas do lote.",
       "getBatchMetrics",
       error
     );
   }
-  if (!data) return null;
-
-  const parsed = BatchMetricsSchema.safeParse(data);
-  if (!parsed.success) {
-    throw new DataAccessError(
-      "O banco retornou métricas de lote inválidas.",
-      "getBatchMetrics.parse",
-      parsed.error
-    );
-  }
-  return { ...parsed.data, processingBlockSize: getProcessingBlockSize() };
 }
 
 export async function getDashboardMetrics(filters: DashboardMetricsFilters = {}) {
@@ -411,24 +411,23 @@ export async function getDashboardPixPaidMetrics(filters: DashboardMetricsFilter
 }
 
 export async function listCampaignsWithMetrics() {
-  const supabase = createSupabaseAdminClient();
-  const { data, error } = await supabase.rpc("list_campaigns_with_metrics");
-
-  if (error) {
+  try {
+    const data = await listLocalCampaignsWithMetrics();
+    const parsed = z.array(CampaignListItemSchema).safeParse(data);
+    if (!parsed.success) {
+      throw new DataAccessError(
+        "O banco retornou uma lista de campanhas inválida.",
+        "listCampaignsWithMetrics.parse",
+        parsed.error
+      );
+    }
+    return parsed.data;
+  } catch (error) {
+    if (error instanceof DataAccessError) throw error;
     throw new DataAccessError(
       "Não foi possível carregar a lista consolidada de campanhas.",
       "listCampaignsWithMetrics",
       error
     );
   }
-
-  const parsed = z.array(CampaignListItemSchema).safeParse(data ?? []);
-  if (!parsed.success) {
-    throw new DataAccessError(
-      "O banco retornou uma lista de campanhas inválida.",
-      "listCampaignsWithMetrics.parse",
-      parsed.error
-    );
-  }
-  return parsed.data;
 }
