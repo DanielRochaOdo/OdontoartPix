@@ -1,17 +1,17 @@
 import { z } from "zod";
 import { requireApiUser } from "@/lib/auth/require-api-user";
-import { enqueueBatchJob, PROCESSING_PRIORITIES } from "@/lib/batch-job-service";
-import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { fail, ok } from "@/lib/http/api-response";
-import {
-  dispatchDurableProcessingWorkflowSafely,
-  runImmediateProcessingKickoff
-} from "@/lib/processing-kickoff";
+import { dbQuery } from "@/lib/db/pool";
+import { enqueueLocalBatchJob } from "@/lib/local-batch-job-service";
 
 export const runtime = "nodejs";
-export const maxDuration = 120;
 
 const ParamsSchema = z.object({ id: z.string().uuid() });
+
+type BatchRow = {
+  id: string;
+  campaign_id: string;
+};
 
 export async function POST(
   _: Request,
@@ -24,25 +24,26 @@ export async function POST(
   if (!parsed.success) return fail("VALIDATION_ERROR", "Lote inválido.", 400);
 
   try {
-    const supabase = createSupabaseAdminClient();
-    const { data: batch, error } = await supabase
-      .from("campaign_batches")
-      .select("id,campaign_id")
-      .eq("id", parsed.data.id)
-      .is("deleted_at", null)
-      .maybeSingle();
+    const batchResult = await dbQuery<BatchRow>(
+      `select id, campaign_id
+         from campaign_batches
+        where id = $1
+          and deleted_at is null
+        limit 1`,
+      [parsed.data.id]
+    );
 
-    if (error) throw error;
+    const batch = batchResult.rows[0];
     if (!batch) return fail("NOT_FOUND", "Lote não encontrado.", 404);
 
-    const job = await enqueueBatchJob({
+    const job = await enqueueLocalBatchJob({
       campaignId: batch.campaign_id,
       batchId: batch.id,
       requestedBy: auth.profile.id,
       includeErrors: false,
       processingOrigin: "manual",
       processingScope: "batch",
-      processingPriority: PROCESSING_PRIORITIES.batch
+      processingPriority: 60
     });
 
     if (!job) {
@@ -53,37 +54,29 @@ export async function POST(
       );
     }
 
-    const durableDispatchPromise = dispatchDurableProcessingWorkflowSafely({
-      source: "batch",
-      campaignId: batch.campaign_id,
-      batchId: batch.id,
-      requestedBy: auth.profile.id
-    });
-
-    const kickoff = await runImmediateProcessingKickoff({
-      processingOrigin: "manual",
-      includeGeneralSync: false
-    });
-    const durableDispatch = await durableDispatchPromise;
-
     return ok(
       {
         jobId: job.id,
         batchId: job.batch_id,
         campaignId: job.campaign_id,
-        kickoff,
-        durableDispatch,
         status: job.status,
         totalItems: job.total_items,
+        processedItems: job.processed_items,
         created: job.created,
         priority: job.processing_priority,
-        scope: job.processing_scope
+        scope: job.processing_scope,
+        worker: {
+          mode: "local",
+          started: false
+        }
       },
-      "O lote foi enfileirado com prioridade abaixo de campanha e acima de associado.",
+      job.created
+        ? "O lote foi enfileirado no PostgreSQL local e aguarda o worker local."
+        : "O lote já possui um job local ativo na fila.",
       202
     );
   } catch (error) {
-    console.error("[BATCH_ENQUEUE_FAILED]", {
+    console.error("[LOCAL_BATCH_ENQUEUE_FAILED]", {
       batchId: parsed.data.id,
       message: error instanceof Error ? error.message : "Erro desconhecido"
     });
