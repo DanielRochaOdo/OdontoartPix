@@ -11,6 +11,19 @@ export type CampaignOptionRow = {
   end_date: string | null;
 };
 
+export type BatchOptionRow = {
+  id: string;
+  campaign_id: string;
+  name: string;
+  status: string;
+  total_records: number;
+  processed_records: number;
+  paid_records: number;
+  unpaid_records: number;
+  error_records: number;
+  created_at: string;
+};
+
 export type CampaignMetricsRow = {
   id: string;
   name: string;
@@ -49,6 +62,26 @@ export async function getLocalCampaigns() {
             start_date::text,
             end_date::text
        from campaigns
+      where deleted_at is null
+      order by created_at desc
+      limit 50`
+  );
+  return result.rows;
+}
+
+export async function getLocalBatches() {
+  const result = await dbQuery<BatchOptionRow>(
+    `select id,
+            campaign_id,
+            name,
+            status,
+            total_records,
+            processed_records,
+            paid_records,
+            unpaid_records,
+            error_records,
+            created_at::text
+       from campaign_batches
       where deleted_at is null
       order by created_at desc
       limit 50`
