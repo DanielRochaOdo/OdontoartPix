@@ -1,14 +1,7 @@
-import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { requireApiUser } from "@/lib/auth/require-api-user";
 import { enqueueCampaignJobs, PROCESSING_PRIORITIES } from "@/lib/batch-job-service";
-import { absorbBatchErrorsIntoActiveDashboard } from "@/lib/dashboard-error-absorption";
-import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { fail, ok } from "@/lib/http/api-response";
-import {
-  dispatchDurableProcessingWorkflowSafely,
-  runImmediateProcessingKickoff
-} from "@/lib/processing-kickoff";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -26,87 +19,40 @@ export async function POST(
   if (!parsed.success) return fail("VALIDATION_ERROR", "Campanha inválida.", 400);
 
   try {
-    const supabase = createSupabaseAdminClient();
-    const { data: campaign, error: campaignError } = await supabase
-      .from("campaigns")
-      .select("id")
-      .eq("id", parsed.data.id)
-      .is("deleted_at", null)
-      .maybeSingle();
-    if (campaignError) throw campaignError;
-    if (!campaign) return fail("NOT_FOUND", "Campanha não encontrada.", 404);
-
-    const { data: batches, error: batchesError } = await supabase
-      .from("campaign_batches")
-      .select("id")
-      .eq("campaign_id", parsed.data.id)
-      .is("deleted_at", null)
-      .order("created_at", { ascending: true });
-    if (batchesError) throw batchesError;
-
-    const requestId = randomUUID();
-    const absorbedBatchIds: string[] = [];
-    let absorbedErrorCount = 0;
-    for (const batch of batches ?? []) {
-      const absorbed = await absorbBatchErrorsIntoActiveDashboard(batch.id, requestId);
-      if (!absorbed.absorbed) continue;
-      absorbedBatchIds.push(batch.id);
-      absorbedErrorCount += absorbed.requestedCount;
-    }
-
     const result = await enqueueCampaignJobs({
       campaignId: parsed.data.id,
       requestedBy: auth.profile.id,
       includeErrors: true,
       processingOrigin: "manual",
       processingScope: "campaign",
-      processingPriority: PROCESSING_PRIORITIES.campaign,
-      skipBatchIds: absorbedBatchIds
+      processingPriority: PROCESSING_PRIORITIES.campaign
     });
 
-    if (!result.found) return fail("NOT_FOUND", "Campanha não encontrada.", 404);
-    if (result.jobs.length === 0 && absorbedBatchIds.length === 0) {
-      return fail("CONFLICT", "Não existem registros com erro para reprocessar.", 422);
+    if (!result.found) {
+      return fail("NOT_FOUND", "Campanha não encontrada.", 404);
     }
 
-    let kickoff = null;
-    let durableDispatch = null;
-    if (result.jobs.length > 0) {
-      const durableDispatchPromise = dispatchDurableProcessingWorkflowSafely({
-        source: "campaign-errors",
-        campaignId: parsed.data.id,
-        requestedBy: auth.profile.id
-      });
-      kickoff = await runImmediateProcessingKickoff({
-        processingOrigin: "manual",
-        includeGeneralSync: false
-      });
-      durableDispatch = await durableDispatchPromise;
+    if (result.jobs.length === 0) {
+      return fail("CONFLICT", "Não existem registros com erro para reprocessar.", 422);
     }
 
     return ok(
       {
         campaignId: parsed.data.id,
-        requestId,
-        absorbedIntoDashboard: absorbedBatchIds.length > 0,
-        absorbedBatchIds,
-        absorbedErrorCount,
         jobsCreated: result.jobs.filter((job) => job.created).length,
-        kickoff,
-        durableDispatch,
         totalItems: result.jobs.reduce((total, job) => total + job.total_items, 0),
+        scheduler: "systemd-timer",
         jobs: result.jobs.map((job) => ({
           jobId: job.id,
           batchId: job.batch_id,
           totalItems: job.total_items,
           created: job.created,
           priority: job.processing_priority,
-          scope: job.processing_scope
+          scope: job.processing_scope,
+          status: job.status
         }))
       },
-      absorbedBatchIds.length > 0
-        ? `${absorbedErrorCount} erro(s) foram incorporados à onda ativa do dashboard; os demais ficaram na fila de campanha.`
-        : "Os erros foram enfileirados com prioridade de campanha.",
+      "Os erros foram enfileirados para processamento pelo worker local.",
       202
     );
   } catch (error) {
