@@ -2,6 +2,7 @@ import Link from "next/link";
 import { DashboardDonutCharts } from "@/components/dashboard-donut-charts";
 import { DashboardFilters } from "@/components/dashboard-filters";
 import { canAdmin, getCurrentProfile } from "@/lib/auth";
+import { getLocalBatches, getLocalCampaigns } from "@/lib/campaign-read";
 import { getBatches, getCampaigns } from "@/lib/data";
 import { DataAccessError } from "@/lib/errors/data-access-error";
 import { getActiveGeneralSyncRun } from "@/lib/general-sync";
@@ -85,25 +86,43 @@ export default async function DashboardPage({
   let errorMessage: string | null = null;
 
   if (localDatabaseMode) {
-    profile = await getCurrentProfile();
-    metrics = {
-      totalCampaigns: 0,
-      campaignsInProgress: 0,
-      uniqueCpfs: 0,
-      totalCpfs: 0,
-      paid: 0,
-      unpaid: 0,
-      errored: 0,
-      utilizationPercentage: 0,
-      totalPendingAmountCents: 0,
-      totalPaidAmountCents: 0,
-      totalBatchAmountCents: 0
-    };
-    campaigns = [];
-    batches = [];
-    activeGeneralSyncRun = null;
-    receiptStatuses = [];
-    pixPaidMetrics = { pixPaidAmountCents: 0 };
+    try {
+      [metrics, campaigns, batches, profile, processingSchedule, receiptStatuses, pixPaidMetrics] = await Promise.all([
+        getDashboardMetrics({
+          campaignIds: selectedCampaignIds,
+          batchIds: selectedBatchIds
+        }),
+        getLocalCampaigns(),
+        getLocalBatches(),
+        getCurrentProfile(),
+        getProcessingScheduleView(),
+        getDashboardReceiptStatusMetrics({
+          campaignIds: selectedCampaignIds,
+          batchIds: selectedBatchIds
+        }).catch((error) => {
+          console.error("[DASHBOARD_RECEIPT_STATUS_LOAD_FAILED]", {
+            message: error instanceof Error ? error.message : "Erro desconhecido"
+          });
+          return [];
+        }),
+        getDashboardPixPaidMetrics({
+          campaignIds: selectedCampaignIds,
+          batchIds: selectedBatchIds
+        }).catch((error) => {
+          console.error("[DASHBOARD_PIX_PAID_LOAD_FAILED]", {
+            message: error instanceof Error ? error.message : "Erro desconhecido"
+          });
+          return { pixPaidAmountCents: 0 };
+        })
+      ]);
+      activeGeneralSyncRun = null;
+    } catch (error) {
+      console.error("[DASHBOARD_LOCAL_LOAD_FAILED]", {
+        operation: error instanceof DataAccessError ? error.operation : "unknown",
+        message: error instanceof Error ? error.message : "Erro desconhecido"
+      });
+      errorMessage = "Nao foi possivel carregar os indicadores do dashboard.";
+    }
   } else {
     try {
       [metrics, campaigns, batches, profile, activeGeneralSyncRun, processingSchedule, receiptStatuses, pixPaidMetrics] = await Promise.all([
