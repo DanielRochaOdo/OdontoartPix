@@ -1,10 +1,10 @@
 import Link from "next/link";
 import {
-  getBatchesByCampaign,
-  getCampaignById
-} from "@/lib/data";
-import { DataAccessError } from "@/lib/errors/data-access-error";
-import { getBatchMetrics, getCampaignMetrics } from "@/lib/metrics";
+  getLocalBatchesByCampaign,
+  getLocalBatchMetrics,
+  getLocalCampaignById,
+  getLocalCampaignMetrics
+} from "@/lib/campaign-detail-read";
 import { DestructiveDeleteDialog } from "@/components/destructive-delete-dialog";
 import { RenameCampaignForm } from "@/components/rename-campaign-form";
 import { CampaignImportReport } from "@/components/campaign-import-report";
@@ -26,25 +26,25 @@ export default async function CampaignDetailPage({
 }) {
   const { id } = await params;
 
-  let campaign: Awaited<ReturnType<typeof getCampaignById>> = null;
-  let batches: Awaited<ReturnType<typeof getBatchesByCampaign>> = [];
-  let metrics: Awaited<ReturnType<typeof getCampaignMetrics>> = null;
+  let campaign: Awaited<ReturnType<typeof getLocalCampaignById>> = null;
+  let batches: Awaited<ReturnType<typeof getLocalBatchesByCampaign>> = [];
+  let metrics: Awaited<ReturnType<typeof getLocalCampaignMetrics>> = null;
   let batchMetrics = new Map<
     string,
-    NonNullable<Awaited<ReturnType<typeof getBatchMetrics>>>
+    NonNullable<Awaited<ReturnType<typeof getLocalBatchMetrics>>>
   >();
   let errorMessage: string | null = null;
 
   try {
     [campaign, batches, metrics] = await Promise.all([
-      getCampaignById(id),
-      getBatchesByCampaign(id),
-      getCampaignMetrics(id)
+      getLocalCampaignById(id),
+      getLocalBatchesByCampaign(id),
+      getLocalCampaignMetrics(id)
     ]);
 
     const entries = await Promise.all(
       batches.map(async (batch) => {
-        const value = await getBatchMetrics(batch.id);
+        const value = await getLocalBatchMetrics(batch.id);
         return value ? ([batch.id, value] as const) : null;
       })
     );
@@ -52,7 +52,6 @@ export default async function CampaignDetailPage({
   } catch (error) {
     console.error("[CAMPAIGN_PAGE_LOAD_FAILED]", {
       campaignId: id,
-      operation: error instanceof DataAccessError ? error.operation : "unknown",
       message: error instanceof Error ? error.message : "Erro desconhecido"
     });
     errorMessage = "Nao foi possivel carregar os dados completos da campanha.";
