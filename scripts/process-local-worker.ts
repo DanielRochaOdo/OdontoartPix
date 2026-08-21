@@ -3,6 +3,8 @@ import { getDbPool } from "../src/lib/db/pool";
 
 const ADVISORY_LOCK_NAMESPACE = 17483621;
 const ADVISORY_LOCK_WORKER = 20260821;
+const DEFAULT_DRAIN_DELAY_MS = 5000;
+const DEFAULT_MAX_DRAIN_CYCLES = 1000;
 
 function readPositiveIntegerArgument(name: string) {
   const prefix = `--${name}=`;
@@ -15,6 +17,27 @@ function readPositiveIntegerArgument(name: string) {
   }
 
   return parsed;
+}
+
+function readNonNegativeIntegerArgument(name: string) {
+  const prefix = `--${name}=`;
+  const argument = process.argv.find((value) => value.startsWith(prefix));
+  if (!argument) return undefined;
+
+  const parsed = Number(argument.slice(prefix.length));
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new Error(`${prefix} deve receber um inteiro maior ou igual a zero.`);
+  }
+
+  return parsed;
+}
+
+function hasFlag(name: string) {
+  return process.argv.includes(`--${name}`);
+}
+
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
 
 async function recoverInterruptedLocalWork() {
@@ -108,12 +131,43 @@ async function main() {
       console.warn("[LOCAL_WORKER_RECOVERY]", recovered);
     }
 
-    const result = await runLocalWorkerOnce({
-      claimLimit: readPositiveIntegerArgument("limit"),
-      concurrency: readPositiveIntegerArgument("concurrency")
-    });
-    console.info("[LOCAL_WORKER_RUN_COMPLETED]", result);
-    if (result.jobStatus === "failed") process.exitCode = 1;
+    const claimLimit = readPositiveIntegerArgument("limit");
+    const concurrency = readPositiveIntegerArgument("concurrency");
+    const drain = hasFlag("drain");
+    const delayMs = readNonNegativeIntegerArgument("delay-ms") ?? DEFAULT_DRAIN_DELAY_MS;
+    const maxDrainCycles = readPositiveIntegerArgument("max-cycles") ?? DEFAULT_MAX_DRAIN_CYCLES;
+    let productiveCycles = 0;
+
+    while (true) {
+      const result = await runLocalWorkerOnce({
+        claimLimit,
+        concurrency
+      });
+
+      console.info("[LOCAL_WORKER_RUN_COMPLETED]", result);
+
+      if (result.jobStatus === "failed") {
+        process.exitCode = 1;
+        return;
+      }
+
+      if (!drain || result.jobStatus === "idle") {
+        return;
+      }
+
+      productiveCycles += 1;
+      if (productiveCycles >= maxDrainCycles) {
+        console.warn("[LOCAL_WORKER_DRAIN_LIMIT_REACHED]", {
+          productiveCycles,
+          maxDrainCycles
+        });
+        return;
+      }
+
+      if (delayMs > 0) {
+        await sleep(delayMs);
+      }
+    }
   } finally {
     if (lockAcquired) {
       await lockClient.query(
