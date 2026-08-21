@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { PoolClient } from "pg";
 import { clientQuery, withTransaction } from "@/lib/db/transaction";
 import { DataAccessError } from "@/lib/errors/data-access-error";
 import {
@@ -31,10 +32,7 @@ const GENERAL_SYNC_LOCK_KEY = "general-sync-single-active";
 
 type RunIdRow = { id: string };
 
-async function findRunByRequestKey(
-  client: Parameters<Parameters<typeof withTransaction>[0]>[0],
-  requestKey: string
-) {
+async function findRunByRequestKey(client: PoolClient, requestKey: string) {
   const result = await clientQuery<RunIdRow>(
     client,
     `select id
@@ -47,9 +45,7 @@ async function findRunByRequestKey(
   return result.rows[0]?.id ?? null;
 }
 
-async function findActiveRunId(
-  client: Parameters<Parameters<typeof withTransaction>[0]>[0]
-) {
+async function findActiveRunId(client: PoolClient) {
   const result = await clientQuery<RunIdRow>(
     client,
     `select id
