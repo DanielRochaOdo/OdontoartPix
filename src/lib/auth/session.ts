@@ -17,6 +17,13 @@ function hashToken(token: string) {
   return createHash("sha256").update(token).digest("hex");
 }
 
+function shouldUseSecureCookie() {
+  const configured = process.env.AUTH_COOKIE_SECURE?.trim().toLowerCase();
+  if (configured === "true") return true;
+  if (configured === "false") return false;
+  return process.env.NODE_ENV === "production";
+}
+
 export async function createSession(input: {
   userId: string;
   ipAddress?: string | null;
@@ -36,7 +43,7 @@ export async function createSession(input: {
   cookieStore.set(SESSION_COOKIE_NAME, token, {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: shouldUseSecureCookie(),
     path: "/",
     expires: expiresAt
   });
@@ -60,7 +67,7 @@ export async function revokeCurrentSession() {
   cookieStore.set(SESSION_COOKIE_NAME, "", {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: shouldUseSecureCookie(),
     path: "/",
     maxAge: 0
   });
