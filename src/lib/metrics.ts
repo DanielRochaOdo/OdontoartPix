@@ -193,7 +193,11 @@ export async function getDashboardMetrics(filters: DashboardMetricsFilters = {})
            case
              when target.id is not null then coalesce(target.base_amount_cents, 0)::bigint
              else coalesce(cbm.installment_amount_cents, 0)::bigint
-           end as target_amount_cents,
+           end as target_base_amount_cents,
+           case
+             when target.id is not null then coalesce(target.final_amount_cents, target.base_amount_cents, 0)::bigint
+             else coalesce(cbm.installment_amount_cents, 0)::bigint
+           end as target_pending_amount_cents,
            target.paid_amount_cents as target_paid_amount_cents,
            case
              when target.paid_amount_cents is not null
@@ -206,6 +210,7 @@ export async function getDashboardMetrics(filters: DashboardMetricsFilters = {})
          left join lateral (
            select mi.id,
                   mi.base_amount_cents,
+                  mi.final_amount_cents,
                   mi.paid_amount_cents,
                   mi.payment_description,
                   mi.situation
@@ -233,9 +238,9 @@ export async function getDashboardMetrics(filters: DashboardMetricsFilters = {})
            count(*) filter (where financial_status = 'paid')::int as paid,
            count(*) filter (where financial_status = 'unpaid')::int as unpaid,
            count(*) filter (where processing_status = 'error')::int as errored,
-           coalesce(sum(target_amount_cents) filter (where financial_status = 'unpaid'), 0)::float8 as pending_amount,
+           coalesce(sum(target_pending_amount_cents) filter (where financial_status = 'unpaid'), 0)::float8 as pending_amount,
            coalesce(sum(target_paid_amount_cents) filter (where financial_status = 'paid'), 0)::float8 as paid_amount,
-           coalesce(sum(target_amount_cents), 0)::float8 as total_amount
+           coalesce(sum(target_base_amount_cents), 0)::float8 as total_amount
          from financial_rows
        ), campaign_metrics as (
          select count(*)::int as total_campaigns from selected_campaigns
