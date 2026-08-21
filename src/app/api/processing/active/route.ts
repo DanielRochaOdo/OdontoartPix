@@ -1,48 +1,107 @@
 import { NextResponse } from "next/server";
 import { requireApiUser } from "@/lib/auth/require-api-user";
-import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { dbQuery } from "@/lib/db/pool";
 import { normalizeProcessingProgress } from "@/lib/processing-progress";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+type ActiveJobRow = {
+  id: string;
+  campaign_id: string | null;
+  batch_id: string | null;
+  status: string;
+  processing_origin: string | null;
+  processing_scope: string | null;
+  processing_priority: number;
+  total_items: number;
+  processed_items: number;
+  success_items: number;
+  error_items: number;
+  include_errors: boolean;
+};
+
+type ActiveGeneralSyncRow = {
+  id: string;
+  status: string;
+  trigger_source: string;
+  sync_mode: string;
+  current_batch_name: string | null;
+  last_heartbeat_at: Date | string | null;
+  campaign_count: number;
+  batch_count: number;
+  record_count: number;
+  processed_count: number;
+  success_count: number;
+  error_count: number;
+};
+
 export async function GET() {
   const auth = await requireApiUser(["administrador", "operador", "visualizador"]);
   if (!auth.ok) return auth.response;
 
-  const supabase = createSupabaseAdminClient();
-  const { data: jobs, error } = await supabase
-    .from("processing_jobs")
-    .select("id,campaign_id,batch_id,status,processing_origin,processing_scope,processing_priority,total_items,processed_items,success_items,error_items,include_errors,created_at")
-    .in("status", ["queued", "running", "deferred"])
-    .order("processing_priority", { ascending: false })
-    .order("created_at", { ascending: true });
-
-  if (error) {
+  let jobs: ActiveJobRow[];
+  try {
+    const result = await dbQuery<ActiveJobRow>(
+      `select id,
+              campaign_id,
+              batch_id,
+              status,
+              processing_origin,
+              processing_scope,
+              processing_priority,
+              total_items,
+              processed_items,
+              success_items,
+              error_items,
+              include_errors
+         from processing_jobs
+        where status in ('queued', 'running', 'deferred')
+        order by processing_priority desc, created_at asc`
+    );
+    jobs = result.rows;
+  } catch (error) {
+    console.error("[ACTIVE_PROCESSING_JOBS_QUERY_FAILED]", {
+      message: error instanceof Error ? error.message : "Erro desconhecido"
+    });
     return NextResponse.json(
       { success: false, error: { message: "Não foi possível consultar o processamento ativo." } },
       { status: 500 }
     );
   }
 
-  const { data: activeRun, error: runError } = await supabase
-    .from("general_sync_runs")
-    .select(
-      "id,status,trigger_source,sync_mode,current_batch_name,last_heartbeat_at,campaign_count,batch_count,record_count,processed_count,success_count,error_count"
-    )
-    .in("status", ["queued", "running", "cancelling"])
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (runError) {
+  let activeRun: ActiveGeneralSyncRow | null;
+  try {
+    const result = await dbQuery<ActiveGeneralSyncRow>(
+      `select id,
+              status,
+              trigger_source,
+              sync_mode,
+              current_batch_name,
+              last_heartbeat_at,
+              campaign_count,
+              batch_count,
+              record_count,
+              processed_count,
+              success_count,
+              error_count
+         from general_sync_runs
+        where status in ('queued', 'running', 'cancelling')
+        order by created_at desc
+        limit 1`
+    );
+    activeRun = result.rows[0] ?? null;
+  } catch (error) {
+    console.error("[ACTIVE_GENERAL_SYNC_QUERY_FAILED]", {
+      message: error instanceof Error ? error.message : "Erro desconhecido"
+    });
     return NextResponse.json(
       { success: false, error: { message: "Não foi possível consultar a sincronização ativa." } },
       { status: 500 }
     );
   }
 
-  const rows = jobs ?? [];
+  const rows = jobs;
   const executableRows = rows.filter((job) => job.status === "queued" || job.status === "running");
   const deferredRows = rows.filter((job) => job.status === "deferred");
   const summary = executableRows.reduce(
@@ -51,8 +110,8 @@ export async function GET() {
       processedItems: total.processedItems + Number(job.processed_items ?? 0),
       successItems: total.successItems + Number(job.success_items ?? 0),
       errorItems: total.errorItems + Number(job.error_items ?? 0),
-      campaigns: total.campaigns.add(job.campaign_id),
-      batches: total.batches.add(job.batch_id)
+      campaigns: job.campaign_id ? total.campaigns.add(job.campaign_id) : total.campaigns,
+      batches: job.batch_id ? total.batches.add(job.batch_id) : total.batches
     }),
     {
       totalItems: 0,
