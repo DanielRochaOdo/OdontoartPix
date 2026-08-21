@@ -62,7 +62,9 @@ function getProcessingBlockSize() {
   return Math.min(Math.max(configured, 1), 1000);
 }
 
-export async function getLocalCampaignById(id: string) {
+export async function getLocalCampaignById(
+  id: string
+): Promise<LocalCampaignDetail | null> {
   const result = await dbQuery<LocalCampaignDetail>(
     `select id,
             name,
@@ -83,7 +85,9 @@ export async function getLocalCampaignById(id: string) {
   return result.rows[0] ?? null;
 }
 
-export async function getLocalBatchesByCampaign(campaignId: string) {
+export async function getLocalBatchesByCampaign(
+  campaignId: string
+): Promise<LocalCampaignBatch[]> {
   const result = await dbQuery<LocalCampaignBatch>(
     `select id,
             campaign_id,
@@ -106,7 +110,9 @@ export async function getLocalBatchesByCampaign(campaignId: string) {
   return result.rows;
 }
 
-export async function getLocalCampaignMetrics(campaignId: string) {
+export async function getLocalCampaignMetrics(
+  campaignId: string
+): Promise<LocalCampaignMetrics | null> {
   const result = await dbQuery<LocalCampaignMetrics>(
     `with member_metrics as (
        select
@@ -194,7 +200,9 @@ export async function getLocalCampaignMetrics(campaignId: string) {
   return result.rows[0] ?? null;
 }
 
-export async function getLocalBatchMetrics(batchId: string) {
+export async function getLocalBatchMetrics(
+  batchId: string
+): Promise<LocalBatchMetrics | null> {
   const result = await dbQuery<LocalBatchMetrics>(
     `with member_metrics as (
        select
