@@ -5,7 +5,7 @@ import { DataAccessError } from "@/lib/errors/data-access-error";
 
 type GeneralSyncScopeType = "all" | "filtered";
 
-type ScopeInput = {
+export type GeneralSyncScopeInput = {
   campaignIds?: string[];
   batchIds?: string[];
 };
@@ -20,7 +20,7 @@ type ScopeBatch = {
   position: number;
 };
 
-type ScopeResolution = {
+export type GeneralSyncScopeResolution = {
   scopeType: GeneralSyncScopeType;
   filters: {
     campaignIds: string[];
@@ -44,7 +44,7 @@ type ScopeResolution = {
   emptyReason: string | null;
 };
 
-export type GeneralSyncPreview = Omit<ScopeResolution, "filters" | "batches"> & {
+export type GeneralSyncPreview = Omit<GeneralSyncScopeResolution, "filters" | "batches"> & {
   confirmationToken: string;
 };
 
@@ -202,7 +202,9 @@ async function countActiveProcessingForScope(batchIds: string[]) {
   }
 }
 
-async function resolveScope(input: ScopeInput): Promise<ScopeResolution> {
+export async function resolveGeneralSyncScope(
+  input: GeneralSyncScopeInput
+): Promise<GeneralSyncScopeResolution> {
   const campaignIds = uniqueIds(input.campaignIds);
   const batchIds = uniqueIds(input.batchIds);
 
@@ -246,7 +248,7 @@ async function resolveScope(input: ScopeInput): Promise<ScopeResolution> {
   };
 }
 
-async function logPreviewEvent(scope: ScopeResolution) {
+async function logPreviewEvent(scope: GeneralSyncScopeResolution) {
   const profile = await getCurrentProfile();
   if (!profile?.id) return;
 
@@ -287,8 +289,8 @@ async function logPreviewEvent(scope: ScopeResolution) {
   }
 }
 
-export async function getGeneralSyncPreview(input: ScopeInput): Promise<GeneralSyncPreview> {
-  const scope = await resolveScope(input);
+export async function getGeneralSyncPreview(input: GeneralSyncScopeInput): Promise<GeneralSyncPreview> {
+  const scope = await resolveGeneralSyncScope(input);
   await logPreviewEvent(scope);
 
   return {
