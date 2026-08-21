@@ -49,6 +49,27 @@ function retryDelayMs(attempt: number) {
   return Math.min(60_000, 1000 * 2 ** Math.max(0, attempt - 1));
 }
 
+async function runWithConcurrency<T>(
+  items: T[],
+  concurrency: number,
+  task: (item: T) => Promise<void>
+) {
+  let cursor = 0;
+
+  const workers = Array.from(
+    { length: Math.min(concurrency, items.length) },
+    async () => {
+      while (true) {
+        const index = cursor++;
+        if (index >= items.length) return;
+        await task(items[index]!);
+      }
+    }
+  );
+
+  await Promise.all(workers);
+}
+
 async function claimNextJob(workerId: string, leaseSeconds: number) {
   return withTransaction(async (client) => {
     const selected = await clientQuery<LocalJob>(
@@ -552,11 +573,21 @@ async function failJob(job: LocalJob, workerId: string, error: unknown) {
   );
 }
 
-export async function runLocalWorkerOnce(options?: { claimLimit?: number }): Promise<LocalWorkerRunResult> {
+export async function runLocalWorkerOnce(options?: {
+  claimLimit?: number;
+  concurrency?: number;
+}): Promise<LocalWorkerRunResult> {
   const workerId = randomUUID();
   const config = await getProcessingConfig();
   const requestedLimit = options?.claimLimit ?? config.claimBatchSize;
   const claimLimit = Math.max(1, Math.min(requestedLimit, config.claimBatchSize, 500));
+
+  const requestedConcurrency = options?.concurrency ?? config.erpConcurrency;
+  const concurrency = Math.max(
+    1,
+    Math.min(requestedConcurrency, config.erpConcurrency, claimLimit, 20)
+  );
+
   const job = await claimNextJob(workerId, config.globalLockLeaseSeconds);
 
   if (!job) {
@@ -579,8 +610,9 @@ export async function runLocalWorkerOnce(options?: { claimLimit?: number }): Pro
   try {
     const claimed = await claimMembers(job, workerId, claimLimit);
 
-    for (const item of claimed) {
+    await runWithConcurrency(claimed, concurrency, async (item) => {
       const member = await loadMember(item.member_id);
+
       try {
         const associatedCode = String(member?.external_user_code ?? "").trim();
         const targetInstallmentId = String(item.target_installment_id ?? "").trim();
@@ -601,6 +633,7 @@ export async function runLocalWorkerOnce(options?: { claimLimit?: number }): Pro
           durationMs: result.durationMs,
           analysis: result.analysis
         });
+
         if (persisted) succeeded += 1;
       } catch (error) {
         const outcome = await persistFailure({
@@ -610,12 +643,13 @@ export async function runLocalWorkerOnce(options?: { claimLimit?: number }): Pro
           error,
           maxAttempts: config.maxAttemptsPerItem
         });
+
         if (outcome.persisted) {
           if (outcome.terminal) failed += 1;
           else retried += 1;
         }
       }
-    }
+    });
 
     await recalculateBatch(job.batch_id);
     const jobStatus = await releaseAndFinalizeJob(job, workerId);
