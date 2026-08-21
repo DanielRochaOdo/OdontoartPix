@@ -1,9 +1,15 @@
 import { z } from "zod";
 import { requireApiUser } from "@/lib/auth/require-api-user";
-import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { getDbPool } from "@/lib/db/pool";
 import { fail, ok } from "@/lib/http/api-response";
 
 const ParamsSchema = z.object({ id: z.string().uuid() });
+
+type PausedJobRow = {
+  id: string;
+  batch_id: string | null;
+  status: string;
+};
 
 export async function POST(
   request: Request,
@@ -21,73 +27,73 @@ export async function POST(
       ? (body as { reason: string }).reason.trim().slice(0, 500)
       : "Processamento manual pausado pelo operador.";
 
-  const supabase = createSupabaseAdminClient();
-  const pausedAt = new Date().toISOString();
+  const batchId = parsed.data.id;
+  const pool = getDbPool();
+  const client = await pool.connect();
 
-  // Nunca altera jobs do dashboard. A pausa de lote pertence exclusivamente
-  // ao fluxo manual e o worker ativo recebe uma solicitacao cooperativa.
-  const { data: runningJobs, error: runningError } = await supabase
-    .from("processing_jobs")
-    .update({
-      stop_requested_at: pausedAt,
-      stop_requested_by: auth.profile.id,
-      stop_reason: reason,
-      updated_at: pausedAt
-    })
-    .eq("batch_id", parsed.data.id)
-    .eq("processing_origin", "manual")
-    .eq("status", "running")
-    .select("id,batch_id,status");
+  try {
+    await client.query("BEGIN");
 
-  if (runningError) {
-    console.error("[BATCH_PAUSE_RUNNING_FAILED]", {
-      batchId: parsed.data.id,
-      message: runningError.message
-    });
-    return fail("DATABASE_ERROR", "Não foi possível solicitar a pausa do lote.", 500);
-  }
+    // Nunca altera jobs do dashboard. A pausa de lote pertence exclusivamente
+    // ao fluxo manual e o worker ativo recebe uma solicitacao cooperativa.
+    const runningJobs = await client.query<PausedJobRow>(
+      `update processing_jobs
+          set stop_requested_at = now(),
+              stop_requested_by = $2::uuid,
+              stop_reason = $3,
+              updated_at = now()
+        where batch_id = $1::uuid
+          and processing_origin = 'manual'
+          and status = 'running'
+      returning id, batch_id, status`,
+      [batchId, auth.profile.id, reason]
+    );
 
-  const { data: queuedJobs, error: queuedError } = await supabase
-    .from("processing_jobs")
-    .update({
-      status: "paused",
-      stop_requested_at: pausedAt,
-      stop_requested_by: auth.profile.id,
-      stop_reason: reason,
-      finished_at: null,
-      updated_at: pausedAt
-    })
-    .eq("batch_id", parsed.data.id)
-    .eq("processing_origin", "manual")
-    .eq("status", "queued")
-    .select("id,batch_id,status");
+    const queuedJobs = await client.query<PausedJobRow>(
+      `update processing_jobs
+          set status = 'paused',
+              stop_requested_at = now(),
+              stop_requested_by = $2::uuid,
+              stop_reason = $3,
+              finished_at = null,
+              updated_at = now()
+        where batch_id = $1::uuid
+          and processing_origin = 'manual'
+          and status = 'queued'
+      returning id, batch_id, status`,
+      [batchId, auth.profile.id, reason]
+    );
 
-  if (queuedError) {
-    console.error("[BATCH_PAUSE_QUEUED_FAILED]", {
-      batchId: parsed.data.id,
-      message: queuedError.message
-    });
-    return fail("DATABASE_ERROR", "Não foi possível pausar os jobs enfileirados do lote.", 500);
-  }
+    await client.query("COMMIT");
 
-  const jobs = [...(runningJobs ?? []), ...(queuedJobs ?? [])];
-  if (jobs.length === 0) {
+    const jobs = [...runningJobs.rows, ...queuedJobs.rows];
+    if (jobs.length === 0) {
+      return ok(
+        {
+          batchId,
+          jobsAffected: 0,
+          jobIds: []
+        },
+        "Nenhum job manual ativo foi encontrado; jobs do dashboard não foram alterados."
+      );
+    }
+
     return ok(
       {
-        batchId: parsed.data.id,
-        jobsAffected: 0,
-        jobIds: []
+        batchId,
+        jobsAffected: jobs.length,
+        jobIds: jobs.map((job) => job.id)
       },
-      "Nenhum job manual ativo foi encontrado; jobs do dashboard não foram alterados."
+      "Pausa solicitada somente para o processamento manual do lote."
     );
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    console.error("[BATCH_PAUSE_FAILED]", {
+      batchId,
+      message: error instanceof Error ? error.message : "Erro desconhecido"
+    });
+    return fail("DATABASE_ERROR", "Não foi possível pausar o processamento manual do lote.", 500);
+  } finally {
+    client.release();
   }
-
-  return ok(
-    {
-      batchId: parsed.data.id,
-      jobsAffected: jobs.length,
-      jobIds: jobs.map((job) => job.id)
-    },
-    "Pausa solicitada somente para o processamento manual do lote."
-  );
 }
