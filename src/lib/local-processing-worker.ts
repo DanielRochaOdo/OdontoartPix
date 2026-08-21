@@ -212,8 +212,36 @@ async function persistSuccess(input: {
     );
     if (!owned.rows[0]) return false;
 
-    await clientQuery(client, `delete from member_installments where campaign_batch_member_id = $1`, [claimed.id]);
-    for (const installment of analysis.installments) {
+    await clientQuery(
+      client,
+      `delete from member_installments
+        where campaign_batch_member_id = $1`,
+      [claimed.id]
+    );
+
+    if (analysis.installments.length > 0) {
+      const installmentRows = analysis.installments.map((installment) => ({
+        cod_usuario: installment.userCode ?? null,
+        cod_parcela: installment.installmentCode,
+        due_date_text: installment.dueDate ?? null,
+        installment_type: installment.installmentType ?? null,
+        boleto_code: installment.boletoCode ?? null,
+        pix_code: installment.pixCode ?? null,
+        card_payment_link: installment.cardPaymentLink ?? null,
+        situation: installment.situation ?? null,
+        payment_description: installment.paymentDescription ?? null,
+        payment_date_text: installment.paymentDate ?? null,
+        paid_amount_cents: installment.paidAmountCents,
+        base_amount_cents: installment.baseAmountCents,
+        fine_amount_cents: installment.fineAmountCents,
+        interest_amount_cents: installment.interestAmountCents,
+        additional_amount_cents: installment.additionalAmountCents,
+        discount_amount_cents: installment.discountAmountCents,
+        final_amount_cents: installment.finalAmountCents,
+        plan_type: installment.planType,
+        observation: installment.observation ?? null
+      }));
+
       await clientQuery(
         client,
         `insert into member_installments(
@@ -238,36 +266,68 @@ async function persistSuccess(input: {
            plan_type,
            observation,
            updated_at
-         ) values (
-           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,now()
+         )
+         select
+           $1::uuid,
+           row.cod_usuario,
+           row.cod_parcela,
+           row.due_date_text,
+           row.installment_type,
+           row.boleto_code,
+           row.pix_code,
+           row.card_payment_link,
+           row.situation,
+           row.payment_description,
+           row.payment_date_text,
+           row.paid_amount_cents,
+           row.base_amount_cents,
+           row.fine_amount_cents,
+           row.interest_amount_cents,
+           row.additional_amount_cents,
+           row.discount_amount_cents,
+           row.final_amount_cents,
+           row.plan_type,
+           row.observation,
+           now()
+         from jsonb_to_recordset($2::jsonb) as row(
+           cod_usuario text,
+           cod_parcela text,
+           due_date_text text,
+           installment_type text,
+           boleto_code text,
+           pix_code text,
+           card_payment_link text,
+           situation text,
+           payment_description text,
+           payment_date_text text,
+           paid_amount_cents bigint,
+           base_amount_cents bigint,
+           fine_amount_cents bigint,
+           interest_amount_cents bigint,
+           additional_amount_cents bigint,
+           discount_amount_cents bigint,
+           final_amount_cents bigint,
+           plan_type text,
+           observation text
          )`,
-        [
-          claimed.id,
-          installment.userCode ?? null,
-          installment.installmentCode,
-          installment.dueDate ?? null,
-          installment.installmentType ?? null,
-          installment.boletoCode ?? null,
-          installment.pixCode ?? null,
-          installment.cardPaymentLink ?? null,
-          installment.situation ?? null,
-          installment.paymentDescription ?? null,
-          installment.paymentDate ?? null,
-          installment.paidAmountCents,
-          installment.baseAmountCents,
-          installment.fineAmountCents,
-          installment.interestAmountCents,
-          installment.additionalAmountCents,
-          installment.discountAmountCents,
-          installment.finalAmountCents,
-          installment.planType,
-          installment.observation ?? null
-        ]
+        [claimed.id, JSON.stringify(installmentRows)]
       );
     }
 
-    await clientQuery(client, `delete from member_plan_totals where campaign_batch_member_id = $1`, [claimed.id]);
-    for (const total of analysis.totalsByPlan) {
+    await clientQuery(
+      client,
+      `delete from member_plan_totals
+        where campaign_batch_member_id = $1`,
+      [claimed.id]
+    );
+
+    if (analysis.totalsByPlan.length > 0) {
+      const planTotalRows = analysis.totalsByPlan.map((total) => ({
+        plan_type: total.planType,
+        installments_count: total.installmentsCount,
+        total_amount_cents: total.totalAmountCents
+      }));
+
       await clientQuery(
         client,
         `insert into member_plan_totals(
@@ -276,8 +336,19 @@ async function persistSuccess(input: {
            installments_count,
            total_amount_cents,
            updated_at
-         ) values ($1,$2,$3,$4,now())`,
-        [claimed.id, total.planType, total.installmentsCount, total.totalAmountCents]
+         )
+         select
+           $1::uuid,
+           row.plan_type,
+           row.installments_count,
+           row.total_amount_cents,
+           now()
+         from jsonb_to_recordset($2::jsonb) as row(
+           plan_type text,
+           installments_count integer,
+           total_amount_cents bigint
+         )`,
+        [claimed.id, JSON.stringify(planTotalRows)]
       );
     }
 

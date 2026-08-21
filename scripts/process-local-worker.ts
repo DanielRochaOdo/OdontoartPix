@@ -1,4 +1,5 @@
 import { runLocalWorkerOnce } from "../src/lib/local-processing-worker";
+import { getDbPool } from "../src/lib/db/pool";
 
 function readPositiveIntegerArgument(name: string) {
   const prefix = `--${name}=`;
@@ -22,9 +23,13 @@ async function main() {
   if (result.jobStatus === "failed") process.exitCode = 1;
 }
 
-main().catch((error) => {
-  console.error("[LOCAL_WORKER_FATAL]", {
-    message: error instanceof Error ? error.message : String(error)
+main()
+  .catch((error) => {
+    console.error("[LOCAL_WORKER_FATAL]", {
+      message: error instanceof Error ? error.message : String(error)
+    });
+    process.exitCode = 1;
+  })
+  .finally(async () => {
+    await getDbPool().end();
   });
-  process.exitCode = 1;
-});
