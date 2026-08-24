@@ -9,10 +9,16 @@ declare
   v_base timestamptz;
   v_next timestamptz;
 begin
-  select coalesce(scheduled_interval_minutes, 60)
-    into v_interval
-    from processing_settings
-   where settings_key = 'default';
+  select coalesce(
+           (
+             select scheduled_interval_minutes
+               from processing_settings
+              where settings_key = 'default'
+              limit 1
+           ),
+           60
+         )
+    into v_interval;
 
   if v_interval not in (1, 5, 30, 60, 120) then
     v_interval := 60;
@@ -80,8 +86,9 @@ returns trigger
 language plpgsql
 as $$
 begin
-  if tg_op = 'INSERT'
-     or old.scheduled_interval_minutes is distinct from new.scheduled_interval_minutes then
+  if tg_op = 'INSERT' then
+    perform recalculate_local_processing_next_run_v1(null);
+  elsif old.scheduled_interval_minutes is distinct from new.scheduled_interval_minutes then
     perform recalculate_local_processing_next_run_v1(null);
   end if;
 
