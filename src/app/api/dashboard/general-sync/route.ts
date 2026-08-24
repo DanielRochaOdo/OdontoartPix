@@ -1,11 +1,7 @@
 import { z } from "zod";
 import { requireApiUser } from "@/lib/auth/require-api-user";
 import { fail, ok } from "@/lib/http/api-response";
-import {
-  dispatchDurableProcessingWorkflowSafely,
-  runImmediateProcessingKickoff
-} from "@/lib/processing-kickoff";
-import { startGeneralSync } from "@/lib/general-sync";
+import { createLocalGeneralSyncRun } from "@/lib/general-sync-start";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -26,36 +22,26 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await startGeneralSync({
+    const result = await createLocalGeneralSyncRun({
       ...parsed.data,
       requestedBy: auth.profile.id
     });
 
     if (!result.created) {
-      return ok(result, "Ja existe uma sincronizacao geral ativa.", 202);
-    }
+      const message =
+        result.reason === "REQUEST_ALREADY_CREATED"
+          ? "Esta solicitacao de sincronizacao geral ja foi criada."
+          : "Ja existe uma sincronizacao geral ativa.";
 
-    const durableDispatch = await dispatchDurableProcessingWorkflowSafely({
-      source: "dashboard-general-sync",
-      requestedBy: auth.profile.id
-    });
-    const kickoff = durableDispatch.ok
-      ? null
-      : await runImmediateProcessingKickoff({
-          processingOrigin: "dashboard",
-          includeGeneralSync: true
-        });
+      return ok(result, message, 202);
+    }
 
     return ok(
       {
         created: true,
-        run: result.run,
-        kickoff,
-        durableDispatch
+        run: result.run
       },
-      durableDispatch.ok
-        ? "A sincronizacao geral foi criada e entregue ao worker duravel."
-        : "O worker duravel falhou ao ser acionado; o processamento local de contingencia foi executado e o erro foi registrado.",
+      "A sincronizacao geral foi criada e sera processada pelo worker local.",
       202
     );
   } catch (error) {
