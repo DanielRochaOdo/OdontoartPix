@@ -1,47 +1,18 @@
 import { z } from "zod";
 import { requireApiUser } from "@/lib/auth/require-api-user";
-import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { dbQuery } from "@/lib/db/pool";
 import { fail, ok } from "@/lib/http/api-response";
 
 const ParamsSchema = z.object({ runId: z.string().uuid() });
 
-type ReplayRow = {
-  request_id: string;
-  status: "queued" | "processing" | "retrying" | "resolved" | "failed";
-  requested_at: string;
+type LatestRow = { request_id: string; requested_at: string };
+type CountsRow = {
+  requested_count: number;
+  queued_count: number;
+  processing_count: number;
+  resolved_count: number;
+  failed_count: number;
 };
-
-type EventRow = {
-  id: string;
-  event_type: string;
-  details: Record<string, unknown> | null;
-  created_at: string;
-};
-
-function numberFromDetails(details: Record<string, unknown> | null, key: string) {
-  const value = Number(details?.[key] ?? 0);
-  return Number.isFinite(value) ? value : 0;
-}
-
-function activityLabel(event: EventRow) {
-  if (event.event_type === "dashboard_errors_absorbed") {
-    const count = numberFromDetails(event.details, "requestedCount");
-    return `${count} erro(s) adicionados ao pedido fechado`;
-  }
-
-  if (event.event_type === "dashboard_error_reprocess_started") {
-    const count = numberFromDetails(event.details, "requestedCount");
-    return `${count} erro(s) do pedido entraram em reprocessamento`;
-  }
-
-  if (event.event_type === "dashboard_error_reprocess_completed") {
-    const resolved = numberFromDetails(event.details, "resolvedCount");
-    const failed = numberFromDetails(event.details, "failedCount");
-    return `${resolved} erro(s) resolvidos · ${failed} permaneceram com erro`;
-  }
-
-  return "Atualização da tratativa de erros";
-}
 
 export async function GET(
   _: Request,
@@ -54,16 +25,15 @@ export async function GET(
   if (!parsed.success) return fail("VALIDATION_ERROR", "Sincronizacao geral invalida.", 400);
 
   try {
-    const supabase = createSupabaseAdminClient();
-
-    const { data: latest, error: latestError } = await supabase
-      .from("dashboard_error_reprocess_items")
-      .select("request_id,requested_at")
-      .eq("run_id", parsed.data.runId)
-      .order("requested_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (latestError) throw latestError;
+    const latestResult = await dbQuery<LatestRow>(
+      `select request_id, requested_at::text
+         from dashboard_error_reprocess_items
+        where run_id = $1::uuid
+        order by requested_at desc
+        limit 1`,
+      [parsed.data.runId]
+    );
+    const latest = latestResult.rows[0];
 
     if (!latest) {
       return ok({
@@ -81,43 +51,55 @@ export async function GET(
       });
     }
 
-    const requestId = String(latest.request_id);
-    const [{ data: rows, error: rowsError }, { data: events, error: eventsError }] = await Promise.all([
-      supabase
-        .from("dashboard_error_reprocess_items")
-        .select("request_id,status,requested_at")
-        .eq("run_id", parsed.data.runId)
-        .eq("request_id", requestId),
-      supabase
-        .from("event_logs")
-        .select("id,event_type,details,created_at")
-        .eq("category", "processing")
-        .eq("details->>runId", parsed.data.runId)
-        .eq("details->>requestId", requestId)
-        .in("event_type", [
-          "dashboard_errors_absorbed",
-          "dashboard_error_reprocess_started",
-          "dashboard_error_reprocess_completed"
-        ])
-        .order("created_at", { ascending: false })
-        .limit(8)
-    ]);
-
-    if (rowsError) throw rowsError;
-    if (eventsError) throw eventsError;
-
-    const replayRows = (rows ?? []) as ReplayRow[];
-    const requestedCount = replayRows.length;
-    const queuedCount = replayRows.filter((row) => row.status === "queued" || row.status === "retrying").length;
-    const processingCount = replayRows.filter((row) => row.status === "processing").length;
-    const resolvedCount = replayRows.filter((row) => row.status === "resolved").length;
-    const failedCount = replayRows.filter((row) => row.status === "failed").length;
+    const countsResult = await dbQuery<CountsRow>(
+      `select
+         count(*)::int as requested_count,
+         count(*) filter (where status in ('queued', 'retrying'))::int as queued_count,
+         count(*) filter (where status = 'processing')::int as processing_count,
+         count(*) filter (where status = 'resolved')::int as resolved_count,
+         count(*) filter (where status = 'failed')::int as failed_count
+       from dashboard_error_reprocess_items
+      where run_id = $1::uuid
+        and request_id = $2::uuid`,
+      [parsed.data.runId, latest.request_id]
+    );
+    const counts = countsResult.rows[0];
+    const requestedCount = Number(counts?.requested_count ?? 0);
+    const queuedCount = Number(counts?.queued_count ?? 0);
+    const processingCount = Number(counts?.processing_count ?? 0);
+    const resolvedCount = Number(counts?.resolved_count ?? 0);
+    const failedCount = Number(counts?.failed_count ?? 0);
     const completedCount = resolvedCount + failedCount;
-    const remainingCount = Math.max(requestedCount - completedCount, 0);
+
+    const activities = [
+      {
+        id: `${latest.request_id}-requested`,
+        type: "dashboard_errors_absorbed",
+        label: `${requestedCount} erro(s) adicionados ao pedido fechado`,
+        createdAt: latest.requested_at
+      }
+    ];
+
+    if (processingCount > 0 || completedCount > 0) {
+      activities.unshift({
+        id: `${latest.request_id}-processing`,
+        type: "dashboard_error_reprocess_started",
+        label: `${requestedCount} erro(s) do pedido entraram em reprocessamento`,
+        createdAt: latest.requested_at
+      });
+    }
+    if (completedCount === requestedCount && requestedCount > 0) {
+      activities.unshift({
+        id: `${latest.request_id}-completed`,
+        type: "dashboard_error_reprocess_completed",
+        label: `${resolvedCount} erro(s) resolvidos · ${failedCount} permaneceram com erro`,
+        createdAt: latest.requested_at
+      });
+    }
 
     return ok({
       runId: parsed.data.runId,
-      requestId,
+      requestId: latest.request_id,
       requestedAt: latest.requested_at,
       requestedCount,
       queuedCount,
@@ -125,13 +107,8 @@ export async function GET(
       resolvedCount,
       failedCount,
       completedCount,
-      remainingCount,
-      activities: ((events ?? []) as EventRow[]).map((event) => ({
-        id: event.id,
-        type: event.event_type,
-        label: activityLabel(event),
-        createdAt: event.created_at
-      }))
+      remainingCount: Math.max(requestedCount - completedCount, 0),
+      activities
     });
   } catch (error) {
     console.error("[DASHBOARD_ERROR_REPROCESS_STATUS_FAILED]", {
