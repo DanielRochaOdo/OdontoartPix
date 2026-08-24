@@ -1,8 +1,8 @@
 import { z } from "zod";
 import { requireApiUser } from "@/lib/auth/require-api-user";
+import { enqueueBatchJob, PROCESSING_PRIORITIES } from "@/lib/batch-job-service";
 import { fail, ok } from "@/lib/http/api-response";
 import { dbQuery } from "@/lib/db/pool";
-import { enqueueLocalBatchJob } from "@/lib/local-batch-job-service";
 
 export const runtime = "nodejs";
 
@@ -36,14 +36,14 @@ export async function POST(
     const batch = batchResult.rows[0];
     if (!batch) return fail("NOT_FOUND", "Lote não encontrado.", 404);
 
-    const job = await enqueueLocalBatchJob({
+    const job = await enqueueBatchJob({
       campaignId: batch.campaign_id,
       batchId: batch.id,
       requestedBy: auth.profile.id,
       includeErrors: false,
       processingOrigin: "manual",
       processingScope: "batch",
-      processingPriority: 60
+      processingPriority: PROCESSING_PRIORITIES.batch
     });
 
     if (!job) {
