@@ -42,28 +42,23 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Finalize definitive dashboard interrupt
+      - name: Preserve financial truth while reopening manual processing
         shell: bash
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          path = Path('src/components/general-sync-button.tsx')
+          path = Path('src/lib/batch-job-service.ts')
           text = path.read_text()
-          if text.count('onClick={() => void pause()}') != 2:
-              raise SystemExit('expected exactly two active dashboard pause controls')
-          text = text.replace('onClick={() => void pause()}', 'onClick={() => void cancel()}')
-          text = text.replace('disabled={pausing || cancelling || resuming}', 'disabled={cancelling || resuming}')
-          text = text.replace('className="rounded-lg bg-amber-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60"', 'className="rounded-lg bg-red-700 px-3 py-2 text-xs font-semibold text-white transition hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-60"')
-          text = text.replace('className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-amber-700 disabled:opacity-60"', 'className="rounded-lg bg-red-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-800 disabled:opacity-60"')
-          text = text.replace('{pausing ? "Pausando..." : "Pausar sincronização"}', '{cancelling ? "Interrompendo..." : "Interromper processamento"}')
-          text = text.replace('{pausing ? "Pausando..." : "Pausar sincronizacao"}', '{cancelling ? "Interrompendo..." : "Interromper processamento"}')
-          path.write_text(text)
+          needle = '            payment_status = null,\n'
+          if text.count(needle) != 1:
+              raise SystemExit('expected exactly one legacy payment_status reset')
+          path.write_text(text.replace(needle, '', 1))
           PY
-          if ! git diff --quiet -- src/components/general-sync-button.tsx; then
+          if ! git diff --quiet -- src/lib/batch-job-service.ts; then
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add src/components/general-sync-button.tsx
-            git commit -m "make dashboard interrupt definitive"
+            git add src/lib/batch-job-service.ts
+            git commit -m "preserve financial truth during manual reopen"
             git push origin HEAD:postgres-local-auth-foundation
           fi
 
