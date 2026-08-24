@@ -31,10 +31,8 @@ jobs:
           --health-retries 10
 
     steps:
-      - name: Checkout migration branch
+      - name: Checkout triggering commit
         uses: actions/checkout@v4
-        with:
-          ref: postgres-local-auth-foundation
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -47,6 +45,12 @@ jobs:
 
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high
+
+      - name: Validate deployment scripts
+        shell: bash
+        run: |
+          bash -n deploy/systemd/install-app.sh
+          bash -n deploy/systemd/install-worker.sh
 
       - name: Apply local PostgreSQL migrations
         env:
