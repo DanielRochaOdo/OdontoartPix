@@ -165,9 +165,6 @@ function errorFromAbort(
     );
   }
 
-  // AbortController.abort(reason) pode fazer o fetch rejeitar com o proprio
-  // reason (inclusive uma string), em vez de um Error chamado AbortError.
-  // Por isso o estado do signal e a fonte do abort sao a referencia canonica.
   if (
     controller.signal.aborted ||
     reason === "connect-timeout" ||
@@ -242,7 +239,6 @@ async function consultMonthlyByAssociatedCodeSinglePage(
   }
 
   const url = buildMensalidadesRequestUrl(baseUrl, token, associatedCode);
-
   const { httpConnectTimeoutMs } = await getProcessingConfig();
   const controller = new AbortController();
   const abortFromWorker = () => controller.abort("processing-stopped");
@@ -331,6 +327,15 @@ export async function consultMonthlyByAssociatedCode(
     );
   }
 
+  const normalizedTargetInstallmentId = String(targetInstallmentId ?? "").trim();
+  if (!normalizedTargetInstallmentId) {
+    throw new ErpError(
+      "ERP_INVALID_RESPONSE",
+      "A consulta paginada exige a parcela alvo.",
+      false
+    );
+  }
+
   const { httpConnectTimeoutMs, maxPagesPerOperation } = await getProcessingConfig();
   const controller = new AbortController();
   const abortFromWorker = () => controller.abort("processing-stopped");
@@ -410,10 +415,7 @@ export async function consultMonthlyByAssociatedCode(
         );
       }
 
-      // A consulta existe para resolver uma unica target_installment_id. Assim
-      // que a parcela alvo aparece em uma pagina, as paginas posteriores nao
-      // agregam informacao necessaria para classificar essa parcela.
-      if (payloadContainsTargetInstallment(payload, targetInstallmentId)) break;
+      if (payloadContainsTargetInstallment(payload, normalizedTargetInstallmentId)) break;
 
       if (metadata.totalPages === 0 || requestedPage >= metadata.totalPages) break;
       requestedPage += 1;
@@ -423,7 +425,7 @@ export async function consultMonthlyByAssociatedCode(
       return {
         httpStatus,
         durationMs: performance.now() - startedAt,
-        analysis: analyzeMonthlyResponses(payloads, targetInstallmentId, fallbackDueDate, {
+        analysis: analyzeMonthlyResponses(payloads, normalizedTargetInstallmentId, fallbackDueDate, {
           historyComplete: true
         })
       };
