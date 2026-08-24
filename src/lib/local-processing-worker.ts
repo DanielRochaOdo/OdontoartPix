@@ -478,8 +478,8 @@ async function persistFailure(input: {
     );
     if (!owned.rows[0]) return { terminal, persisted: false };
 
-    -- A falha tecnica nunca apaga payment_status nem os valores da ultima
-    -- verdade financeira confirmada pelo ERP.
+    // A falha tecnica nunca apaga payment_status nem os valores da ultima
+    // verdade financeira confirmada pelo ERP.
     await clientQuery(
       client,
       `update campaign_batch_members
