@@ -1,8 +1,24 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   __test__parseRetryAfterMs,
-  buildMensalidadesRequestUrl
+  buildMensalidadesRequestUrl,
+  consultMonthlyByAssociatedCode
 } from "@/lib/mensalidades-api";
+
+vi.mock("@/lib/processing-config", () => ({
+  getProcessingConfig: vi.fn(async () => ({
+    httpConnectTimeoutMs: 1000,
+    httpReadTimeoutMs: 1000,
+    maxPagesPerOperation: 10
+  }))
+}));
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+  delete process.env.MENSALIDADES_API_BASE_URL;
+  delete process.env.MENSALIDADES_API_TOKEN;
+});
 
 describe("mensalidades-api helpers", () => {
   it("monta a URL com CodigoAssociadoEmpresa e sem CpfUsuario", () => {
@@ -44,6 +60,36 @@ describe("mensalidades-api helpers", () => {
 
     expect(url.searchParams.get("limite")).toBe("200");
     expect(url.searchParams.get("pagina")).toBe("2");
+  });
+
+  it("para a paginacao assim que encontra a parcela alvo", async () => {
+    process.env.MENSALIDADES_API_BASE_URL = "https://erp.exemplo.com";
+    process.env.MENSALIDADES_API_TOKEN = "token-123";
+
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      codigo: 1,
+      dados: {
+        CurrentPage: 1,
+        TotalPages: 5,
+        TotalCount: 500,
+        PageSize: 200,
+        Data: [{
+          Id: "55",
+          Valor: 100,
+          ValorPago: 100,
+          DescricaoRecebimento: "PIX"
+        }]
+      },
+      erros: null
+    }), { status: 200 }));
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await consultMonthlyByAssociatedCode("ASSOC-77", "55");
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result.analysis.paymentStatus).toBe("paid");
+    expect(result.analysis.paginationComplete).toBe(false);
   });
 
   it("interpreta Retry-After em segundos", () => {
