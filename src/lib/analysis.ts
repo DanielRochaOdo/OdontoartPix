@@ -373,7 +373,7 @@ function analyzeLegacyPayload(payload: NormalizedLegacyPayload, targetInstallmen
 
   if (installments.length === 0) {
     return {
-      paymentStatus: "unpaid",
+      paymentStatus: "paid",
       paymentStatusSource: "legacy_contract",
       message: payload.message || "Associado sem mensalidades em aberto.",
       installmentsCount: 0,
