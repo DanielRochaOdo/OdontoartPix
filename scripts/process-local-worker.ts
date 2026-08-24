@@ -1,4 +1,5 @@
 import { runLocalGeneralSyncCycle } from "../src/lib/general-sync-orchestrator";
+import { startDueLocalScheduledGeneralSync } from "../src/lib/general-sync-scheduled-start";
 import { finalizeQueuedLocalProcessingPauseRequests } from "../src/lib/local-processing-pause-checkpoint";
 import { runLocalWorkerOnce } from "../src/lib/local-processing-worker";
 import { getDbPool } from "../src/lib/db/pool";
@@ -36,6 +37,27 @@ function readNonNegativeIntegerArgument(name: string) {
 
 function hasFlag(name: string) {
   return process.argv.includes(`--${name}`);
+}
+
+function readScheduledSyncEnabled() {
+  const raw = process.env.PROCESSING_ALLOW_SCHEDULED_SYNC?.trim().toLowerCase();
+
+  if (!raw || raw === "false") return false;
+  if (raw === "true") return true;
+
+  throw new Error("PROCESSING_ALLOW_SCHEDULED_SYNC deve ser true ou false.");
+}
+
+function readProcessingSystemUserId() {
+  const value = process.env.PROCESSING_SYSTEM_USER_ID?.trim();
+
+  if (!value) {
+    throw new Error(
+      "PROCESSING_SYSTEM_USER_ID deve estar configurado quando PROCESSING_ALLOW_SCHEDULED_SYNC=true."
+    );
+  }
+
+  return value;
 }
 
 function sleep(ms: number) {
@@ -138,9 +160,23 @@ async function main() {
     const drain = hasFlag("drain");
     const delayMs = readNonNegativeIntegerArgument("delay-ms") ?? DEFAULT_DRAIN_DELAY_MS;
     const maxDrainCycles = readPositiveIntegerArgument("max-cycles") ?? DEFAULT_MAX_DRAIN_CYCLES;
+    const scheduledSyncEnabled = readScheduledSyncEnabled();
+    const processingSystemUserId = scheduledSyncEnabled ? readProcessingSystemUserId() : null;
     let productiveCycles = 0;
 
+    if (!scheduledSyncEnabled) {
+      console.info("[LOCAL_SCHEDULED_SYNC_DISABLED]");
+    }
+
     while (true) {
+      if (scheduledSyncEnabled && processingSystemUserId) {
+        const scheduledStartResult = await startDueLocalScheduledGeneralSync({
+          requestedBy: processingSystemUserId
+        });
+
+        console.info("[LOCAL_SCHEDULED_SYNC_START_COMPLETED]", scheduledStartResult);
+      }
+
       const generalSyncResult = await runLocalGeneralSyncCycle();
       console.info("[LOCAL_GENERAL_SYNC_CYCLE_COMPLETED]", generalSyncResult);
 
