@@ -7,30 +7,29 @@ import {
 } from "@/lib/analysis";
 
 describe("analyzeMonthlyResponse", () => {
-  it("classifica como pago quando parcelas é um array sem cod_parcela", () => {
+  it("nao infere pagamento quando o contrato legado retorna parcelas vazias", () => {
     const result = analyzeMonthlyResponse({ parcelas: [] });
-    expect(result.paymentStatus).toBe("paid");
+    expect(result.paymentStatus).toBe("unpaid");
     expect(result.totalPendingAmountCents).toBe(0);
   });
 
-  it("classifica como não pago, soma ValorFinal e preserva os campos financeiros", () => {
+  it("classifica como não pago, soma ValorFinal e preserva os campos financeiros suportados", () => {
     const result = analyzeMonthlyResponse({
       parcelas: [
         {
           cod_usuario: "A-1",
           cod_parcela: "10",
-          data_vencimento: "2025-12-01",
+          vencimento: "2025-12-01",
           tipo_parcela: "Mensalidade",
-          Boleto: "boleto",
-          Pix: "pix",
-          LinkPagamentoCartao: "https://example.com",
+          cod_boleto: "boleto",
+          cod_pix: "pix",
+          link_cartão: "https://example.com",
           Situacao: "ABERTO",
-          ValorPago: "10,00",
           Valor: "100,00",
           Multa: "2,00",
           Juros: "3,00",
-          Acrescimo: "4,00",
-          Desconto: "5,00",
+          AcrescimoAvulso: "4,00",
+          DescontoAvulso: "5,00",
           ValorFinal: "104,00",
           Tipo_plano: "Plano A",
           Observacao: "ok"
@@ -49,7 +48,7 @@ describe("analyzeMonthlyResponse", () => {
     expect(result.totalPendingAmountCents).toBe(15400);
     expect(result.installments[0]).toMatchObject({
       installmentCode: "10",
-      paidAmountCents: 1000,
+      paidAmountCents: null,
       baseAmountCents: 10000,
       fineAmountCents: 200,
       interestAmountCents: 300,
@@ -127,14 +126,14 @@ describe("analyzeMonthlyResponse", () => {
     expect(() => analyzeMonthlyResponse({ parcelas: null })).toThrow(MonthlyResponseError);
   });
 
-  it("aceita o novo contrato com dados.Data vazio como associado pago", () => {
+  it("nao confirma pagamento quando a parcela alvo nao aparece em dados.Data", () => {
     const result = analyzeMonthlyResponse({
       codigo: 1,
       dados: { CurrentPage: 1, TotalPages: 0, TotalCount: 0, PageSize: 0, Data: [] },
       erros: null
     }, "55");
 
-    expect(result.paymentStatus).toBe("paid");
+    expect(result.paymentStatus).toBe("unpaid");
     expect(result.paginationComplete).toBe(true);
   });
 
