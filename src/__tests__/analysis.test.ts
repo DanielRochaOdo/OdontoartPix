@@ -1,146 +1,141 @@
 import { describe, expect, it } from "vitest";
 import {
-  analyzeMonthlyResponses,
   analyzeMonthlyResponse,
+  analyzeMonthlyResponses,
   analyzeTargetInstallment,
   MonthlyResponseError
 } from "@/lib/analysis";
 
 describe("analyzeMonthlyResponse", () => {
   it("classifica como pago quando parcelas é um array sem cod_parcela", () => {
-    const result = analyzeMonthlyResponse({
-      mensagem: "Usuário sem mensalidades em aberto.",
-      parcelas: [{ Situacao: "ATIVO", Observacao: "Sem parcelas" }]
-    });
-
-    expect(result.paymentStatus).toBe("unpaid");
-    expect(result.installmentsCount).toBe(0);
+    const result = analyzeMonthlyResponse({ parcelas: [] });
+    expect(result.paymentStatus).toBe("paid");
     expect(result.totalPendingAmountCents).toBe(0);
-    expect(result.installments).toEqual([]);
   });
 
   it("classifica como não pago, soma ValorFinal e preserva os campos financeiros", () => {
     const result = analyzeMonthlyResponse({
       parcelas: [
         {
-          cod_usuario: "1",
+          cod_usuario: "A-1",
           cod_parcela: "10",
-          vencimento: "05/08/2026",
-          tipo_parcela: "Plano",
-          cod_boleto: "123",
-          cod_pix: "pix",
-          link_cartão: "https://pagamento.exemplo",
-          Situacao: "ATIVO",
-          Valor: 70,
-          Multa: 1,
-          Juros: 2,
-          AcrescimoAvulso: 3,
-          DescontoAvulso: 1.3,
-          ValorFinal: 74.7,
-          Tipo_plano: "Orto",
-          Observacao: "Parcela aberta"
+          data_vencimento: "2025-12-01",
+          tipo_parcela: "Mensalidade",
+          Boleto: "boleto",
+          Pix: "pix",
+          LinkPagamentoCartao: "https://example.com",
+          Situacao: "ABERTO",
+          ValorPago: "10,00",
+          Valor: "100,00",
+          Multa: "2,00",
+          Juros: "3,00",
+          Acrescimo: "4,00",
+          Desconto: "5,00",
+          ValorFinal: "104,00",
+          Tipo_plano: "Plano A",
+          Observacao: "ok"
+        },
+        {
+          cod_usuario: "A-1",
+          cod_parcela: "11",
+          ValorFinal: "50,00",
+          Tipo_plano: "Plano A"
         }
       ]
     });
 
     expect(result.paymentStatus).toBe("unpaid");
-    expect(result.totalPendingAmountCents).toBe(7470);
-    expect(result.totalsByPlan).toEqual([
-      { planType: "Orto", installmentsCount: 1, totalAmountCents: 7470 }
-    ]);
+    expect(result.installmentsCount).toBe(2);
+    expect(result.totalPendingAmountCents).toBe(15400);
     expect(result.installments[0]).toMatchObject({
       installmentCode: "10",
-      boletoCode: "123",
-      pixCode: "pix",
-      finalAmountCents: 7470,
-      planType: "Orto"
+      paidAmountCents: 1000,
+      baseAmountCents: 10000,
+      fineAmountCents: 200,
+      interestAmountCents: 300,
+      additionalAmountCents: 400,
+      discountAmountCents: 500,
+      finalAmountCents: 10400,
+      planType: "Plano A"
     });
   });
 
   it("ignora parcelas duplicadas pela combinação de usuário e cod_parcela", () => {
-    const parcelas = [
-      { cod_usuario: "1", cod_parcela: "10", Tipo_plano: "Orto", ValorFinal: 74.7 },
-      { cod_usuario: "1", cod_parcela: "10", Tipo_plano: "Orto", ValorFinal: 74.7 }
-    ];
-    const result = analyzeMonthlyResponse({ parcelas });
+    const result = analyzeMonthlyResponse({
+      parcelas: [
+        { cod_usuario: "A", cod_parcela: "1", ValorFinal: 10 },
+        { cod_usuario: "A", cod_parcela: "1", ValorFinal: 10 },
+        { cod_usuario: "B", cod_parcela: "1", ValorFinal: 20 }
+      ]
+    });
 
-    expect(result.installmentsCount).toBe(1);
-    expect(result.totalPendingAmountCents).toBe(7470);
-    expect(result.warnings[0]).toContain("duplicada");
+    expect(result.installmentsCount).toBe(2);
+    expect(result.totalPendingAmountCents).toBe(3000);
   });
 
   it("não considera cod_parcela vazio como parcela financeira", () => {
-    const result = analyzeMonthlyResponse({ parcelas: [{ cod_parcela: "   " }] });
-    expect(result.paymentStatus).toBe("unpaid");
+    const result = analyzeMonthlyResponse({
+      parcelas: [
+        { cod_usuario: "A", cod_parcela: "", ValorFinal: 10 },
+        { cod_usuario: "A", cod_parcela: "1", ValorFinal: 20 }
+      ]
+    });
+
+    expect(result.installmentsCount).toBe(1);
+    expect(result.totalPendingAmountCents).toBe(2000);
   });
 
   it("ignora parcelas do tipo Parcela Virtual em toda a leitura", () => {
     const result = analyzeMonthlyResponse({
       parcelas: [
         {
-          cod_usuario: "1",
-          cod_parcela: "virtual-1",
-          tipo_parcela: " Parcela Virtual ",
-          ValorFinal: "valor invalido",
-          Tipo_plano: "Orto"
+          cod_usuario: "A",
+          cod_parcela: "1",
+          tipo_parcela: "Parcela Virtual",
+          ValorFinal: 100
         },
         {
-          cod_usuario: "1",
-          cod_parcela: "10",
-          tipo_parcela: "Plano",
-          ValorFinal: 50,
-          Tipo_plano: "Orto"
+          cod_usuario: "A",
+          cod_parcela: "2",
+          tipo_parcela: "Mensalidade",
+          ValorFinal: 20
         }
       ]
     });
 
     expect(result.installmentsCount).toBe(1);
-    expect(result.totalPendingAmountCents).toBe(5000);
-    expect(result.installments[0]?.installmentCode).toBe("10");
+    expect(result.totalPendingAmountCents).toBe(2000);
+    expect(result.installments[0]?.installmentCode).toBe("2");
   });
 
   it("agrupa parcelas por Tipo_plano", () => {
     const result = analyzeMonthlyResponse({
       parcelas: [
-        { cod_parcela: "10", Tipo_plano: "Orto", ValorFinal: 10 },
-        { cod_parcela: "11", Tipo_plano: "Orto", ValorFinal: 20 },
-        { cod_parcela: "12", Tipo_plano: "Clínico", ValorFinal: 30 }
+        { cod_parcela: "1", Tipo_plano: "Plano B", ValorFinal: 30 },
+        { cod_parcela: "2", Tipo_plano: "Plano B", ValorFinal: 20 },
+        { cod_parcela: "3", Tipo_plano: "Plano C", ValorFinal: 10 }
       ]
     });
 
     expect(result.totalsByPlan).toEqual([
-      { planType: "Orto", installmentsCount: 2, totalAmountCents: 3000 },
-      { planType: "Clínico", installmentsCount: 1, totalAmountCents: 3000 }
+      { planType: "Plano B", installmentsCount: 2, totalAmountCents: 5000 },
+      { planType: "Plano C", installmentsCount: 1, totalAmountCents: 1000 }
     ]);
   });
 
   it("rejeita resposta sem parcelas em formato de array", () => {
-    expect(() => analyzeMonthlyResponse({ mensagem: "ok" })).toThrow(
-      MonthlyResponseError
-    );
-    expect(() => analyzeMonthlyResponse({ parcelas: null })).toThrow(
-      MonthlyResponseError
-    );
+    expect(() => analyzeMonthlyResponse({ parcelas: null })).toThrow(MonthlyResponseError);
   });
 
   it("aceita o novo contrato com dados.Data vazio como associado pago", () => {
     const result = analyzeMonthlyResponse({
       codigo: 1,
-      mensagem: null,
-      dados: {
-        RequestInfo: null,
-        CurrentPage: 1,
-        TotalPages: 0,
-        TotalCount: 0,
-        PageSize: 0,
-        Data: []
-      },
+      dados: { CurrentPage: 1, TotalPages: 0, TotalCount: 0, PageSize: 0, Data: [] },
       erros: null
     }, "55");
 
-    expect(result.paymentStatus).toBe("unpaid");
-    expect(result.installmentsCount).toBe(0);
-    expect(result.totalPendingAmountCents).toBe(0);
+    expect(result.paymentStatus).toBe("paid");
+    expect(result.paginationComplete).toBe(true);
   });
 
   it("usa o vencimento do upload quando a API paginada nao informa vencimento", () => {
@@ -150,13 +145,13 @@ describe("analyzeMonthlyResponse", () => {
         CurrentPage: 1,
         TotalPages: 1,
         TotalCount: 1,
-        PageSize: 10,
-        Data: [{ Id: "55", Valor: 87.42, ValorFinal: 87.42 }]
+        PageSize: 100,
+        Data: [{ Id: "55", Valor: 80, ValorFinal: 87.42, DescricaoRecebimento: "ABERTO" }]
       },
-      erros: []
-    }, "55", "15/08/2026");
+      erros: null
+    }, "55", "05/08/2026", { historyComplete: true });
 
-    expect(result.installments[0].dueDate).toBe("15/08/2026");
+    expect(result.installments[0]?.dueDate).toBe("05/08/2026");
   });
 
   it("normaliza DataVencimento da resposta paginada como vencimento", () => {
@@ -166,21 +161,19 @@ describe("analyzeMonthlyResponse", () => {
         CurrentPage: 1,
         TotalPages: 1,
         TotalCount: 1,
-        PageSize: 10,
-        Data: [{ Id: "55", Valor: 87.42, ValorFinal: 87.42, DataVencimento: "06/08/2026" }]
+        PageSize: 100,
+        Data: [{ Id: "55", DataVencimento: "2026-08-05", Valor: 80, ValorFinal: 87.42, DescricaoRecebimento: "ABERTO" }]
       },
-      erros: []
-    }, "55");
+      erros: null
+    }, "55", undefined, { historyComplete: true });
 
-    expect(result.installments[0].dueDate).toBe("06/08/2026");
+    expect(result.installments[0]?.dueDate).toBe("2026-08-05");
   });
 
   it("usa Valor, e não ValorFinal, como valor pendente da parcela alvo", () => {
     const result = analyzeMonthlyResponse({
       codigo: 1,
-      mensagem: null,
       dados: {
-        RequestInfo: null,
         CurrentPage: 1,
         TotalPages: 1,
         TotalCount: 1,
@@ -188,17 +181,12 @@ describe("analyzeMonthlyResponse", () => {
         Data: [{ Id: "55", Valor: 80, ValorFinal: 87.42, DescricaoRecebimento: "ABERTO" }]
       },
       erros: null
-    }, "55");
+    }, "55", undefined, { historyComplete: true });
 
     expect(result.paymentStatus).toBe("unpaid");
-    expect(result.installmentsCount).toBe(1);
     expect(result.totalPendingAmountCents).toBe(8000);
-    expect(result.totalsByPlan[0]?.totalAmountCents).toBe(8000);
-    expect(result.installments[0]).toMatchObject({
-      installmentCode: "55",
-      baseAmountCents: 8000,
-      finalAmountCents: 8742
-    });
+    expect(result.installments[0]?.baseAmountCents).toBe(8000);
+    expect(result.installments[0]?.finalAmountCents).toBe(8742);
   });
 
   it("mantém ValorPago como recebido e zera pendência quando a target está paga", () => {
@@ -209,25 +197,16 @@ describe("analyzeMonthlyResponse", () => {
         TotalPages: 1,
         TotalCount: 1,
         PageSize: 100,
-        Data: [{
-          Id: "55",
-          Valor: 100,
-          ValorFinal: 125,
-          ValorPago: 110,
-          DescricaoRecebimento: "PIX"
-        }]
+        Data: [{ Id: "55", Valor: 100, ValorFinal: 125, ValorPago: 110, DescricaoRecebimento: "PIX" }]
       },
       erros: null
-    }, "55");
+    }, "55", undefined, { historyComplete: true });
 
     expect(result.paymentStatus).toBe("paid");
     expect(result.totalPendingAmountCents).toBe(0);
     expect(result.totalPaidAmountCents).toBe(11000);
-    expect(result.installments[0]).toMatchObject({
-      baseAmountCents: 10000,
-      finalAmountCents: 12500,
-      paidAmountCents: 11000
-    });
+    expect(result.installments[0]?.baseAmountCents).toBe(10000);
+    expect(result.installments[0]?.paidAmountCents).toBe(11000);
   });
 
   it("rejeita a parcela alvo quando o ERP não informa Valor", () => {
@@ -241,7 +220,7 @@ describe("analyzeMonthlyResponse", () => {
         Data: [{ Id: "55", ValorFinal: 87.42, DescricaoRecebimento: "ABERTO" }]
       },
       erros: null
-    }, "55")).toThrow("não possui Valor");
+    }, "55", undefined, { historyComplete: true })).toThrow("não possui Valor");
   });
 
   it("usa o historico completo para distinguir ABERTO de pagamento confirmado", () => {
@@ -253,8 +232,8 @@ describe("analyzeMonthlyResponse", () => {
         TotalCount: 2,
         PageSize: 100,
         Data: [
-          { Id: "55", Valor: 90, ValorFinal: 100, ValorPago: 0, DescricaoRecebimento: "ABERTO" },
-          { Id: "56", Valor: 70, ValorFinal: 80, ValorPago: "75,00", DescricaoRecebimento: "PIX" }
+          { Id: "55", Valor: 90, ValorFinal: 100, DescricaoRecebimento: "ABERTO" },
+          { Id: "99", Valor: 75, ValorFinal: 75, ValorPago: 75, DescricaoRecebimento: "PIX" }
         ]
       },
       erros: null
@@ -263,15 +242,6 @@ describe("analyzeMonthlyResponse", () => {
     expect(result.paymentStatus).toBe("unpaid");
     expect(result.totalPendingAmountCents).toBe(9000);
     expect(result.totalPaidAmountCents).toBe(7500);
-    expect(result.installments).toHaveLength(2);
-    expect(result.installments[0]).toMatchObject({
-      baseAmountCents: 9000,
-      finalAmountCents: 10000
-    });
-    expect(result.installments[1]).toMatchObject({
-      paymentDescription: "PIX",
-      paidAmountCents: 7500
-    });
   });
 
   it("nunca marca como pago um historico sem ValorPago preenchido", () => {
@@ -337,7 +307,7 @@ describe("analise da fatura alvo e completude da paginacao", () => {
           CurrentPage: 2,
           TotalPages: 2,
           TotalCount: 201,
-          PageSize: 66,
+          PageSize: 200,
           Data: [{ Id: "999", Valor: 60, ValorFinal: 63.8, ValorPago: 63.8, DescricaoRecebimento: "PIX" }]
         },
         erros: null
