@@ -497,11 +497,11 @@ function analyzePaginatedPayload(
     paymentStatusSource: explicitlyPaid ? "erp_explicit" : "erp_open_invoice",
     message: payload.message || (explicitlyPaid ? "Parcela paga conforme o ERP." : "Parcela localizada como pendente."),
     installmentsCount: 1,
-    totalPendingAmountCents: explicitlyPaid ? 0 : installment.finalAmountCents,
+    totalPendingAmountCents: explicitlyPaid ? 0 : installment.baseAmountCents,
     totalPaidAmountCents: explicitlyPaid ? paidValue.cents : 0,
     totalsByPlan: explicitlyPaid
       ? []
-      : [{ planType: installment.planType, installmentsCount: 1, totalAmountCents: installment.finalAmountCents }],
+      : [{ planType: installment.planType, installmentsCount: 1, totalAmountCents: installment.baseAmountCents }],
     installments: [installment],
     warnings: finalAmount.warning && hasValue(matched.ValorFinal)
       ? [`ValorFinal da parcela ${targetInstallmentId}: ${finalAmount.warning}`]
@@ -583,17 +583,17 @@ function analyzeCompleteHistoryPayload(
   for (const installment of pendingInstallments) {
     const current = grouped.get(installment.planType) ?? { installmentsCount: 0, totalAmountCents: 0 };
     current.installmentsCount += 1;
-    current.totalAmountCents += installment.finalAmountCents;
+    current.totalAmountCents += installment.baseAmountCents;
     grouped.set(installment.planType, current);
   }
 
   const targetIsPaid = target?.paidAmountCents !== null && target?.paidAmountCents !== undefined;
   return {
     paymentStatus: targetIsPaid ? "paid" : "unpaid",
-    paymentStatusSource: "erp_explicit",
+    paymentStatusSource: targetIsPaid ? "erp_explicit" : "erp_open_invoice",
     message: payload.message || (targetIsPaid ? "Parcela paga conforme o historico do ERP." : "Parcela em aberto conforme o historico do ERP."),
     installmentsCount: installments.length,
-    totalPendingAmountCents: pendingInstallments.reduce((sum, installment) => sum + installment.finalAmountCents, 0),
+    totalPendingAmountCents: pendingInstallments.reduce((sum, installment) => sum + installment.baseAmountCents, 0),
     totalPaidAmountCents: installments.reduce((sum, installment) => sum + (installment.paidAmountCents ?? 0), 0),
     totalsByPlan: [...grouped.entries()].map(([planType, total]) => ({ planType, ...total })),
     installments,
@@ -621,56 +621,73 @@ export function analyzeMonthlyResponse(
 
 export function analyzeMonthlyResponses(
   inputs: unknown[],
-  targetInstallmentId?: string,
+  targetInstallmentId: string,
   fallbackDueDate?: string,
   options?: { historyComplete?: boolean }
 ): MonthlyAnalysis {
   if (inputs.length === 0) {
-    throw new MonthlyResponseError("O ERP nao retornou nenhuma pagina de mensalidades.");
+    throw new MonthlyResponseError("Nenhuma página do ERP foi informada para análise.");
   }
 
-  const normalized = inputs.map((input) => normalizeMonthlyPayload(input));
-  if (normalized.length === 1 && normalized[0]?.source === "legacy") {
-    return analyzeLegacyPayload(normalized[0], targetInstallmentId, fallbackDueDate);
+  const normalizedPages = inputs.map((input) => normalizeMonthlyPayload(input));
+  if (normalizedPages.some((page) => page.source !== "paginated")) {
+    throw new MonthlyResponseError("A consolidação paginada exige respostas do novo contrato do ERP.");
   }
 
-  if (normalized.some((payload) => payload.source !== "paginated")) {
-    throw new MonthlyResponseError("O ERP retornou contratos diferentes entre as paginas de mensalidades.");
+  const pages = normalizedPages as NormalizedPaginatedPayload[];
+  const first = pages[0]!;
+  const expectedTotalPages = first.totalPages;
+  const expectedTotalCount = first.totalCount;
+  const expectedPageSize = first.pageSize;
+  const seenPages = new Set<number>();
+  const mergedItems: z.infer<typeof MonthlyApiDataItemSchema>[] = [];
+
+  for (const page of pages) {
+    if (
+      page.totalPages !== expectedTotalPages ||
+      page.totalCount !== expectedTotalCount ||
+      page.pageSize !== expectedPageSize
+    ) {
+      throw new MonthlyResponseError("As páginas do ERP possuem metadados incompatíveis entre si.");
+    }
+    if (page.currentPage == null || seenPages.has(page.currentPage)) {
+      throw new MonthlyResponseError("As páginas do ERP estão duplicadas ou sem identificação válida.");
+    }
+    seenPages.add(page.currentPage);
+    mergedItems.push(...page.items);
   }
 
-  const pages = normalized as NormalizedPaginatedPayload[];
-  const firstPage = pages[0];
-  const totalPages = firstPage.totalPages ?? 0;
-  const pagesComplete = totalPages === 0 || pages.length >= totalPages;
+  const paginationComplete = expectedTotalPages === 0
+    ? seenPages.size === 1 && seenPages.has(1)
+    : seenPages.size === expectedTotalPages &&
+      Array.from({ length: expectedTotalPages }, (_, index) => index + 1).every((page) => seenPages.has(page));
 
-  if (pages.some((page) =>
-    page.totalPages !== firstPage.totalPages ||
-    page.totalCount !== firstPage.totalCount
-  )) {
-    throw new MonthlyResponseError("Os metadados de paginacao variaram entre as paginas do ERP.");
+  const merged: NormalizedPaginatedPayload = {
+    source: "paginated",
+    message: pages.find((page) => page.message)?.message,
+    items: mergedItems,
+    currentPage: paginationComplete ? expectedTotalPages : Math.max(...seenPages),
+    totalPages: expectedTotalPages,
+    totalCount: expectedTotalCount,
+    pageSize: expectedPageSize
+  };
+
+  if (!paginationComplete) {
+    const targetFound = mergedItems.some(
+      (item) => installmentCodeFromApiItem(item) === String(targetInstallmentId).trim()
+    );
+    if (!targetFound) {
+      throw new MonthlyResponseError(
+        "A consulta paginada do ERP nao foi concluida; a fatura alvo nao pode ser classificada como paga."
+      );
+    }
   }
 
-  const mergedItems = pages.flatMap((page) => page.items);
-  const targetId = String(targetInstallmentId ?? "").trim();
-  const targetFound = Boolean(
-    targetId && mergedItems.some((item) => installmentCodeFromApiItem(item) === targetId)
-  );
-
-  const analysis = analyzePaginatedPayload(
-    {
-      ...firstPage,
-      items: mergedItems,
-      currentPage: pages.at(-1)?.currentPage ?? firstPage.currentPage
-    },
+  const result = analyzePaginatedPayload(
+    merged,
     targetInstallmentId,
     fallbackDueDate,
-    options?.historyComplete === true && (pagesComplete || targetFound)
+    options?.historyComplete === true
   );
-
-  return {
-    ...analysis,
-    // false aqui significa apenas que nao percorremos o restante do historico.
-    // A classificacao da parcela alvo continua conclusiva quando targetFound.
-    paginationComplete: pagesComplete
-  };
+  return { ...result, paginationComplete };
 }
