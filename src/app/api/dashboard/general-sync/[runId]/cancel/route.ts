@@ -1,8 +1,7 @@
 import { z } from "zod";
 import { requireApiUser } from "@/lib/auth/require-api-user";
+import { requestLocalGeneralSyncCancellation } from "@/lib/general-sync-cancel";
 import { fail, ok } from "@/lib/http/api-response";
-import { getGeneralSyncRun } from "@/lib/general-sync";
-import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 const ParamsSchema = z.object({ runId: z.string().uuid() });
 
@@ -25,31 +24,32 @@ export async function POST(
       : "Sincronizacao geral interrompida manualmente.";
 
   try {
-    const supabase = createSupabaseAdminClient();
-    const { error } = await supabase.rpc("cancel_dashboard_general_sync_v1", {
-      p_run_id: parsed.data.runId,
-      p_requested_by: auth.profile.id,
-      p_reason: reason
+    const result = await requestLocalGeneralSyncCancellation({
+      runId: parsed.data.runId,
+      requestedBy: auth.profile.id,
+      reason
     });
-    if (error) {
-      if (error.message.includes("general_sync_not_found")) {
-        return fail("NOT_FOUND", "Sincronizacao geral nao encontrada.", 404);
-      }
-      throw error;
-    }
 
-    const run = await getGeneralSyncRun(parsed.data.runId);
-    return ok(
-      run,
-      "Sincronizacao geral interrompida e encerrada definitivamente.",
-      202
-    );
+    const message =
+      result.reason === "CANCELLATION_REQUESTED"
+        ? "Cancelamento da sincronizacao geral solicitado. O worker local encerrara a onda com seguranca."
+        : result.reason === "GENERAL_SYNC_ALREADY_CANCELLING"
+          ? "O cancelamento desta sincronizacao geral ja foi solicitado."
+          : "Esta sincronizacao geral ja esta encerrada.";
+
+    return ok(result.run, message, 202);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Nao foi possivel cancelar a sincronizacao geral.";
+
+    if (message === "GENERAL_SYNC_NOT_FOUND") {
+      return fail("NOT_FOUND", "Sincronizacao geral nao encontrada.", 404);
+    }
+
     console.error("[GENERAL_SYNC_CANCEL_FAILED]", {
       runId: parsed.data.runId,
       message
     });
+
     return fail("DATABASE_ERROR", message, 500);
   }
 }
