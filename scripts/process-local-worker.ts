@@ -1,3 +1,4 @@
+import { runLocalGeneralSyncCycle } from "../src/lib/general-sync-orchestrator";
 import { runLocalWorkerOnce } from "../src/lib/local-processing-worker";
 import { getDbPool } from "../src/lib/db/pool";
 
@@ -139,6 +140,9 @@ async function main() {
     let productiveCycles = 0;
 
     while (true) {
+      const generalSyncResult = await runLocalGeneralSyncCycle();
+      console.info("[LOCAL_GENERAL_SYNC_CYCLE_COMPLETED]", generalSyncResult);
+
       const result = await runLocalWorkerOnce({
         claimLimit,
         concurrency
