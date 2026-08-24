@@ -3,11 +3,8 @@ import { fail, ok } from "@/lib/http/api-response";
 
 export async function GET() {
   try {
-    const result = await dbQuery<{ database_name: string; database_user: string }>(
-      "select current_database() as database_name, current_user as database_user"
-    );
-
-    return ok({ database: result.rows[0] });
+    await dbQuery("select 1");
+    return ok({ status: "ok" });
   } catch (error) {
     console.error("[DATABASE_HEALTH_FAILED]", {
       message: error instanceof Error ? error.message : "Erro desconhecido"
