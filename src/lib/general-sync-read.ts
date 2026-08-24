@@ -162,7 +162,7 @@ function activityLabel(row: GeneralSyncActivityRow) {
     case "dashboard_general_sync_completed_with_errors":
       return "Processamento geral concluido com erros";
     case "dashboard_general_sync_cancelled":
-      return "Processamento geral pausado pelo usuario";
+      return "Sincronizacao geral cancelada definitivamente";
     default:
       return row.reason ?? "Atividade de processamento registrada";
   }
@@ -391,7 +391,11 @@ async function buildRunDetail(run: GeneralSyncRunRow): Promise<GeneralSyncRunDet
     })),
     lastHeartbeatAt: toIso(run.last_heartbeat_at),
     filters: parseGeneralSyncFilters(run.filters),
-    canCancel: run.status === "queued" || run.status === "running" || run.status === "cancelling",
+    canCancel:
+      run.status === "queued" ||
+      run.status === "running" ||
+      run.status === "paused" ||
+      run.status === "cancelling",
     canResume: run.status === "paused"
   };
 }
