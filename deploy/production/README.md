@@ -50,7 +50,7 @@ npm run build
 
 Todos os três comandos devem terminar sem erro antes de instalar os serviços.
 
-## 3. Arquivos de ambiente
+## 3. Arquivos de ambiente e preflight
 
 Separe o processo web do worker:
 
@@ -69,6 +69,30 @@ sudo chmod 640 /etc/odontoartpix/app.env /etc/odontoartpix/worker.env
 ```
 
 Nunca grave tokens/senhas no repositório.
+
+Antes de iniciar os serviços, carregue as variáveis reais do ambiente e execute:
+
+```bash
+npm run preflight:production
+```
+
+O preflight não imprime senhas/tokens e valida:
+
+- variáveis obrigatórias de PostgreSQL e ERP;
+- `AUTH_COOKIE_SECURE=true`;
+- conexão com PostgreSQL;
+- correspondência entre todas as migrations do checkout e `schema_migrations`;
+- identidade técnica do processamento ativa e sem login interativo;
+- por padrão, scheduler automático desligado tanto no ambiente quanto no banco.
+
+No primeiro corte, mantenha:
+
+```text
+PRODUCTION_PREFLIGHT_REQUIRE_SCHEDULER_OFF=true
+PROCESSING_ALLOW_SCHEDULED_SYNC=false
+```
+
+Se o preflight falhar, não prossiga com a publicação.
 
 ## 4. Instalar a aplicação web sem publicar
 
@@ -175,6 +199,7 @@ Somente após a validação do candidato:
 ```bash
 npm ci
 npm run db:migrate
+npm run preflight:production
 npm run build
 ```
 
@@ -231,6 +256,12 @@ select set_local_processing_scheduler_enabled_v1(true);
 ```
 
 3. reinicie o timer/worker se necessário.
+
+A partir dessa etapa, para usar o preflight apenas como verificação de consistência sem exigir scheduler desligado, defina explicitamente:
+
+```text
+PRODUCTION_PREFLIGHT_REQUIRE_SCHEDULER_OFF=false
+```
 
 ## Rollback imediato
 
