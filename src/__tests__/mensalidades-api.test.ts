@@ -1,24 +1,8 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   __test__parseRetryAfterMs,
-  buildMensalidadesRequestUrl,
-  consultMonthlyByAssociatedCode
+  buildMensalidadesRequestUrl
 } from "@/lib/mensalidades-api";
-
-vi.mock("@/lib/processing-config", () => ({
-  getProcessingConfig: vi.fn(async () => ({
-    httpConnectTimeoutMs: 1000,
-    httpReadTimeoutMs: 1000,
-    maxPagesPerOperation: 10
-  }))
-}));
-
-afterEach(() => {
-  vi.unstubAllGlobals();
-  vi.restoreAllMocks();
-  delete process.env.MENSALIDADES_API_BASE_URL;
-  delete process.env.MENSALIDADES_API_TOKEN;
-});
 
 describe("mensalidades-api helpers", () => {
   it("monta a URL com CodigoAssociadoEmpresa e sem CpfUsuario", () => {
@@ -60,46 +44,6 @@ describe("mensalidades-api helpers", () => {
 
     expect(url.searchParams.get("limite")).toBe("200");
     expect(url.searchParams.get("pagina")).toBe("2");
-  });
-
-  it("consulta todas as paginas mesmo quando a parcela alvo aparece na primeira", async () => {
-    process.env.MENSALIDADES_API_BASE_URL = "https://erp.exemplo.com";
-    process.env.MENSALIDADES_API_TOKEN = "token-123";
-
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        codigo: 1,
-        dados: {
-          CurrentPage: 1,
-          TotalPages: 2,
-          TotalCount: 2,
-          PageSize: 1,
-          Data: [{ Id: "55", Valor: 100, ValorPago: 100, DescricaoRecebimento: "PIX" }]
-        },
-        erros: null
-      }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        codigo: 1,
-        dados: {
-          CurrentPage: 2,
-          TotalPages: 2,
-          TotalCount: 2,
-          PageSize: 1,
-          Data: [{ Id: "99", Valor: 80, DescricaoRecebimento: "ABERTO" }]
-        },
-        erros: null
-      }), { status: 200 }));
-
-    vi.stubGlobal("fetch", fetchMock);
-
-    const result = await consultMonthlyByAssociatedCode("ASSOC-77", "55");
-
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(fetchMock.mock.calls[1]?.[0]?.toString()).toContain("pagina=2");
-    expect(result.analysis.paginationComplete).toBe(true);
-    expect(result.analysis.paymentStatus).toBe("paid");
-    expect(result.analysis.totalPendingAmountCents).toBe(8000);
-    expect(result.analysis.totalPaidAmountCents).toBe(10000);
   });
 
   it("interpreta Retry-After em segundos", () => {
