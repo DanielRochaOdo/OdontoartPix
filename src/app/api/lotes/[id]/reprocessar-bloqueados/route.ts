@@ -27,7 +27,7 @@ type CreatedJobRow = {
 };
 
 export async function POST(
-  request: Request,
+  _request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const auth = await requireApiUser(["administrador"]);
@@ -35,11 +35,6 @@ export async function POST(
 
   const parsed = ParamsSchema.safeParse(await params);
   if (!parsed.success) return fail("VALIDATION_ERROR", "Lote invalido.", 400);
-
-  const body = await request.json().catch(() => ({}));
-  const reason = typeof body.reason === "string" && body.reason.trim()
-    ? body.reason.trim().slice(0, 1000)
-    : "Reprocessamento administrativo de registros bloqueados.";
 
   try {
     const result = await withTransaction(async (client) => {
@@ -147,30 +142,6 @@ export async function POST(
 
       const job = jobResult.rows[0];
       if (!job) throw new Error("Job local nao foi criado.");
-
-      await clientQuery(
-        client,
-        `insert into event_logs(
-           event_type,
-           category,
-           severity,
-           campaign_id,
-           batch_id,
-           reason,
-           details,
-           created_by
-         ) values (
-           'blocked_members_reprocess_requested',
-           'processing',
-           'warning',
-           $1,
-           $2,
-           $3,
-           jsonb_build_object('count', $4::int, 'jobId', $5::text),
-           $6
-         )`,
-        [batch.campaign_id, batch.id, reason, converted, job.id, auth.profile.id]
-      );
 
       return {
         kind: "queued" as const,
