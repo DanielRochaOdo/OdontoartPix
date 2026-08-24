@@ -24,7 +24,12 @@ type ScheduledStartInternalResult =
       nextRunAt: string;
     }
   | {
-      action: "active_run" | "request_already_created";
+      action: "active_run";
+      runId: string;
+      nextRunAt: string | null;
+    }
+  | {
+      action: "request_already_created";
       runId: string;
       nextRunAt: string | null;
     }
