@@ -71,24 +71,47 @@ export type FilteredErrorReplaySnapshot = {
   finishedAt?: string | null;
 };
 
-// A antiga implementação dependia do Supabase Realtime e de RPCs acessados
-// diretamente pelo navegador. Durante a migração para PostgreSQL próprio,
-// essa observabilidade fica desativada no cliente até ser substituída por
-// endpoints internos do Next.js (e posteriormente SSE/WebSocket, se necessário).
-// O restante da aplicação continua funcional e não tenta inicializar Supabase.
+type ApiEnvelope<T> = {
+  success?: boolean;
+  data?: T;
+  error?: { message?: string };
+};
+
+async function fetchSnapshot<T>(url: string): Promise<T | null> {
+  const response = await fetch(url, {
+    method: "GET",
+    headers: { Accept: "application/json" },
+    cache: "no-store",
+    credentials: "same-origin"
+  });
+
+  const payload = (await response.json().catch(() => null)) as ApiEnvelope<T> | null;
+  if (response.status === 404) return null;
+  if (!response.ok || !payload?.success) {
+    throw new Error(payload?.error?.message ?? "Nao foi possivel atualizar o processamento.");
+  }
+  return payload.data ?? null;
+}
+
 export function getProcessingActiveSnapshot(): Promise<ProcessingActiveSnapshot | null> {
-  return Promise.resolve(null);
+  return fetchSnapshot<ProcessingActiveSnapshot>("/api/processing/active");
 }
 
 export function getActiveGeneralSyncRunSnapshot(): Promise<GeneralSyncRunDetail | null> {
-  return Promise.resolve(null);
+  return fetchSnapshot<GeneralSyncRunDetail>("/api/dashboard/general-sync/active");
 }
 
 export function getGeneralSyncRunSnapshot(runId: string | null): Promise<GeneralSyncRunDetail | null> {
-  void runId;
-  return Promise.resolve(null);
+  if (!runId) return Promise.resolve(null);
+  return fetchSnapshot<GeneralSyncRunDetail>(
+    `/api/dashboard/general-sync/${encodeURIComponent(runId)}`
+  );
 }
 
+// Os dois snapshots de replay permanecem com contrato estável para os
+// componentes antigos. A migração local não cria requests paralelos ocultos;
+// quando não há uma API de replay específica, o estado é representado pelos
+// jobs/batches canônicos e o retorno é nulo.
 export function getDashboardErrorReplaySnapshot(
   runId: string | null
 ): Promise<DashboardErrorReplaySnapshot | null> {
@@ -104,6 +127,18 @@ export function getFilteredErrorReplaySnapshot(
 }
 
 export function subscribeProcessingRealtime(onChange: () => void) {
-  void onChange;
-  return () => undefined;
+  if (typeof window === "undefined" || typeof EventSource === "undefined") {
+    return () => undefined;
+  }
+
+  const source = new EventSource("/api/processing/events", { withCredentials: true });
+  const handleChange = () => onChange();
+  source.addEventListener("ready", handleChange);
+  source.addEventListener("change", handleChange);
+
+  return () => {
+    source.removeEventListener("ready", handleChange);
+    source.removeEventListener("change", handleChange);
+    source.close();
+  };
 }
