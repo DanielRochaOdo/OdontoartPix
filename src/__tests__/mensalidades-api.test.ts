@@ -92,6 +92,54 @@ describe("mensalidades-api helpers", () => {
     expect(result.analysis.paginationComplete).toBe(false);
   });
 
+  it("percorre ate TotalPages quando a parcela alvo nao aparece e nao infere pagamento", async () => {
+    process.env.MENSALIDADES_API_BASE_URL = "https://erp.exemplo.com";
+    process.env.MENSALIDADES_API_TOKEN = "token-123";
+
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        codigo: 1,
+        dados: {
+          CurrentPage: 1,
+          TotalPages: 3,
+          TotalCount: 3,
+          PageSize: 1,
+          Data: [{ Id: "10", Valor: 50, DescricaoRecebimento: "ABERTO" }]
+        },
+        erros: null
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        codigo: 1,
+        dados: {
+          CurrentPage: 2,
+          TotalPages: 3,
+          TotalCount: 3,
+          PageSize: 1,
+          Data: [{ Id: "11", Valor: 60, ValorPago: 60, DescricaoRecebimento: "PIX" }]
+        },
+        erros: null
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        codigo: 1,
+        dados: {
+          CurrentPage: 3,
+          TotalPages: 3,
+          TotalCount: 3,
+          PageSize: 1,
+          Data: [{ Id: "12", Valor: 70, DescricaoRecebimento: "ABERTO" }]
+        },
+        erros: null
+      }), { status: 200 }));
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await consultMonthlyByAssociatedCode("ASSOC-77", "55");
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(result.analysis.paginationComplete).toBe(true);
+    expect(result.analysis.paymentStatus).toBe("unpaid");
+  });
+
   it("interpreta Retry-After em segundos", () => {
     expect(__test__parseRetryAfterMs("12")).toBe(12000);
   });
