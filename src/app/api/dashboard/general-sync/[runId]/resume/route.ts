@@ -1,43 +1,80 @@
 import { z } from "zod";
 import { requireApiUser } from "@/lib/auth/require-api-user";
+import { resumeLocalGeneralSync } from "@/lib/general-sync-resume";
 import { fail, ok } from "@/lib/http/api-response";
-import {
-  advanceGeneralSyncRuns,
-  getGeneralSyncRun,
-  resumeGeneralSyncRun
-} from "@/lib/general-sync";
-import { dispatchDurableProcessingWorkflowSafely } from "@/lib/durable-processing-dispatch";
 
 const ParamsSchema = z.object({ runId: z.string().uuid() });
 
 export async function POST(
-  _: Request,
+  request: Request,
   { params }: { params: Promise<{ runId: string }> }
 ) {
   const auth = await requireApiUser(["administrador"]);
   if (!auth.ok) return auth.response;
 
   const parsed = ParamsSchema.safeParse(await params);
-  if (!parsed.success) return fail("VALIDATION_ERROR", "Sincronizacao geral invalida.", 400);
+  if (!parsed.success) {
+    return fail("VALIDATION_ERROR", "Sincronizacao geral invalida.", 400);
+  }
+
+  const body = await request.json().catch(() => null);
+  const reason =
+    body && typeof body === "object" && typeof (body as { reason?: unknown }).reason === "string"
+      ? (body as { reason: string }).reason.trim().slice(0, 500)
+      : "Sincronizacao geral retomada manualmente no dashboard.";
 
   try {
-    const run = await resumeGeneralSyncRun(parsed.data.runId, auth.profile.id);
-    const durableDispatch = await dispatchDurableProcessingWorkflowSafely({
-      source: "dashboard-general-sync",
-      requestedBy: auth.profile.id
+    const result = await resumeLocalGeneralSync({
+      runId: parsed.data.runId,
+      requestedBy: auth.profile.id,
+      reason
     });
-    let advancement: Awaited<ReturnType<typeof advanceGeneralSyncRuns>> | null = null;
-    if (!durableDispatch.ok) {
-      advancement = await advanceGeneralSyncRuns();
+
+    if (result.reason === "GENERAL_SYNC_CANCELLATION_IN_PROGRESS") {
+      return fail(
+        "CONFLICT",
+        "Nao e possivel retomar esta sincronizacao porque o cancelamento definitivo ja esta em andamento.",
+        409
+      );
+    }
+
+    if (result.reason === "GENERAL_SYNC_NOT_PAUSED") {
+      return fail(
+        "CONFLICT",
+        "Esta sincronizacao geral nao esta pausada.",
+        409
+      );
+    }
+
+    if (result.reason === "GENERAL_SYNC_ALREADY_FINAL") {
+      return fail(
+        "CONFLICT",
+        "Esta sincronizacao geral ja esta encerrada e nao pode ser retomada.",
+        409
+      );
     }
 
     return ok(
-      { run: await getGeneralSyncRun(run.id), durableDispatch, advancement },
-      "Sincronizacao geral retomada no dashboard.",
+      {
+        run: result.run,
+        requeuedOwnJobs: result.requeuedOwnJobs,
+        untouchedWaitingJobs: result.untouchedWaitingJobs
+      },
+      "Sincronizacao geral retomada. O worker local continuara a onda com seguranca.",
       202
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : "Nao foi possivel retomar a sincronizacao geral.";
-    return fail(message.includes("nao encontrada") ? "NOT_FOUND" : "DATABASE_ERROR", message, message.includes("nao encontrada") ? 404 : 500);
+
+    if (message === "GENERAL_SYNC_NOT_FOUND") {
+      return fail("NOT_FOUND", "Sincronizacao geral nao encontrada.", 404);
+    }
+
+    console.error("[GENERAL_SYNC_RESUME_FAILED]", {
+      runId: parsed.data.runId,
+      message
+    });
+
+    return fail("DATABASE_ERROR", message, 500);
   }
 }
