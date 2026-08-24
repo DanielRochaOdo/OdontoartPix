@@ -625,11 +625,11 @@ export function GeneralSyncButton({
                 ) : (
                   <button
                     type="button"
-                    onClick={() => void pause()}
-                    disabled={pausing || cancelling || resuming}
-                    className="rounded-lg bg-amber-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    onClick={() => void cancel()}
+                    disabled={cancelling || resuming}
+                    className="rounded-lg bg-red-700 px-3 py-2 text-xs font-semibold text-white transition hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {pausing ? "Pausando..." : "Pausar sincronização"}
+                    {cancelling ? "Interrompendo..." : "Interromper processamento"}
                   </button>
                 )}
               </div>
@@ -988,11 +988,11 @@ export function GeneralSyncButton({
                 ) : run.status === "queued" || run.status === "running" ? (
                   <button
                     type="button"
-                    onClick={() => void pause()}
-                    disabled={pausing || cancelling || resuming}
-                    className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-amber-700 disabled:opacity-60"
+                    onClick={() => void cancel()}
+                    disabled={cancelling || resuming}
+                    className="rounded-lg bg-red-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-800 disabled:opacity-60"
                   >
-                    {pausing ? "Pausando..." : "Pausar sincronizacao"}
+                    {cancelling ? "Interrompendo..." : "Interromper processamento"}
                   </button>
                 ) : null
               ) : (
