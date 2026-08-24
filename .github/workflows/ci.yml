@@ -8,7 +8,7 @@ on:
       - postgres-local-auth-foundation
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   validate:
@@ -41,26 +41,6 @@ jobs:
         with:
           node-version: 22
           cache: npm
-
-      - name: Preserve financial truth while reopening manual processing
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          path = Path('src/lib/batch-job-service.ts')
-          text = path.read_text()
-          needle = '            payment_status = null,\n'
-          if text.count(needle) != 1:
-              raise SystemExit('expected exactly one legacy payment_status reset')
-          path.write_text(text.replace(needle, '', 1))
-          PY
-          if ! git diff --quiet -- src/lib/batch-job-service.ts; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add src/lib/batch-job-service.ts
-            git commit -m "preserve financial truth during manual reopen"
-            git push origin HEAD:postgres-local-auth-foundation
-          fi
 
       - name: Install dependencies
         run: npm ci
