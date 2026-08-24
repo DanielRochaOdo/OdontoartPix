@@ -100,6 +100,8 @@ Migrations locais atuais:
 011  dupla trava do scheduler + identidade técnica local
 012  views de compatibilidade sem persistência de logs
 013  PostgreSQL LISTEN/NOTIFY para atualização da UI
+014  snapshots exatos para reprocessamento de erros
+015  escopo exato de claim por job
 ```
 
 As migrations antigas em `supabase/migrations` são somente referência histórica e **não devem ser aplicadas** no PostgreSQL novo.
