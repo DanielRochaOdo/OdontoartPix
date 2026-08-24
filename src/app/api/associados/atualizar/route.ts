@@ -1,9 +1,18 @@
 import { parseMemberUpdateFile, type MemberUpdateIssue } from "@/lib/imports";
-import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { requireApiUser } from "@/lib/auth/require-api-user";
+import { dbQuery } from "@/lib/db/pool";
+import { hashCpf } from "@/lib/hash";
 import { fail, failWithDetails, ok } from "@/lib/http/api-response";
 
 export const runtime = "nodejs";
+
+type MemberRow = { id: string; external_user_code: string | null };
+type LinkRow = {
+  id: string;
+  member_id: string;
+  target_installment_id: string | null;
+  due_date_text: string | null;
+};
 
 export async function POST(request: Request) {
   const auth = await requireApiUser(["administrador", "operador"]);
@@ -16,141 +25,172 @@ export async function POST(request: Request) {
   const { updates, issues } = await parseMemberUpdateFile(file);
   const resultIssues: MemberUpdateIssue[] = [...issues];
   if (updates.length === 0) {
-    return failWithDetails("VALIDATION_ERROR", "O arquivo nao possui dados validos para atualizacao.", { issues: resultIssues });
-  }
-
-  const supabase = createSupabaseAdminClient();
-  const uniqueCodes = [...new Set(updates.map((item) => item.associatedCode))];
-  const members: Array<{ id: string; external_user_code: string | null }> = [];
-  for (let index = 0; index < uniqueCodes.length; index += 200) {
-    const { data, error } = await supabase
-      .from("members")
-      .select("id,external_user_code")
-      .in("external_user_code", uniqueCodes.slice(index, index + 200))
-      .is("deleted_at", null);
-    if (error) return fail("DATABASE_ERROR", "Nao foi possivel localizar os associados.", 500);
-    members.push(...(data ?? []));
-  }
-
-  const memberByCode = new Map(members.map((member) => [String(member.external_user_code), member]));
-  const memberIds = members.map((member) => member.id);
-  const links: Array<{
-    id: string;
-    member_id: string;
-    target_installment_id: string | null;
-    due_date_text: string | null;
-  }> = [];
-  for (let index = 0; index < memberIds.length; index += 200) {
-    const { data, error } = await supabase
-      .from("campaign_batch_members")
-      .select("id,member_id,target_installment_id,due_date_text")
-      .in("member_id", memberIds.slice(index, index + 200))
-      .is("deleted_at", null);
-    if (error) return fail("DATABASE_ERROR", "Nao foi possivel localizar os vinculos dos associados.", 500);
-    links.push(...(data ?? []));
-  }
-
-  const linksByMember = new Map<string, typeof links>();
-  for (const link of links) {
-    const current = linksByMember.get(link.member_id) ?? [];
-    current.push(link);
-    linksByMember.set(link.member_id, current);
-  }
-
-  let updatedRows = 0;
-  let updatedMembers = 0;
-  let updatedLinks = 0;
-  let updatedInstallments = 0;
-
-  for (const update of updates) {
-    const member = memberByCode.get(update.associatedCode);
-    if (!member) {
-      resultIssues.push({ line: update.line, associatedCode: update.associatedCode, reason: "Associado nao encontrado." });
-      continue;
-    }
-
-    if (update.name !== undefined || update.cpf !== undefined) {
-      const memberPatch: Record<string, string> = {};
-      if (update.name !== undefined) memberPatch.name = update.name;
-      if (update.cpf !== undefined) memberPatch.cpf = update.cpf;
-      memberPatch.updated_at = new Date().toISOString();
-      const { error } = await supabase.from("members").update(memberPatch).eq("id", member.id);
-      if (error) {
-        resultIssues.push({ line: update.line, associatedCode: update.associatedCode, reason: "Nao foi possivel atualizar o cadastro do associado." });
-        continue;
-      }
-      updatedMembers += 1;
-    }
-
-    const hasLinkUpdate =
-      update.dueDate !== undefined ||
-      update.installmentAmountCents !== undefined ||
-      update.targetInstallmentId !== undefined;
-
-    if (!hasLinkUpdate) {
-      updatedRows += 1;
-      continue;
-    }
-
-    const memberLinks = linksByMember.get(member.id) ?? [];
-    if (memberLinks.length === 0) {
-      resultIssues.push({ line: update.line, associatedCode: update.associatedCode, reason: "Associado nao possui vinculo para atualizar os dados da parcela." });
-      continue;
-    }
-
-    const selectedLinks = memberLinks.filter(
-      (link) => link.target_installment_id === update.targetInstallmentId
+    return failWithDetails(
+      "VALIDATION_ERROR",
+      "O arquivo nao possui dados validos para atualizacao.",
+      { issues: resultIssues }
     );
-    if (selectedLinks.length === 0) {
-      resultIssues.push({ line: update.line, associatedCode: update.associatedCode, reason: "Parcela nao encontrada para este associado." });
-      continue;
+  }
+
+  try {
+    const uniqueCodes = [...new Set(updates.map((item) => item.associatedCode))];
+    const membersResult = uniqueCodes.length > 0
+      ? await dbQuery<MemberRow>(
+          `select id, external_user_code
+             from members
+            where deleted_at is null
+              and external_user_code = any($1::text[])`,
+          [uniqueCodes]
+        )
+      : { rows: [] as MemberRow[] };
+
+    const members = membersResult.rows;
+    const memberByCode = new Map(members.map((member) => [String(member.external_user_code), member]));
+    const memberIds = members.map((member) => member.id);
+    const linksResult = memberIds.length > 0
+      ? await dbQuery<LinkRow>(
+          `select id, member_id, target_installment_id, due_date_text
+             from campaign_batch_members
+            where deleted_at is null
+              and member_id = any($1::uuid[])`,
+          [memberIds]
+        )
+      : { rows: [] as LinkRow[] };
+
+    const linksByMember = new Map<string, LinkRow[]>();
+    for (const link of linksResult.rows) {
+      const current = linksByMember.get(link.member_id) ?? [];
+      current.push(link);
+      linksByMember.set(link.member_id, current);
     }
 
-    for (const link of selectedLinks) {
-      const linkPatch: Record<string, string | number> = {};
-      const oldInstallmentId = link.target_installment_id;
-      if (update.dueDate !== undefined) linkPatch.due_date_text = update.dueDate;
-      if (update.installmentAmountCents !== undefined) linkPatch.installment_amount_cents = update.installmentAmountCents;
+    let updatedRows = 0;
+    let updatedMembers = 0;
+    let updatedLinks = 0;
+    let updatedInstallments = 0;
 
-      if (Object.keys(linkPatch).length === 0) continue;
-      linkPatch.updated_at = new Date().toISOString();
-      const { error } = await supabase.from("campaign_batch_members").update(linkPatch).eq("id", link.id);
-      if (error) {
-        resultIssues.push({ line: update.line, associatedCode: update.associatedCode, reason: "Nao foi possivel atualizar o vinculo do associado." });
+    for (const update of updates) {
+      const member = memberByCode.get(update.associatedCode);
+      if (!member) {
+        resultIssues.push({
+          line: update.line,
+          associatedCode: update.associatedCode,
+          reason: "Associado nao encontrado."
+        });
         continue;
       }
-      updatedLinks += 1;
 
-      const installmentPatch: Record<string, string | number> = {};
-      if (update.dueDate !== undefined) installmentPatch.due_date_text = update.dueDate;
-      if (Object.keys(installmentPatch).length > 0 && oldInstallmentId) {
-        installmentPatch.updated_at = new Date().toISOString();
-        const { data, error: installmentError } = await supabase
-          .from("member_installments")
-          .update(installmentPatch)
-          .eq("campaign_batch_member_id", link.id)
-          .eq("cod_parcela", oldInstallmentId)
-          .select("id");
-        if (installmentError) {
-          resultIssues.push({ line: update.line, associatedCode: update.associatedCode, reason: "Vinculo atualizado, mas nao foi possivel atualizar a parcela persistida." });
-        } else {
-          updatedInstallments += data?.length ?? 0;
+      if (update.name !== undefined || update.cpf !== undefined) {
+        try {
+          await dbQuery(
+            `update members
+                set name = case when $2::text is null then name else $2 end,
+                    cpf = case when $3::text is null then cpf else $3 end,
+                    cpf_hash = case when $3::text is null then cpf_hash else $4 end,
+                    updated_at = now()
+              where id = $1::uuid`,
+            [
+              member.id,
+              update.name ?? null,
+              update.cpf ?? null,
+              update.cpf !== undefined ? hashCpf(update.cpf) : null
+            ]
+          );
+          updatedMembers += 1;
+        } catch {
+          resultIssues.push({
+            line: update.line,
+            associatedCode: update.associatedCode,
+            reason: "Nao foi possivel atualizar o cadastro do associado."
+          });
+          continue;
         }
       }
+
+      const hasLinkUpdate =
+        update.dueDate !== undefined ||
+        update.installmentAmountCents !== undefined ||
+        update.targetInstallmentId !== undefined;
+
+      if (!hasLinkUpdate) {
+        updatedRows += 1;
+        continue;
+      }
+
+      const memberLinks = linksByMember.get(member.id) ?? [];
+      if (memberLinks.length === 0) {
+        resultIssues.push({
+          line: update.line,
+          associatedCode: update.associatedCode,
+          reason: "Associado nao possui vinculo para atualizar os dados da parcela."
+        });
+        continue;
+      }
+
+      const selectedLinks = memberLinks.filter(
+        (link) => link.target_installment_id === update.targetInstallmentId
+      );
+      if (selectedLinks.length === 0) {
+        resultIssues.push({
+          line: update.line,
+          associatedCode: update.associatedCode,
+          reason: "Parcela nao encontrada para este associado."
+        });
+        continue;
+      }
+
+      for (const link of selectedLinks) {
+        try {
+          const result = await dbQuery<{ id: string }>(
+            `update campaign_batch_members
+                set due_date_text = case when $2::text is null then due_date_text else $2 end,
+                    installment_amount_cents = case when $3::bigint is null then installment_amount_cents else $3 end,
+                    updated_at = now()
+              where id = $1::uuid
+            returning id`,
+            [link.id, update.dueDate ?? null, update.installmentAmountCents ?? null]
+          );
+          if (!result.rows[0]) continue;
+          updatedLinks += 1;
+
+          if (update.dueDate !== undefined && link.target_installment_id) {
+            const installment = await dbQuery<{ id: string }>(
+              `update member_installments
+                  set due_date_text = $3, updated_at = now()
+                where campaign_batch_member_id = $1::uuid
+                  and cod_parcela = $2
+              returning id`,
+              [link.id, link.target_installment_id, update.dueDate]
+            );
+            updatedInstallments += installment.rows.length;
+          }
+        } catch {
+          resultIssues.push({
+            line: update.line,
+            associatedCode: update.associatedCode,
+            reason: "Nao foi possivel atualizar o vinculo do associado."
+          });
+        }
+      }
+
+      updatedRows += 1;
     }
 
-    updatedRows += 1;
+    return ok({
+      summary: {
+        received_records: updates.length,
+        updated_records: updatedRows,
+        updated_members: updatedMembers,
+        updated_links: updatedLinks,
+        updated_installments: updatedInstallments,
+        invalid_records: resultIssues.length,
+        issues: resultIssues
+      }
+    }, "Atualizacao concluida diretamente no banco.");
+  } catch (error) {
+    console.error("[MEMBER_BULK_UPDATE_FAILED]", {
+      message: error instanceof Error ? error.message : "Erro desconhecido"
+    });
+    return fail("DATABASE_ERROR", "Nao foi possivel atualizar os associados.", 500);
   }
-
-  return ok({
-    summary: {
-      received_records: updates.length,
-      updated_records: updatedRows,
-      updated_members: updatedMembers,
-      updated_links: updatedLinks,
-      updated_installments: updatedInstallments,
-      invalid_records: resultIssues.length,
-      issues: resultIssues
-    }
-  }, "Atualizacao concluida diretamente no banco.");
 }
