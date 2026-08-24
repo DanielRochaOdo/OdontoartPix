@@ -90,3 +90,5 @@ jobs:
           git add src/components/general-sync-button.tsx package-lock.json
           git commit -m "apply secure runtime and dashboard interrupt"
           git push origin HEAD:postgres-local-auth-foundation
+
+# Explicit retrigger: secure runtime finalization.
