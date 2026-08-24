@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { advanceClaimedLocalGeneralSyncRun, type LocalGeneralSyncAdvanceResult } from "@/lib/general-sync-advance";
 import {
+  executeClaimedLocalGeneralSyncCancellation,
+  type LocalGeneralSyncCancellationExecutionResult
+} from "@/lib/general-sync-cancel-execute";
+import {
   claimNextLocalGeneralSyncRun,
   releaseLocalGeneralSyncRun,
   type ClaimedGeneralSyncRun
@@ -17,6 +21,7 @@ export type LocalGeneralSyncCycleResult =
       workerId: string;
       claim: null;
       reconcile: null;
+      cancellation: null;
       advance: null;
       released: true;
     }
@@ -26,6 +31,7 @@ export type LocalGeneralSyncCycleResult =
       runId: string;
       claim: ClaimedGeneralSyncRun;
       reconcile: LocalGeneralSyncReconcileResult;
+      cancellation: LocalGeneralSyncCancellationExecutionResult | null;
       advance: LocalGeneralSyncAdvanceResult | null;
       released: true;
     };
@@ -58,12 +64,14 @@ export async function runLocalGeneralSyncCycle(input?: {
       workerId,
       claim: null,
       reconcile: null,
+      cancellation: null,
       advance: null,
       released: true
     };
   }
 
   let reconcile: LocalGeneralSyncReconcileResult | null = null;
+  let cancellation: LocalGeneralSyncCancellationExecutionResult | null = null;
   let advance: LocalGeneralSyncAdvanceResult | null = null;
   let operationError: unknown = null;
 
@@ -73,7 +81,12 @@ export async function runLocalGeneralSyncCycle(input?: {
       workerId
     });
 
-    if (RECONCILE_ACTIONS_THAT_MAY_ADVANCE.has(reconcile.action)) {
+    if (reconcile.action === "cancelling") {
+      cancellation = await executeClaimedLocalGeneralSyncCancellation({
+        runId: claim.id,
+        workerId
+      });
+    } else if (RECONCILE_ACTIONS_THAT_MAY_ADVANCE.has(reconcile.action)) {
       advance = await advanceClaimedLocalGeneralSyncRun({
         runId: claim.id,
         workerId
@@ -129,6 +142,7 @@ export async function runLocalGeneralSyncCycle(input?: {
     runId: claim.id,
     claim,
     reconcile,
+    cancellation,
     advance,
     released: true
   };
