@@ -11,6 +11,22 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: odontoart_pix_ci
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d odontoart_pix_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -23,6 +39,16 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Apply local PostgreSQL migrations
+        env:
+          DATABASE_HOST: 127.0.0.1
+          DATABASE_PORT: "5432"
+          DATABASE_NAME: odontoart_pix_ci
+          DATABASE_USER: postgres
+          DATABASE_PASSWORD: postgres
+          DATABASE_SSL: "false"
+        run: npm run db:migrate
 
       - name: Generate Next route types and typecheck
         id: typecheck
@@ -50,8 +76,13 @@ jobs:
 
       - name: Build production bundle
         env:
-          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/odontoart_pix_ci
-          SESSION_SECRET: ci-session-secret-with-at-least-32-characters
+          DATABASE_HOST: 127.0.0.1
+          DATABASE_PORT: "5432"
+          DATABASE_NAME: odontoart_pix_ci
+          DATABASE_USER: postgres
+          DATABASE_PASSWORD: postgres
+          DATABASE_SSL: "false"
+          AUTH_COOKIE_SECURE: "false"
           MENSALIDADES_API_BASE_URL: https://example.com
           MENSALIDADES_API_TOKEN: ci-token
           PROCESSING_ALLOW_SCHEDULED_SYNC: "false"
