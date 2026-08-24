@@ -1,6 +1,8 @@
 import { z } from "zod";
+import { getLocalBatchMetrics, getLocalCampaignMetrics } from "@/lib/campaign-detail-read";
+import { listLocalCampaignsWithMetrics } from "@/lib/campaign-read";
+import { dbQuery } from "@/lib/db/pool";
 import { DataAccessError } from "@/lib/errors/data-access-error";
-import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 export const CalculatedStatusSchema = z.enum([
   "aguardando",
@@ -109,170 +111,303 @@ type DashboardMetricsFilters = {
   batchIds?: string[];
 };
 
-export async function getCampaignMetrics(campaignId: string) {
-  const supabase = createSupabaseAdminClient();
-  const { data, error } = await supabase.rpc("get_campaign_metrics", {
-    p_campaign_id: campaignId
-  });
+function normalizeDashboardFilter(values?: string[]) {
+  const sanitized = (values ?? []).map((value) => value.trim()).filter(Boolean);
+  return sanitized.length > 0 ? sanitized : null;
+}
 
-  if (error) {
+export async function getCampaignMetrics(campaignId: string) {
+  try {
+    const data = await getLocalCampaignMetrics(campaignId);
+    if (!data) return null;
+    const parsed = CampaignMetricsSchema.safeParse(data);
+    if (!parsed.success) {
+      throw new DataAccessError(
+        "O banco retornou métricas de campanha inválidas.",
+        "getCampaignMetrics.parse",
+        parsed.error
+      );
+    }
+    return { ...parsed.data, processingBlockSize: getProcessingBlockSize() };
+  } catch (error) {
+    if (error instanceof DataAccessError) throw error;
     throw new DataAccessError(
       "Não foi possível carregar as métricas da campanha.",
       "getCampaignMetrics",
       error
     );
   }
-  if (!data) return null;
-
-  const parsed = CampaignMetricsSchema.safeParse(data);
-  if (!parsed.success) {
-    throw new DataAccessError(
-      "O banco retornou métricas de campanha inválidas.",
-      "getCampaignMetrics.parse",
-      parsed.error
-    );
-  }
-  return { ...parsed.data, processingBlockSize: getProcessingBlockSize() };
 }
 
 export async function getBatchMetrics(batchId: string) {
-  const supabase = createSupabaseAdminClient();
-  const { data, error } = await supabase.rpc("get_batch_metrics", {
-    p_batch_id: batchId
-  });
-
-  if (error) {
+  try {
+    const data = await getLocalBatchMetrics(batchId);
+    if (!data) return null;
+    const parsed = BatchMetricsSchema.safeParse(data);
+    if (!parsed.success) {
+      throw new DataAccessError(
+        "O banco retornou métricas de lote inválidas.",
+        "getBatchMetrics.parse",
+        parsed.error
+      );
+    }
+    return { ...parsed.data, processingBlockSize: getProcessingBlockSize() };
+  } catch (error) {
+    if (error instanceof DataAccessError) throw error;
     throw new DataAccessError(
       "Não foi possível carregar as métricas do lote.",
       "getBatchMetrics",
       error
     );
   }
-  if (!data) return null;
-
-  const parsed = BatchMetricsSchema.safeParse(data);
-  if (!parsed.success) {
-    throw new DataAccessError(
-      "O banco retornou métricas de lote inválidas.",
-      "getBatchMetrics.parse",
-      parsed.error
-    );
-  }
-  return { ...parsed.data, processingBlockSize: getProcessingBlockSize() };
 }
 
 export async function getDashboardMetrics(filters: DashboardMetricsFilters = {}) {
-  const supabase = createSupabaseAdminClient();
-  const normalize = (values?: string[]) => {
-    const sanitized = (values ?? []).map((value) => value.trim()).filter(Boolean);
-    return sanitized.length > 0 ? sanitized : null;
-  };
+  const campaignIds = normalizeDashboardFilter(filters.campaignIds);
+  const batchIds = normalizeDashboardFilter(filters.batchIds);
 
-  const { data, error } = await supabase.rpc("get_dashboard_metrics", {
-    p_campaign_ids: normalize(filters.campaignIds),
-    p_batch_ids: normalize(filters.batchIds)
-  });
+  try {
+    const result = await dbQuery(
+      `with selected_campaigns as (
+         select c.id
+           from campaigns c
+          where c.deleted_at is null
+            and ($1::uuid[] is null or c.id = any($1::uuid[]))
+       ), selected_batches as (
+         select cb.id, cb.campaign_id
+           from campaign_batches cb
+          where cb.deleted_at is null
+            and cb.campaign_id in (select id from selected_campaigns)
+            and ($2::uuid[] is null or cb.id = any($2::uuid[]))
+       ), target_rows as (
+         select
+           cbm.id as campaign_batch_member_id,
+           cbm.member_id,
+           cbm.processing_status,
+           cbm.payment_status as stored_payment_status,
+           coalesce(target.base_amount_cents, cbm.installment_amount_cents, 0)::bigint as target_amount_cents,
+           target.paid_amount_cents as target_paid_amount_cents,
+           nullif(trim(target.payment_description), '') as payment_description,
+           (
+             target.paid_amount_cents is not null
+             and nullif(trim(target.payment_description), '') is not null
+             and upper(trim(target.payment_description)) <> 'ABERTO'
+           ) as is_explicit_paid
+         from campaign_batch_members cbm
+         left join lateral (
+           select mi.base_amount_cents,
+                  mi.paid_amount_cents,
+                  mi.payment_description
+             from member_installments mi
+            where mi.campaign_batch_member_id = cbm.id
+              and trim(mi.cod_parcela) = trim(cbm.target_installment_id)
+            order by mi.updated_at desc, mi.created_at desc, mi.id desc
+            limit 1
+         ) target on true
+        where cbm.deleted_at is null
+          and cbm.campaign_id in (select id from selected_campaigns)
+          and cbm.batch_id in (select id from selected_batches)
+       ), financial_rows as (
+         select *,
+                case
+                  when is_explicit_paid then 'paid'
+                  when stored_payment_status = 'unpaid' then 'unpaid'
+                  else null
+                end as financial_status
+           from target_rows
+       ), member_metrics as (
+         select
+           count(*)::int as total_cpfs,
+           count(distinct member_id)::int as unique_cpfs,
+           count(*) filter (where financial_status = 'paid')::int as paid,
+           count(*) filter (where financial_status = 'unpaid')::int as unpaid,
+           count(*) filter (where processing_status = 'error')::int as errored,
+           coalesce(sum(target_amount_cents) filter (where financial_status = 'unpaid'), 0)::float8 as pending_amount,
+           coalesce(sum(target_paid_amount_cents) filter (where financial_status = 'paid'), 0)::float8 as paid_amount,
+           coalesce(sum(target_amount_cents), 0)::float8 as total_amount
+         from financial_rows
+       ), campaign_metrics as (
+         select count(*)::int as total_campaigns from selected_campaigns
+       ), job_metrics as (
+         select count(distinct pj.campaign_id)::int as campaigns_in_progress
+           from processing_jobs pj
+          where pj.status in ('queued', 'running', 'deferred')
+            and pj.campaign_id in (select id from selected_campaigns)
+            and pj.batch_id in (select id from selected_batches)
+       )
+       select
+         c.total_campaigns as "totalCampaigns",
+         j.campaigns_in_progress as "campaignsInProgress",
+         m.unique_cpfs as "uniqueCpfs",
+         m.total_cpfs as "totalCpfs",
+         m.paid,
+         m.unpaid,
+         m.errored,
+         case
+           when m.paid + m.unpaid = 0 then 0::float8
+           else round((m.paid::numeric / (m.paid + m.unpaid)) * 100, 2)::float8
+         end as "utilizationPercentage",
+         m.pending_amount as "totalPendingAmountCents",
+         m.paid_amount as "totalPaidAmountCents",
+         m.total_amount as "totalBatchAmountCents"
+       from campaign_metrics c
+       cross join member_metrics m
+       cross join job_metrics j`,
+      [campaignIds, batchIds]
+    );
 
-  if (error) {
+    const parsed = DashboardMetricsSchema.safeParse(result.rows[0]);
+    if (!parsed.success) {
+      throw new DataAccessError(
+        "O banco retornou indicadores inválidos.",
+        "getDashboardMetrics.parse",
+        parsed.error
+      );
+    }
+    return parsed.data;
+  } catch (error) {
+    if (error instanceof DataAccessError) throw error;
     throw new DataAccessError(
       "Não foi possível carregar os indicadores do dashboard.",
       "getDashboardMetrics",
       error
     );
   }
-
-  const parsed = DashboardMetricsSchema.safeParse(data);
-  if (!parsed.success) {
-    throw new DataAccessError(
-      "O banco retornou indicadores inválidos.",
-      "getDashboardMetrics.parse",
-      parsed.error
-    );
-  }
-  return parsed.data;
 }
 
 export async function getDashboardReceiptStatusMetrics(filters: DashboardMetricsFilters = {}) {
-  const supabase = createSupabaseAdminClient();
-  const normalize = (values?: string[]) => {
-    const sanitized = (values ?? []).map((value) => value.trim()).filter(Boolean);
-    return sanitized.length > 0 ? sanitized : null;
-  };
+  const campaignIds = normalizeDashboardFilter(filters.campaignIds);
+  const batchIds = normalizeDashboardFilter(filters.batchIds);
 
-  const { data, error } = await supabase.rpc("get_dashboard_receipt_status_metrics", {
-    p_campaign_ids: normalize(filters.campaignIds),
-    p_batch_ids: normalize(filters.batchIds)
-  });
+  try {
+    const result = await dbQuery(
+      `with selected as (
+         select
+           cbm.id,
+           cbm.campaign_id,
+           cbm.batch_id,
+           target.paid_amount_cents,
+           nullif(trim(target.payment_description), '') as payment_description
+         from campaign_batch_members cbm
+         join campaigns c on c.id = cbm.campaign_id and c.deleted_at is null
+         join campaign_batches cb on cb.id = cbm.batch_id and cb.deleted_at is null
+         left join lateral (
+           select mi.paid_amount_cents, mi.payment_description
+             from member_installments mi
+            where mi.campaign_batch_member_id = cbm.id
+              and trim(mi.cod_parcela) = trim(cbm.target_installment_id)
+            order by mi.updated_at desc, mi.created_at desc, mi.id desc
+            limit 1
+         ) target on true
+        where cbm.deleted_at is null
+          and ($1::uuid[] is null or cbm.campaign_id = any($1::uuid[]))
+          and ($2::uuid[] is null or cbm.batch_id = any($2::uuid[]))
+       )
+       select
+         payment_description as label,
+         count(*)::int as "installmentCount",
+         coalesce(sum(paid_amount_cents), 0)::float8 as "amountCents"
+       from selected
+       where paid_amount_cents is not null
+         and payment_description is not null
+         and upper(payment_description) <> 'ABERTO'
+       group by payment_description
+       order by "amountCents" desc, label asc`,
+      [campaignIds, batchIds]
+    );
 
-  if (error) {
+    const parsed = z.array(DashboardReceiptStatusSchema).safeParse(result.rows);
+    if (!parsed.success) {
+      throw new DataAccessError(
+        "O banco retornou status de recebimento invalidos.",
+        "getDashboardReceiptStatusMetrics.parse",
+        parsed.error
+      );
+    }
+    return parsed.data;
+  } catch (error) {
+    if (error instanceof DataAccessError) throw error;
     throw new DataAccessError(
       "Nao foi possivel carregar os status de recebimento do dashboard.",
       "getDashboardReceiptStatusMetrics",
       error
     );
   }
-
-  const parsed = z.array(DashboardReceiptStatusSchema).safeParse(data ?? []);
-  if (!parsed.success) {
-    throw new DataAccessError(
-      "O banco retornou status de recebimento invalidos.",
-      "getDashboardReceiptStatusMetrics.parse",
-      parsed.error
-    );
-  }
-  return parsed.data;
 }
 
 export async function getDashboardPixPaidMetrics(filters: DashboardMetricsFilters = {}) {
-  const supabase = createSupabaseAdminClient();
-  const normalize = (values?: string[]) => {
-    const sanitized = (values ?? []).map((value) => value.trim()).filter(Boolean);
-    return sanitized.length > 0 ? sanitized : null;
-  };
+  const campaignIds = normalizeDashboardFilter(filters.campaignIds);
+  const batchIds = normalizeDashboardFilter(filters.batchIds);
 
-  const { data, error } = await supabase.rpc("get_dashboard_pix_paid_metrics", {
-    p_campaign_ids: normalize(filters.campaignIds),
-    p_batch_ids: normalize(filters.batchIds)
-  });
+  try {
+    const result = await dbQuery(
+      `with selected as (
+         select
+           cbm.campaign_id,
+           cbm.batch_id,
+           target.paid_amount_cents,
+           nullif(trim(target.payment_description), '') as payment_description
+         from campaign_batch_members cbm
+         join campaigns c on c.id = cbm.campaign_id and c.deleted_at is null
+         join campaign_batches cb on cb.id = cbm.batch_id and cb.deleted_at is null
+         left join lateral (
+           select mi.paid_amount_cents, mi.payment_description
+             from member_installments mi
+            where mi.campaign_batch_member_id = cbm.id
+              and trim(mi.cod_parcela) = trim(cbm.target_installment_id)
+            order by mi.updated_at desc, mi.created_at desc, mi.id desc
+            limit 1
+         ) target on true
+        where cbm.deleted_at is null
+          and ($1::uuid[] is null or cbm.campaign_id = any($1::uuid[]))
+          and ($2::uuid[] is null or cbm.batch_id = any($2::uuid[]))
+       )
+       select coalesce(sum(paid_amount_cents), 0)::float8 as "pixPaidAmountCents"
+         from selected
+        where paid_amount_cents is not null
+          and payment_description is not null
+          and upper(payment_description) <> 'ABERTO'
+          and upper(payment_description) like '%PIX%'`,
+      [campaignIds, batchIds]
+    );
 
-  if (error) {
+    const parsed = DashboardPixPaidMetricsSchema.safeParse(result.rows[0]);
+    if (!parsed.success) {
+      throw new DataAccessError(
+        "O banco retornou o valor pago via Pix invalido.",
+        "getDashboardPixPaidMetrics.parse",
+        parsed.error
+      );
+    }
+    return parsed.data;
+  } catch (error) {
+    if (error instanceof DataAccessError) throw error;
     throw new DataAccessError(
       "Nao foi possivel carregar o valor pago via Pix.",
       "getDashboardPixPaidMetrics",
       error
     );
   }
-
-  const parsed = DashboardPixPaidMetricsSchema.safeParse(data);
-  if (!parsed.success) {
-    throw new DataAccessError(
-      "O banco retornou o valor pago via Pix invalido.",
-      "getDashboardPixPaidMetrics.parse",
-      parsed.error
-    );
-  }
-  return parsed.data;
 }
 
 export async function listCampaignsWithMetrics() {
-  const supabase = createSupabaseAdminClient();
-  const { data, error } = await supabase.rpc("list_campaigns_with_metrics");
-
-  if (error) {
+  try {
+    const data = await listLocalCampaignsWithMetrics();
+    const parsed = z.array(CampaignListItemSchema).safeParse(data);
+    if (!parsed.success) {
+      throw new DataAccessError(
+        "O banco retornou uma lista de campanhas inválida.",
+        "listCampaignsWithMetrics.parse",
+        parsed.error
+      );
+    }
+    return parsed.data;
+  } catch (error) {
+    if (error instanceof DataAccessError) throw error;
     throw new DataAccessError(
       "Não foi possível carregar a lista consolidada de campanhas.",
       "listCampaignsWithMetrics",
       error
     );
   }
-
-  const parsed = z.array(CampaignListItemSchema).safeParse(data ?? []);
-  if (!parsed.success) {
-    throw new DataAccessError(
-      "O banco retornou uma lista de campanhas inválida.",
-      "listCampaignsWithMetrics.parse",
-      parsed.error
-    );
-  }
-  return parsed.data;
 }

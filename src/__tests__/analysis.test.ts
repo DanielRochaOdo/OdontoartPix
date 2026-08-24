@@ -1,429 +1,293 @@
 import { describe, expect, it } from "vitest";
 import {
-  analyzeMonthlyResponses,
   analyzeMonthlyResponse,
-  analyzeTargetInstallment,
+  analyzeMonthlyResponses,
   MonthlyResponseError
 } from "@/lib/analysis";
 
-describe("analyzeMonthlyResponse", () => {
-  it("classifica como pago quando parcelas é um array sem cod_parcela", () => {
-    const result = analyzeMonthlyResponse({
-      mensagem: "Usuário sem mensalidades em aberto.",
-      parcelas: [{ Situacao: "ATIVO", Observacao: "Sem parcelas" }]
-    });
+function page(input: {
+  currentPage?: number;
+  totalPages?: number;
+  totalCount?: number;
+  pageSize?: number;
+  data?: unknown[];
+  codigo?: number;
+  erros?: unknown;
+  mensagem?: string;
+}) {
+  return {
+    codigo: input.codigo ?? 1,
+    mensagem: input.mensagem,
+    dados: {
+      CurrentPage: input.currentPage ?? 1,
+      TotalPages: input.totalPages ?? 1,
+      TotalCount: input.totalCount ?? input.data?.length ?? 0,
+      PageSize: input.pageSize ?? 100,
+      Data: input.data ?? []
+    },
+    erros: input.erros ?? null
+  };
+}
 
-    expect(result.paymentStatus).toBe("unpaid");
-    expect(result.installmentsCount).toBe(0);
-    expect(result.totalPendingAmountCents).toBe(0);
-    expect(result.installments).toEqual([]);
-  });
-
-  it("classifica como não pago, soma ValorFinal e preserva os campos financeiros", () => {
-    const result = analyzeMonthlyResponse({
-      parcelas: [
-        {
-          cod_usuario: "1",
-          cod_parcela: "10",
-          vencimento: "05/08/2026",
-          tipo_parcela: "Plano",
-          cod_boleto: "123",
-          cod_pix: "pix",
-          link_cartão: "https://pagamento.exemplo",
-          Situacao: "ATIVO",
-          Valor: 70,
-          Multa: 1,
-          Juros: 2,
-          AcrescimoAvulso: 3,
-          DescontoAvulso: 1.3,
-          ValorFinal: 74.7,
-          Tipo_plano: "Orto",
-          Observacao: "Parcela aberta"
-        }
-      ]
-    });
-
-    expect(result.paymentStatus).toBe("unpaid");
-    expect(result.totalPendingAmountCents).toBe(7470);
-    expect(result.totalsByPlan).toEqual([
-      { planType: "Orto", installmentsCount: 1, totalAmountCents: 7470 }
-    ]);
-    expect(result.installments[0]).toMatchObject({
-      installmentCode: "10",
-      boletoCode: "123",
-      pixCode: "pix",
-      finalAmountCents: 7470,
-      planType: "Orto"
-    });
-  });
-
-  it("ignora parcelas duplicadas pela combinação de usuário e cod_parcela", () => {
-    const parcelas = [
-      { cod_usuario: "1", cod_parcela: "10", Tipo_plano: "Orto", ValorFinal: 74.7 },
-      { cod_usuario: "1", cod_parcela: "10", Tipo_plano: "Orto", ValorFinal: 74.7 }
-    ];
-    const result = analyzeMonthlyResponse({ parcelas });
-
-    expect(result.installmentsCount).toBe(1);
-    expect(result.totalPendingAmountCents).toBe(7470);
-    expect(result.warnings[0]).toContain("duplicada");
-  });
-
-  it("não considera cod_parcela vazio como parcela financeira", () => {
-    const result = analyzeMonthlyResponse({ parcelas: [{ cod_parcela: "   " }] });
-    expect(result.paymentStatus).toBe("unpaid");
-  });
-
-  it("ignora parcelas do tipo Parcela Virtual em toda a leitura", () => {
-    const result = analyzeMonthlyResponse({
-      parcelas: [
-        {
-          cod_usuario: "1",
-          cod_parcela: "virtual-1",
-          tipo_parcela: " Parcela Virtual ",
-          ValorFinal: "valor invalido",
-          Tipo_plano: "Orto"
-        },
-        {
-          cod_usuario: "1",
-          cod_parcela: "10",
-          tipo_parcela: "Plano",
-          ValorFinal: 50,
-          Tipo_plano: "Orto"
-        }
-      ]
-    });
-
-    expect(result.installmentsCount).toBe(1);
-    expect(result.totalPendingAmountCents).toBe(5000);
-    expect(result.installments[0]?.installmentCode).toBe("10");
-  });
-
-  it("agrupa parcelas por Tipo_plano", () => {
-    const result = analyzeMonthlyResponse({
-      parcelas: [
-        { cod_parcela: "10", Tipo_plano: "Orto", ValorFinal: 10 },
-        { cod_parcela: "11", Tipo_plano: "Orto", ValorFinal: 20 },
-        { cod_parcela: "12", Tipo_plano: "Clínico", ValorFinal: 30 }
-      ]
-    });
-
-    expect(result.totalsByPlan).toEqual([
-      { planType: "Orto", installmentsCount: 2, totalAmountCents: 3000 },
-      { planType: "Clínico", installmentsCount: 1, totalAmountCents: 3000 }
-    ]);
-  });
-
-  it("rejeita resposta sem parcelas em formato de array", () => {
-    expect(() => analyzeMonthlyResponse({ mensagem: "ok" })).toThrow(
-      MonthlyResponseError
-    );
-    expect(() => analyzeMonthlyResponse({ parcelas: null })).toThrow(
-      MonthlyResponseError
+describe("analyzeMonthlyResponse - contrato atual do ERP", () => {
+  it("rejeita completamente o contrato legado de parcelas", () => {
+    expect(() => analyzeMonthlyResponse({ parcelas: [] }, "55")).toThrow(
+      "contrato paginado esperado"
     );
   });
 
-  it("aceita o novo contrato com dados.Data vazio como associado pago", () => {
-    const result = analyzeMonthlyResponse({
-      codigo: 1,
-      mensagem: null,
-      dados: {
-        RequestInfo: null,
-        CurrentPage: 1,
-        TotalPages: 0,
-        TotalCount: 0,
-        PageSize: 0,
-        Data: []
-      },
-      erros: null
-    }, "55");
+  it("classifica ABERTO como unpaid", () => {
+    const result = analyzeMonthlyResponse(
+      page({
+        data: [{
+          Id: "55",
+          Valor: 80,
+          ValorFinal: 87.42,
+          DescricaoRecebimento: "ABERTO"
+        }]
+      }),
+      "55"
+    );
 
     expect(result.paymentStatus).toBe("unpaid");
-    expect(result.installmentsCount).toBe(0);
-    expect(result.totalPendingAmountCents).toBe(0);
-  });
-
-  it("usa o vencimento do upload quando a API paginada nao informa vencimento", () => {
-    const result = analyzeMonthlyResponse({
-      codigo: 1,
-      dados: {
-        CurrentPage: 1,
-        TotalPages: 1,
-        TotalCount: 1,
-        PageSize: 10,
-        Data: [{ Id: "55", Valor: 87.42, ValorFinal: 87.42 }]
-      },
-      erros: []
-    }, "55", "15/08/2026");
-
-    expect(result.installments[0].dueDate).toBe("15/08/2026");
-  });
-
-  it("normaliza DataVencimento da resposta paginada como vencimento", () => {
-    const result = analyzeMonthlyResponse({
-      codigo: 1,
-      dados: {
-        CurrentPage: 1,
-        TotalPages: 1,
-        TotalCount: 1,
-        PageSize: 10,
-        Data: [{ Id: "55", Valor: 87.42, ValorFinal: 87.42, DataVencimento: "06/08/2026" }]
-      },
-      erros: []
-    }, "55");
-
-    expect(result.installments[0].dueDate).toBe("06/08/2026");
-  });
-
-  it("usa Valor, e não ValorFinal, como valor pendente da parcela alvo", () => {
-    const result = analyzeMonthlyResponse({
-      codigo: 1,
-      mensagem: null,
-      dados: {
-        RequestInfo: null,
-        CurrentPage: 1,
-        TotalPages: 1,
-        TotalCount: 1,
-        PageSize: 100,
-        Data: [{ Id: "55", Valor: 80, ValorFinal: 87.42, DescricaoRecebimento: "ABERTO" }]
-      },
-      erros: null
-    }, "55");
-
-    expect(result.paymentStatus).toBe("unpaid");
-    expect(result.installmentsCount).toBe(1);
+    expect(result.paymentStatusSource).toBe("erp_open_invoice");
     expect(result.totalPendingAmountCents).toBe(8000);
-    expect(result.totalsByPlan[0]?.totalAmountCents).toBe(8000);
+    expect(result.totalPaidAmountCents).toBe(0);
     expect(result.installments[0]).toMatchObject({
       installmentCode: "55",
       baseAmountCents: 8000,
-      finalAmountCents: 8742
+      finalAmountCents: 8742,
+      paidAmountCents: null,
+      paymentDescription: "ABERTO"
     });
   });
 
-  it("mantém ValorPago como recebido e zera pendência quando a target está paga", () => {
-    const result = analyzeMonthlyResponse({
-      codigo: 1,
-      dados: {
-        CurrentPage: 1,
-        TotalPages: 1,
-        TotalCount: 1,
-        PageSize: 100,
-        Data: [{
+  it("ABERTO continua unpaid mesmo se ValorPago vier preenchido", () => {
+    const result = analyzeMonthlyResponse(
+      page({
+        data: [{
+          Id: "55",
+          Valor: 100,
+          ValorPago: 100,
+          DescricaoRecebimento: "ABERTO"
+        }]
+      }),
+      "55"
+    );
+
+    expect(result.paymentStatus).toBe("unpaid");
+    expect(result.installments[0]?.paidAmountCents).toBeNull();
+  });
+
+  it("classifica como paid somente quando DescricaoRecebimento nao e ABERTO e ValorPago >= Valor", () => {
+    const result = analyzeMonthlyResponse(
+      page({
+        data: [{
           Id: "55",
           Valor: 100,
           ValorFinal: 125,
           ValorPago: 110,
           DescricaoRecebimento: "PIX"
         }]
-      },
-      erros: null
-    }, "55");
+      }),
+      "55"
+    );
 
     expect(result.paymentStatus).toBe("paid");
+    expect(result.paymentStatusSource).toBe("erp_explicit");
     expect(result.totalPendingAmountCents).toBe(0);
     expect(result.totalPaidAmountCents).toBe(11000);
-    expect(result.installments[0]).toMatchObject({
-      baseAmountCents: 10000,
-      finalAmountCents: 12500,
-      paidAmountCents: 11000
-    });
+    expect(result.installments[0]?.paidAmountCents).toBe(11000);
   });
 
-  it("rejeita a parcela alvo quando o ERP não informa Valor", () => {
-    expect(() => analyzeMonthlyResponse({
-      codigo: 1,
-      dados: {
-        CurrentPage: 1,
-        TotalPages: 1,
-        TotalCount: 1,
-        PageSize: 100,
-        Data: [{ Id: "55", ValorFinal: 87.42, DescricaoRecebimento: "ABERTO" }]
-      },
-      erros: null
-    }, "55")).toThrow("não possui Valor");
-  });
-
-  it("usa o historico completo para distinguir ABERTO de pagamento confirmado", () => {
-    const result = analyzeMonthlyResponse({
-      codigo: 1,
-      dados: {
-        CurrentPage: 1,
-        TotalPages: 1,
-        TotalCount: 2,
-        PageSize: 100,
-        Data: [
-          { Id: "55", Valor: 90, ValorFinal: 100, ValorPago: 0, DescricaoRecebimento: "ABERTO" },
-          { Id: "56", Valor: 70, ValorFinal: 80, ValorPago: "75,00", DescricaoRecebimento: "PIX" }
-        ]
-      },
-      erros: null
-    }, "55", undefined, { historyComplete: true });
-
-    expect(result.paymentStatus).toBe("unpaid");
-    expect(result.totalPendingAmountCents).toBe(9000);
-    expect(result.totalPaidAmountCents).toBe(7500);
-    expect(result.installments).toHaveLength(2);
-    expect(result.installments[0]).toMatchObject({
-      baseAmountCents: 9000,
-      finalAmountCents: 10000
-    });
-    expect(result.installments[1]).toMatchObject({
-      paymentDescription: "PIX",
-      paidAmountCents: 7500
-    });
-  });
-
-  it("nunca marca como pago um historico sem ValorPago preenchido", () => {
-    const result = analyzeMonthlyResponse({
-      codigo: 1,
-      dados: {
-        CurrentPage: 1,
-        TotalPages: 1,
-        TotalCount: 1,
-        PageSize: 100,
-        Data: [{ Id: "55", Valor: 80, ValorFinal: 87.42, DescricaoRecebimento: "QUITADO" }]
-      },
-      erros: null
-    }, "55", undefined, { historyComplete: true });
-
-    expect(result.paymentStatus).toBe("unpaid");
-    expect(result.installments[0]?.paidAmountCents).toBeNull();
-    expect(result.totalPendingAmountCents).toBe(8000);
-  });
-
-  it("nao usa Situacao como tipo de pagamento quando DescricaoRecebimento nao veio", () => {
-    const result = analyzeMonthlyResponse({
-      codigo: 1,
-      dados: {
-        CurrentPage: 1,
-        TotalPages: 1,
-        TotalCount: 1,
-        PageSize: 100,
-        Data: [{ Id: "55", Valor: 80, ValorFinal: 87.42, Situacao: "ATIVO" }]
-      },
-      erros: null
-    }, "55", undefined, { historyComplete: true });
-
-    expect(result.installments[0]?.situation).toBeUndefined();
-    expect(result.installments[0]?.paymentDescription).toBeUndefined();
-    expect(result.paymentStatus).toBe("unpaid");
-  });
-
-  it("rejeita parcela financeira com ValorFinal inválido", () => {
-    expect(() =>
-      analyzeMonthlyResponse({ parcelas: [{ cod_parcela: "10", ValorFinal: "abc" }] })
-    ).toThrow("ValorFinal inválido");
-  });
-});
-
-describe("analise da fatura alvo e completude da paginacao", () => {
-  it("consolida paginas e encontra a parcela alvo na pagina seguinte", () => {
-    const result = analyzeMonthlyResponses([
-      {
-        codigo: 1,
-        dados: {
-          CurrentPage: 1,
-          TotalPages: 2,
-          TotalCount: 201,
-          PageSize: 200,
-          Data: [{ Id: "55", Valor: 45, ValorFinal: 49, DescricaoRecebimento: "ABERTO" }]
-        },
-        erros: null
-      },
-      {
-        codigo: 1,
-        dados: {
-          CurrentPage: 2,
-          TotalPages: 2,
-          TotalCount: 201,
-          PageSize: 66,
-          Data: [{ Id: "999", Valor: 60, ValorFinal: 63.8, ValorPago: 63.8, DescricaoRecebimento: "PIX" }]
-        },
-        erros: null
-      }
-    ], "999", undefined, { historyComplete: true });
+  it("aceita pagamento exatamente igual ao Valor", () => {
+    const result = analyzeMonthlyResponse(
+      page({
+        data: [{
+          Id: "55",
+          Valor: 100,
+          ValorPago: 100,
+          DescricaoRecebimento: "BOLETO"
+        }]
+      }),
+      "55"
+    );
 
     expect(result.paymentStatus).toBe("paid");
-    expect(result.paginationComplete).toBe(true);
-    expect(result.totalPaidAmountCents).toBe(6380);
-    expect(result.totalPendingAmountCents).toBe(4500);
   });
 
-  it("analisa um conjunto de paginas sem depender do transporte HTTP", () => {
-    const result = analyzeTargetInstallment({
-      targetInstallmentId: "55",
-      invoices: [{ id: 55, finalAmountCents: 1000 }, { id: 99, finalAmountCents: 2000 }],
-      paginationComplete: true
-    });
+  it("rejeita pagamento parcial quando DescricaoRecebimento nao e ABERTO", () => {
+    expect(() => analyzeMonthlyResponse(
+      page({
+        data: [{
+          Id: "55",
+          Valor: 100,
+          ValorPago: 99.99,
+          DescricaoRecebimento: "PIX"
+        }]
+      }),
+      "55"
+    )).toThrow("ValorPago e menor que Valor");
+  });
+
+  it("rejeita DescricaoRecebimento diferente de ABERTO sem ValorPago", () => {
+    expect(() => analyzeMonthlyResponse(
+      page({
+        data: [{
+          Id: "55",
+          Valor: 100,
+          DescricaoRecebimento: "PIX"
+        }]
+      }),
+      "55"
+    )).toThrow("sem ValorPago informado");
+  });
+
+  it("rejeita parcela alvo sem DescricaoRecebimento", () => {
+    expect(() => analyzeMonthlyResponse(
+      page({
+        data: [{ Id: "55", Valor: 100, ValorPago: 100 }]
+      }),
+      "55"
+    )).toThrow("nao possui DescricaoRecebimento");
+  });
+
+  it("rejeita parcela alvo sem Valor", () => {
+    expect(() => analyzeMonthlyResponse(
+      page({
+        data: [{ Id: "55", DescricaoRecebimento: "ABERTO" }]
+      }),
+      "55"
+    )).toThrow("nao possui Valor");
+  });
+
+  it("rejeita parcela alvo ausente mesmo quando a consulta esta completa", () => {
+    expect(() => analyzeMonthlyResponse(
+      page({ totalPages: 0, totalCount: 0, pageSize: 0, data: [] }),
+      "55"
+    )).toThrow("parcela alvo 55 nao foi localizada");
+  });
+
+  it("rejeita parcela alvo ausente quando ainda existem paginas nao consultadas", () => {
+    expect(() => analyzeMonthlyResponse(
+      page({
+        totalPages: 2,
+        totalCount: 2,
+        pageSize: 1,
+        data: [{ Id: "99", Valor: 50, DescricaoRecebimento: "ABERTO" }]
+      }),
+      "55"
+    )).toThrow("consulta paginada do ERP nao foi concluida");
+  });
+
+  it("permite classificar a parcela quando ela e encontrada antes do fim da paginacao", () => {
+    const result = analyzeMonthlyResponse(
+      page({
+        totalPages: 5,
+        totalCount: 500,
+        pageSize: 200,
+        data: [{
+          Id: "55",
+          Valor: 100,
+          ValorPago: 100,
+          DescricaoRecebimento: "PIX"
+        }]
+      }),
+      "55"
+    );
+
+    expect(result.paymentStatus).toBe("paid");
+    expect(result.paginationComplete).toBe(false);
+  });
+
+  it("usa o vencimento do upload quando o ERP nao informa vencimento", () => {
+    const result = analyzeMonthlyResponse(
+      page({
+        data: [{ Id: "55", Valor: 80, DescricaoRecebimento: "ABERTO" }]
+      }),
+      "55",
+      "05/08/2026"
+    );
+
+    expect(result.installments[0]?.dueDate).toBe("05/08/2026");
+  });
+
+  it("prioriza DataVencimento da resposta do ERP", () => {
+    const result = analyzeMonthlyResponse(
+      page({
+        data: [{
+          Id: "55",
+          DataVencimento: "2026-08-05",
+          Valor: 80,
+          DescricaoRecebimento: "ABERTO"
+        }]
+      }),
+      "55",
+      "05/08/2026"
+    );
+
+    expect(result.installments[0]?.dueDate).toBe("2026-08-05");
+  });
+
+  it("usa Valor, e nao ValorFinal, como valor pendente", () => {
+    const result = analyzeMonthlyResponse(
+      page({
+        data: [{
+          Id: "55",
+          Valor: 80,
+          ValorFinal: 87.42,
+          DescricaoRecebimento: "ABERTO"
+        }]
+      }),
+      "55"
+    );
+
+    expect(result.totalPendingAmountCents).toBe(8000);
+    expect(result.installments[0]?.baseAmountCents).toBe(8000);
+    expect(result.installments[0]?.finalAmountCents).toBe(8742);
+  });
+
+  it("normaliza o identificador da parcela entre numero e texto", () => {
+    const result = analyzeMonthlyResponse(
+      page({
+        data: [{ Id: 55, Valor: 10, DescricaoRecebimento: "ABERTO" }]
+      }),
+      "55"
+    );
 
     expect(result.paymentStatus).toBe("unpaid");
   });
 
-  it("ignora outras faturas quando o alvo nao esta na resposta completa", () => {
-    const result = analyzeMonthlyResponse({
+  it("rejeita codigo funcional diferente de 1", () => {
+    expect(() => analyzeMonthlyResponse(
+      page({ codigo: 0, totalPages: 0, totalCount: 0, pageSize: 0, data: [] }),
+      "55"
+    )).toThrow("erro funcional");
+  });
+
+  it("rejeita erros funcionais preenchidos", () => {
+    expect(() => analyzeMonthlyResponse(
+      page({
+        erros: [{ codigo: "ERP_ERROR" }],
+        totalPages: 0,
+        totalCount: 0,
+        pageSize: 0,
+        data: []
+      }),
+      "55"
+    )).toThrow("erro funcional");
+  });
+
+  it("rejeita metadados de paginacao incoerentes", () => {
+    expect(() => analyzeMonthlyResponse({
       codigo: 1,
       dados: {
-        CurrentPage: 1,
+        CurrentPage: 2,
         TotalPages: 1,
-        TotalCount: 1,
-        PageSize: 100,
-        Data: [{ Id: 999, ValorFinal: 87.42 }]
-      }
-    }, "55");
-
-    expect(result.paymentStatus).toBe("unpaid");
-    expect(result.paymentStatusSource).toBe("erp_open_invoice");
-  });
-
-  it("nao conclui pagamento quando ainda existem paginas nao consultadas", () => {
-    expect(() => analyzeMonthlyResponse({
-      codigo: 1,
-      dados: {
-        CurrentPage: 1,
-        TotalPages: 2,
-        TotalCount: 2,
-        PageSize: 1,
-        Data: [{ Id: 999, ValorFinal: 87.42 }]
-      }
-    }, "55")).toThrow("consulta paginada");
-  });
-
-  it("normaliza o identificador alvo entre numero e texto", () => {
-    const result = analyzeMonthlyResponse({
-      codigo: 1,
-      dados: {
-        CurrentPage: 1,
-        TotalPages: 1,
-        TotalCount: 1,
-        PageSize: 1,
-        Data: [{ Id: 55, Valor: 10, ValorFinal: 10 }]
-      }
-    }, "55");
-
-    expect(result.paymentStatus).toBe("unpaid");
-  });
-
-  it("rejeita codigo funcional diferente de 1 mesmo com Data vazia", () => {
-    expect(() => analyzeMonthlyResponse({
-      codigo: 0,
-      dados: { CurrentPage: 1, TotalPages: 0, TotalCount: 0, PageSize: 0, Data: [] },
-      erros: null
-    }, "55")).toThrow("erro funcional");
-  });
-
-  it("rejeita erros funcionais preenchidos mesmo com Data vazia", () => {
-    expect(() => analyzeMonthlyResponse({
-      codigo: 1,
-      dados: { CurrentPage: 1, TotalPages: 0, TotalCount: 0, PageSize: 0, Data: [] },
-      erros: [{ codigo: "ERP_ERROR" }]
-    }, "55")).toThrow("erro funcional");
-  });
-
-  it("rejeita metadados de pagina incoerentes", () => {
-    expect(() => analyzeMonthlyResponse({
-      codigo: 1,
-      dados: { CurrentPage: 2, TotalPages: 1, TotalCount: 0, PageSize: 0, Data: [] },
+        TotalCount: 0,
+        PageSize: 0,
+        Data: []
+      },
       erros: null
     }, "55")).toThrow("metadados");
   });
@@ -434,5 +298,94 @@ describe("analise da fatura alvo e completude da paginacao", () => {
       dados: { Data: [] },
       erros: null
     }, "55")).toThrow(MonthlyResponseError);
+  });
+});
+
+describe("analyzeMonthlyResponses - paginacao", () => {
+  it("consolida paginas ate localizar a parcela alvo", () => {
+    const result = analyzeMonthlyResponses([
+      page({
+        currentPage: 1,
+        totalPages: 2,
+        totalCount: 2,
+        pageSize: 1,
+        data: [{ Id: "10", Valor: 45, DescricaoRecebimento: "ABERTO" }]
+      }),
+      page({
+        currentPage: 2,
+        totalPages: 2,
+        totalCount: 2,
+        pageSize: 1,
+        data: [{
+          Id: "55",
+          Valor: 60,
+          ValorPago: 60,
+          DescricaoRecebimento: "PIX"
+        }]
+      })
+    ], "55");
+
+    expect(result.paymentStatus).toBe("paid");
+    expect(result.paginationComplete).toBe(true);
+    expect(result.totalPaidAmountCents).toBe(6000);
+    expect(result.totalPendingAmountCents).toBe(4500);
+  });
+
+  it("nao exige paginas restantes quando a parcela alvo ja foi encontrada", () => {
+    const result = analyzeMonthlyResponses([
+      page({
+        currentPage: 1,
+        totalPages: 4,
+        totalCount: 400,
+        pageSize: 100,
+        data: [{ Id: "55", Valor: 90, DescricaoRecebimento: "ABERTO" }]
+      })
+    ], "55");
+
+    expect(result.paymentStatus).toBe("unpaid");
+    expect(result.paginationComplete).toBe(false);
+  });
+
+  it("gera erro quando todas as paginas foram consultadas e a parcela alvo nao existe", () => {
+    expect(() => analyzeMonthlyResponses([
+      page({
+        currentPage: 1,
+        totalPages: 2,
+        totalCount: 2,
+        pageSize: 1,
+        data: [{ Id: "10", Valor: 50, DescricaoRecebimento: "ABERTO" }]
+      }),
+      page({
+        currentPage: 2,
+        totalPages: 2,
+        totalCount: 2,
+        pageSize: 1,
+        data: [{
+          Id: "11",
+          Valor: 60,
+          ValorPago: 60,
+          DescricaoRecebimento: "PIX"
+        }]
+      })
+    ], "55")).toThrow("parcela alvo 55 nao foi localizada");
+  });
+
+  it("gera erro quando a parcela nao foi localizada e a paginacao esta incompleta", () => {
+    expect(() => analyzeMonthlyResponses([
+      page({
+        currentPage: 1,
+        totalPages: 3,
+        totalCount: 3,
+        pageSize: 1,
+        data: [{ Id: "10", Valor: 50, DescricaoRecebimento: "ABERTO" }]
+      })
+    ], "55")).toThrow("consulta paginada do ERP nao foi concluida");
+  });
+
+  it("rejeita paginas com metadados incompativeis", () => {
+    expect(() => analyzeMonthlyResponses([
+      page({ currentPage: 1, totalPages: 2, totalCount: 2, pageSize: 1 }),
+      page({ currentPage: 2, totalPages: 3, totalCount: 3, pageSize: 1 })
+    ], "55")).toThrow("metadados incompativeis");
   });
 });

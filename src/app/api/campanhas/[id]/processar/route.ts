@@ -2,10 +2,6 @@ import { z } from "zod";
 import { requireApiUser } from "@/lib/auth/require-api-user";
 import { enqueueCampaignJobs, PROCESSING_PRIORITIES } from "@/lib/batch-job-service";
 import { fail, ok } from "@/lib/http/api-response";
-import {
-  dispatchDurableProcessingWorkflowSafely,
-  runImmediateProcessingKickoff
-} from "@/lib/processing-kickoff";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -45,25 +41,12 @@ export async function POST(
       );
     }
 
-    const durableDispatchPromise = dispatchDurableProcessingWorkflowSafely({
-      source: "campaign",
-      campaignId: parsed.data.id,
-      requestedBy: auth.profile.id
-    });
-
-    const kickoff = await runImmediateProcessingKickoff({
-      processingOrigin: "manual",
-      includeGeneralSync: false
-    });
-    const durableDispatch = await durableDispatchPromise;
-
     return ok(
       {
         campaignId: parsed.data.id,
         jobsCreated: result.jobs.filter((job) => job.created).length,
-        kickoff,
-        durableDispatch,
         priority: PROCESSING_PRIORITIES.campaign,
+        scheduler: "systemd-timer",
         jobs: result.jobs.map((job) => ({
           jobId: job.id,
           batchId: job.batch_id,
@@ -74,7 +57,7 @@ export async function POST(
           scope: job.processing_scope
         }))
       },
-      "A campanha foi enfileirada com prioridade acima de lote e associado.",
+      "A campanha foi enfileirada para processamento pelo worker local.",
       202
     );
   } catch (error) {

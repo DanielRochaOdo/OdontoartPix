@@ -225,6 +225,7 @@ export function GeneralSyncButton({
   const [run, setRun] = useState<GeneralSyncRunDetail | null>(initialRun);
   const [loadingPreview, setLoadingPreview] = useState(false);
   const [starting, setStarting] = useState(false);
+  const [pausing, setPausing] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [resuming, setResuming] = useState(false);
   const [reprocessingErrors, setReprocessingErrors] = useState(false);
@@ -389,9 +390,9 @@ export function GeneralSyncButton({
     }
   }
 
-  async function cancel() {
-    if (!run || cancelling || !run.canCancel) return;
-    setCancelling(true);
+  async function pause() {
+    if (!run || pausing || (run.status !== "queued" && run.status !== "running")) return;
+    setPausing(true);
     setError(null);
     setActionMessage(null);
 
@@ -403,29 +404,64 @@ export function GeneralSyncButton({
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          reason: "Sincronizacao geral interrompida manualmente no dashboard."
+          reason: "Pausa da sincronizacao geral solicitada manualmente no dashboard."
         })
       });
       const payload = (await response.json().catch(() => null)) as ApiSuccess<GeneralSyncRunDetail> | null;
       if (!response.ok || !payload?.success || !payload.data) {
-        setError(payload?.error?.message ?? "Nao foi possivel interromper a sincronizacao geral.");
+        setError(payload?.error?.message ?? "Nao foi possivel pausar a sincronizacao geral.");
         return;
       }
 
-      setRun(null);
-      setPreview(null);
-      setSelectedMetric(null);
-      setOpen(false);
+      setRun(payload.data);
+      setActionMessage(payload.message ?? "Pausa da sincronizacao geral solicitada.");
       emitMetricsSync();
     } catch {
-      setError("Falha de comunicacao ao interromper a sincronizacao geral.");
+      setError("Falha de comunicacao ao pausar a sincronizacao geral.");
+    } finally {
+      setPausing(false);
+    }
+  }
+
+  async function cancel() {
+    if (!run || cancelling || run.status !== "paused" || !run.canCancel) return;
+    setCancelling(true);
+    setError(null);
+    setActionMessage(null);
+
+    try {
+      const response = await fetch(`/api/dashboard/general-sync/${run.id}/cancel`, {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          reason: "Sincronizacao geral cancelada definitivamente no dashboard."
+        })
+      });
+      const payload = (await response.json().catch(() => null)) as ApiSuccess<GeneralSyncRunDetail> | null;
+      if (!response.ok || !payload?.success || !payload.data) {
+        setError(payload?.error?.message ?? "Nao foi possivel cancelar definitivamente a sincronizacao geral.");
+        return;
+      }
+
+      setRun(payload.data);
+      setActionMessage(payload.message ?? "Cancelamento definitivo solicitado.");
+      emitMetricsSync();
+    } catch {
+      setError("Falha de comunicacao ao cancelar definitivamente a sincronizacao geral.");
     } finally {
       setCancelling(false);
     }
   }
 
   async function reprocessErrors() {
-    if (!run || reprocessingErrors || !run.canCancel) return;
+    if (
+      !run ||
+      reprocessingErrors ||
+      (run.status !== "queued" && run.status !== "running")
+    ) return;
     setSelectedMetric("error");
     setReprocessingErrors(true);
     setError(null);
@@ -541,13 +577,17 @@ export function GeneralSyncButton({
                 <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-emerald-500" aria-hidden="true" />
                 {run.status === "paused"
                   ? "Sincronizacao geral pausada"
+                  : run.status === "cancelling"
+                  ? "Cancelamento geral em andamento"
                   : run.triggerSource === "scheduled"
                   ? "Sincronizacao automatica em andamento"
                   : "Processamento geral em andamento"}
               </div>
               <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
                 {run.status === "paused"
-                  ? "Execucao pausada legada. Novas interrupcoes encerram definitivamente a onda."
+                  ? "Execucao pausada em ponto seguro. Voce pode retomar ou cancelar definitivamente esta onda."
+                  : run.status === "cancelling"
+                  ? "O cancelamento definitivo foi solicitado e sera concluido pelo worker local em seguranca."
                   : run.triggerSource === "scheduled"
                   ? "Iniciada pelo agendador automatico. O dashboard atualiza o progresso por eventos do banco."
                   : run.scopeType === "all"
@@ -558,14 +598,41 @@ export function GeneralSyncButton({
             <div className="text-left text-sm text-slate-500 lg:text-right dark:text-slate-400">
               <p>Tempo decorrido: <strong className="text-slate-800 dark:text-slate-100">{formatElapsed(run.startedAt)}</strong></p>
               <p className="mt-1">Última atualização: {lastUpdate ? formatRelative(lastUpdate) : "aguardando"}</p>
-              <button
-                type="button"
-                onClick={() => void (run.canResume ? resume() : cancel())}
-                disabled={cancelling || resuming}
-                className={`mt-3 rounded-lg px-3 py-2 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-60 ${run.canResume ? "bg-emerald-700 hover:bg-emerald-800" : "bg-red-700 hover:bg-red-800"}`}
-              >
-                {resuming ? "Retomando..." : cancelling ? "Interrompendo..." : run.canResume ? "Retomar sincronização legada" : "Interromper sincronização"}
-              </button>
+              <div className="mt-3 flex flex-wrap gap-2 lg:justify-end">
+                {run.status === "paused" ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => void resume()}
+                      disabled={resuming || cancelling}
+                      className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {resuming ? "Retomando..." : "Retomar sincronização"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void cancel()}
+                      disabled={cancelling || resuming}
+                      className="rounded-lg bg-red-700 px-3 py-2 text-xs font-semibold text-white transition hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {cancelling ? "Cancelando..." : "Cancelar definitivamente"}
+                    </button>
+                  </>
+                ) : run.status === "cancelling" ? (
+                  <span className="rounded-lg bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 dark:bg-red-950/30 dark:text-red-200">
+                    Cancelamento em andamento...
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => void cancel()}
+                    disabled={cancelling || resuming}
+                    className="rounded-lg bg-red-700 px-3 py-2 text-xs font-semibold text-white transition hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {cancelling ? "Interrompendo..." : "Interromper processamento"}
+                  </button>
+                )}
+              </div>
             </div>
           </div>
 
@@ -865,7 +932,10 @@ export function GeneralSyncButton({
                   <button
                     type="button"
                     onClick={() => void reprocessErrors()}
-                    disabled={reprocessingErrors || !run.canCancel}
+                    disabled={
+                      reprocessingErrors ||
+                      (run.status !== "queued" && run.status !== "running")
+                    }
                     className="rounded-xl bg-slate-50 p-3 text-left transition hover:bg-red-50 disabled:opacity-60"
                   >
                     <p className="text-xs uppercase tracking-wide text-slate-500">Erros · clique para reprocessar na onda</p>
@@ -886,29 +956,43 @@ export function GeneralSyncButton({
               <button
                 type="button"
                 onClick={() => setOpen(false)}
-                disabled={starting || cancelling || resuming || reprocessingErrors}
+                disabled={starting || pausing || cancelling || resuming || reprocessingErrors}
                 className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 disabled:opacity-60"
               >
                 Fechar
               </button>
               {run ? (
-                run.canResume ? (
-                  <button
-                    type="button"
-                    onClick={() => void resume()}
-                    disabled={resuming}
-                    className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-800 disabled:opacity-60"
-                  >
-                    {resuming ? "Retomando..." : "Retomar sincronizacao legada"}
-                  </button>
-                ) : run.canCancel ? (
+                run.status === "paused" ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => void resume()}
+                      disabled={resuming || cancelling}
+                      className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-800 disabled:opacity-60"
+                    >
+                      {resuming ? "Retomando..." : "Retomar sincronizacao"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void cancel()}
+                      disabled={cancelling || resuming}
+                      className="rounded-lg bg-red-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-800 disabled:opacity-60"
+                    >
+                      {cancelling ? "Cancelando..." : "Cancelar definitivamente"}
+                    </button>
+                  </>
+                ) : run.status === "cancelling" ? (
+                  <span className="rounded-lg bg-red-50 px-4 py-2 text-sm font-medium text-red-700">
+                    Cancelamento em andamento...
+                  </span>
+                ) : run.status === "queued" || run.status === "running" ? (
                   <button
                     type="button"
                     onClick={() => void cancel()}
                     disabled={cancelling || resuming}
                     className="rounded-lg bg-red-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-800 disabled:opacity-60"
                   >
-                    {cancelling ? "Interrompendo..." : "Interromper sincronizacao"}
+                    {cancelling ? "Interrompendo..." : "Interromper processamento"}
                   </button>
                 ) : null
               ) : (

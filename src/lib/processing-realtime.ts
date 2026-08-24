@@ -1,7 +1,6 @@
 "use client";
 
 import type { GeneralSyncRunDetail } from "@/lib/general-sync";
-import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
 export type ProcessingActiveSnapshot = {
   active: boolean;
@@ -14,17 +13,8 @@ export type ProcessingActiveSnapshot = {
   processedItems: number;
   successItems: number;
   errorItems: number;
-  origins?: {
-    manual: number;
-    dashboard: number;
-    unknown: number;
-  };
-  scopes?: {
-    campaign: number;
-    batch: number;
-    member: number;
-    dashboard: number;
-  };
+  origins?: { manual: number; dashboard: number; unknown: number };
+  scopes?: { campaign: number; batch: number; member: number; dashboard: number };
   generalSync?: {
     id: string;
     status: string;
@@ -46,12 +36,7 @@ export type DashboardErrorReplaySnapshot = {
   failedCount: number;
   completedCount?: number;
   remainingCount?: number;
-  activities: Array<{
-    id: string;
-    type: string;
-    label: string;
-    createdAt: string;
-  }>;
+  activities: Array<{ id: string; type: string; label: string; createdAt: string }>;
 };
 
 export type FilteredErrorReplaySnapshot = {
@@ -72,90 +57,74 @@ export type FilteredErrorReplaySnapshot = {
   finishedAt?: string | null;
 };
 
-let realtimeSubscriptionSequence = 0;
+type ApiEnvelope<T> = {
+  success?: boolean;
+  data?: T;
+  error?: { message?: string };
+};
 
-async function rpcJson<T>(name: string, args?: Record<string, unknown>) {
-  const supabase = createSupabaseBrowserClient();
-  const { data, error } = await supabase.rpc(name, args ?? {});
-  if (error) throw new Error(error.message);
-  return (data ?? null) as T | null;
-}
-
-export function getProcessingActiveSnapshot() {
-  return rpcJson<ProcessingActiveSnapshot>("get_processing_active_snapshot_v1");
-}
-
-export function getActiveGeneralSyncRunSnapshot() {
-  return rpcJson<GeneralSyncRunDetail>("get_active_general_sync_run_detail_v1");
-}
-
-export function getGeneralSyncRunSnapshot(runId: string | null) {
-  if (!runId) return Promise.resolve(null);
-  return rpcJson<GeneralSyncRunDetail>("get_general_sync_run_detail_v1", {
-    p_run_id: runId
+async function fetchSnapshot<T>(url: string): Promise<T | null> {
+  const response = await fetch(url, {
+    method: "GET",
+    headers: { Accept: "application/json" },
+    cache: "no-store",
+    credentials: "same-origin"
   });
+
+  const payload = (await response.json().catch(() => null)) as ApiEnvelope<T> | null;
+  if (response.status === 404) return null;
+  if (!response.ok || !payload?.success) {
+    throw new Error(payload?.error?.message ?? "Nao foi possivel atualizar o processamento.");
+  }
+  return payload.data ?? null;
 }
 
-export function getDashboardErrorReplaySnapshot(runId: string | null) {
+export function getProcessingActiveSnapshot(): Promise<ProcessingActiveSnapshot | null> {
+  return fetchSnapshot<ProcessingActiveSnapshot>("/api/processing/active");
+}
+
+export function getActiveGeneralSyncRunSnapshot(): Promise<GeneralSyncRunDetail | null> {
+  return fetchSnapshot<GeneralSyncRunDetail>("/api/dashboard/general-sync/active");
+}
+
+export function getGeneralSyncRunSnapshot(runId: string | null): Promise<GeneralSyncRunDetail | null> {
   if (!runId) return Promise.resolve(null);
-  return rpcJson<DashboardErrorReplaySnapshot>("get_dashboard_error_reprocess_status_v1", {
-    p_run_id: runId
-  });
+  return fetchSnapshot<GeneralSyncRunDetail>(
+    `/api/dashboard/general-sync/${encodeURIComponent(runId)}`
+  );
 }
 
-export function getFilteredErrorReplaySnapshot(requestId: string | null) {
+export function getDashboardErrorReplaySnapshot(
+  runId: string | null
+): Promise<DashboardErrorReplaySnapshot | null> {
+  if (!runId) return Promise.resolve(null);
+  return fetchSnapshot<DashboardErrorReplaySnapshot>(
+    `/api/dashboard/general-sync/${encodeURIComponent(runId)}/error-reprocess-status`
+  );
+}
+
+export function getFilteredErrorReplaySnapshot(
+  requestId: string | null
+): Promise<FilteredErrorReplaySnapshot | null> {
   if (!requestId) return Promise.resolve(null);
-  return rpcJson<FilteredErrorReplaySnapshot>("get_filtered_error_reprocess_status_v1", {
-    p_request_id: requestId
-  });
+  return fetchSnapshot<FilteredErrorReplaySnapshot>(
+    `/api/associados/reprocessar-erros-filtrados/${encodeURIComponent(requestId)}`
+  );
 }
 
 export function subscribeProcessingRealtime(onChange: () => void) {
-  const supabase = createSupabaseBrowserClient();
-  const subscriptionId = ++realtimeSubscriptionSequence;
-  let disposed = false;
-  let pendingWhileHidden = false;
-  let debounceTimer: number | null = null;
+  if (typeof window === "undefined" || typeof EventSource === "undefined") {
+    return () => undefined;
+  }
 
-  const notify = () => {
-    if (disposed) return;
-    if (document.visibilityState !== "visible") {
-      pendingWhileHidden = true;
-      return;
-    }
-    pendingWhileHidden = false;
-    if (debounceTimer !== null) window.clearTimeout(debounceTimer);
-    debounceTimer = window.setTimeout(() => {
-      debounceTimer = null;
-      if (!disposed) onChange();
-    }, 120);
-  };
-
-  const channel = supabase
-    .channel(`processing-realtime-global-${subscriptionId}`)
-    .on(
-      "postgres_changes",
-      {
-        event: "UPDATE",
-        schema: "public",
-        table: "processing_realtime_signal",
-        filter: "signal_key=eq.global"
-      },
-      notify
-    )
-    .subscribe((status: string) => {
-      if (status === "SUBSCRIBED") notify();
-    });
-
-  const handleVisibility = () => {
-    if (document.visibilityState === "visible" && pendingWhileHidden) notify();
-  };
-  document.addEventListener("visibilitychange", handleVisibility);
+  const source = new EventSource("/api/processing/events", { withCredentials: true });
+  const handleChange = () => onChange();
+  source.addEventListener("ready", handleChange);
+  source.addEventListener("change", handleChange);
 
   return () => {
-    disposed = true;
-    if (debounceTimer !== null) window.clearTimeout(debounceTimer);
-    document.removeEventListener("visibilitychange", handleVisibility);
-    void supabase.removeChannel(channel);
+    source.removeEventListener("ready", handleChange);
+    source.removeEventListener("change", handleChange);
+    source.close();
   };
 }

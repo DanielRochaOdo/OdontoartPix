@@ -8,32 +8,38 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "next typegen && tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "db:migrate": "tsx scripts/migrate-local-db.ts",
+    "preflight:production": "tsx scripts/preflight-production.ts",
+    "worker:once": "tsx scripts/process-local-worker.ts",
+    "worker:drain": "tsx scripts/process-local-worker.ts --drain",
+    "worker:provision": "tsx scripts/provision-processing-service.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.1.1",
-    "@supabase/ssr": "^0.7.0",
-    "@supabase/supabase-js": "^2.55.0",
     "@tanstack/react-table": "^8.21.3",
     "bcryptjs": "^3.0.2",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
-    "next": "^15.4.2",
+    "next": "16.3.2",
+    "pg": "^8.23.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-hook-form": "^7.62.0",
     "recharts": "^3.1.0",
     "tailwind-merge": "^3.3.1",
-    "xlsx": "^0.18.5",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "zod": "^4.0.17"
   },
   "devDependencies": {
     "@types/node": "^24.1.0",
+    "@types/pg": "^8.23.1",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "autoprefixer": "^10.4.21",
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.17",
+    "tsx": "^4.23.12",
     "typescript": "^5.8.3",
     "vitest": "^3.2.4"
   }

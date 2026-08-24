@@ -21,7 +21,7 @@ export default async function BatchDetailPage({
 }) {
   const { id } = await params;
 
-  let batch: Awaited<ReturnType<typeof getBatchById>> = null;
+  let batch: Awaited<ReturnType<typeof getBatchById>> | null = null;
   let metrics: Awaited<ReturnType<typeof getBatchMetrics>> = null;
   let members: Awaited<ReturnType<typeof getMemberPreviewByBatch>> = [];
   let errorMessage: string | null = null;

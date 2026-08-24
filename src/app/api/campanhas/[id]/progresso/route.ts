@@ -1,8 +1,7 @@
 import { z } from "zod";
 import { requireApiUser } from "@/lib/auth/require-api-user";
-import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { getLocalCampaignMetrics } from "@/lib/campaign-detail-read";
 import { fail, ok } from "@/lib/http/api-response";
-import { getProcessingBlockSize } from "@/lib/metrics";
 
 const ParamsSchema = z.object({ id: z.string().uuid() });
 
@@ -18,18 +17,18 @@ export async function GET(
     return fail("VALIDATION_ERROR", "Campanha inválida.", 400);
   }
 
-  const supabase = createSupabaseAdminClient();
-  const { data, error } = await supabase.rpc("get_campaign_metrics", {
-    p_campaign_id: parsed.data.id
-  });
+  try {
+    const data = await getLocalCampaignMetrics(parsed.data.id);
 
-  if (error) {
+    if (!data) {
+      return fail("NOT_FOUND", "Campanha não encontrada.", 404);
+    }
+
+    return ok(data, "Progresso da campanha carregado.");
+  } catch (error) {
     console.error("[CAMPAIGN_METRICS_LOAD_FAILED]", {
       campaignId: parsed.data.id,
-      code: error.code,
-      message: error.message,
-      details: error.details,
-      hint: error.hint
+      message: error instanceof Error ? error.message : "Erro desconhecido"
     });
     return fail(
       "DATABASE_ERROR",
@@ -37,13 +36,4 @@ export async function GET(
       500
     );
   }
-
-  if (!data) {
-    return fail("NOT_FOUND", "Campanha não encontrada.", 404);
-  }
-
-  return ok(
-    { ...(data as Record<string, unknown>), processingBlockSize: getProcessingBlockSize() },
-    "Progresso da campanha carregado."
-  );
 }

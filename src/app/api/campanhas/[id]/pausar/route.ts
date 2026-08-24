@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { requireApiUser } from "@/lib/auth/require-api-user";
-import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { clientQuery, withTransaction } from "@/lib/db/transaction";
 import { fail, ok } from "@/lib/http/api-response";
 
 const ParamsSchema = z.object({ id: z.string().uuid() });
@@ -22,61 +22,60 @@ export async function POST(
       : "Processamento interrompido manualmente.";
 
   const campaignId = parsed.data.id;
-  const stoppedAt = new Date().toISOString();
-  const supabase = createSupabaseAdminClient();
 
-  const { data: jobs, error: jobsError } = await supabase
-    .from("processing_jobs")
-    .delete()
-    .eq("campaign_id", campaignId)
-    .in("status", ["queued", "running", "paused"])
-    .select("id,batch_id,status");
+  try {
+    const result = await withTransaction(async (client) => {
+      const jobs = await clientQuery<{ id: string; batch_id: string }>(
+        client,
+        `delete from processing_jobs
+          where campaign_id = $1::uuid
+            and status in ('queued', 'running', 'paused', 'deferred')
+        returning id, batch_id`,
+        [campaignId]
+      );
 
-  if (jobsError) {
+      if ((jobs.rowCount ?? 0) === 0) return null;
+
+      await clientQuery(
+        client,
+        `update campaign_batch_members
+            set processing_status = 'retrying',
+                processing_owner = null,
+                processing_started_at = null,
+                processing_heartbeat_at = null,
+                claim_token = null,
+                claimed_at = null,
+                next_retry_at = now(),
+                processing_error_code = 'PROCESSING_INTERRUPTED',
+                last_error = $2,
+                updated_at = now()
+          where campaign_id = $1::uuid
+            and deleted_at is null
+            and processing_status = 'processing'`,
+        [campaignId, reason]
+      );
+
+      return jobs.rows;
+    });
+
+    if (!result) {
+      return fail("NOT_FOUND", "Nenhum job ativo ou pausado foi encontrado para a campanha.", 404);
+    }
+
+    return ok(
+      {
+        campaignId,
+        jobsDeleted: result.length,
+        batchIds: [...new Set(result.map((job) => job.batch_id))],
+        jobIds: result.map((job) => job.id)
+      },
+      "Processamento interrompido e jobs removidos."
+    );
+  } catch (error) {
     console.error("[CAMPAIGN_INTERRUPT_FAILED]", {
       campaignId,
-      message: jobsError.message
+      message: error instanceof Error ? error.message : "Erro desconhecido"
     });
     return fail("DATABASE_ERROR", "Não foi possível interromper a campanha.", 500);
   }
-
-  if (!jobs || jobs.length === 0) {
-    return fail("NOT_FOUND", "Nenhum job ativo ou pausado foi encontrado para a campanha.", 404);
-  }
-
-  const { error: membersError } = await supabase
-    .from("campaign_batch_members")
-    .update({
-      processing_status: "retrying",
-      processing_owner: null,
-      processing_started_at: null,
-      processing_heartbeat_at: null,
-      next_retry_at: stoppedAt,
-      last_error: reason,
-      updated_at: stoppedAt
-    })
-    .eq("campaign_id", campaignId)
-    .eq("processing_status", "processing");
-
-  if (membersError) {
-    console.error("[CAMPAIGN_INTERRUPT_MEMBERS_FAILED]", {
-      campaignId,
-      message: membersError.message
-    });
-    return fail(
-      "DATABASE_ERROR",
-      "Os jobs da campanha foram removidos, mas não foi possível liberar os itens em processamento.",
-      500
-    );
-  }
-
-  return ok(
-    {
-      campaignId,
-      jobsDeleted: jobs.length,
-      batchIds: [...new Set(jobs.map((job) => job.batch_id))],
-      jobIds: jobs.map((job) => job.id)
-    },
-    "Processamento interrompido e jobs removidos."
-  );
 }

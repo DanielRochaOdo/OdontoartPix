@@ -1,4 +1,6 @@
-import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import type { PoolClient } from "pg";
+import { dbQuery } from "@/lib/db/pool";
+import { clientQuery, withTransaction } from "@/lib/db/transaction";
 import { getProcessingConfig } from "@/lib/processing-config";
 
 export type ProcessingOrigin = "manual" | "dashboard";
@@ -68,10 +70,26 @@ export class ProcessingJobOriginConflictError extends Error {
   }
 }
 
-type ClaimableSummary = {
-  claimable_count?: number | string;
-  technical_retry_count?: number | string;
-  processing_count?: number | string;
+type JobRow = {
+  id: string;
+  campaign_id: string;
+  batch_id: string;
+  status: string;
+  total_items: number | string;
+  processed_items: number | string;
+  success_items: number | string;
+  error_items: number | string;
+  include_errors: boolean;
+  processing_origin: string;
+  processing_scope: string;
+  processing_priority: number | string;
+  target_member_link_id?: string | null;
+};
+
+type ClaimableSummaryRow = {
+  claimable_count: number | string;
+  technical_retry_count: number | string;
+  processing_count: number | string;
 };
 
 function resolveScope(input: {
@@ -96,104 +114,186 @@ function higherPriorityScope(
   return requestedPriority > currentPriority ? requestedScope : currentScope;
 }
 
-async function getClaimableSummary(batchId: string, includeErrors: boolean, maxAttempts: number) {
-  const supabase = createSupabaseAdminClient();
-  const { data, error } = await supabase.rpc("count_claimable_batch_members_v3", {
-    p_batch_id: batchId,
-    p_include_errors: includeErrors,
-    p_stale_seconds: 120,
-    p_max_attempts: maxAttempts,
-    p_max_stale_reclaims: 3
-  });
-  if (error) throw error;
-  const row = Array.isArray(data) ? data[0] as ClaimableSummary | undefined : data as ClaimableSummary | null;
-  if (!row) throw new Error("A RPC de elegibilidade não retornou um resumo.");
+function mapJob(row: JobRow, created: boolean, resumed = false): EnqueuedJob {
   return {
-    claimable: Number(row.claimable_count ?? 0),
-    technicalRetry: Number(row.technical_retry_count ?? 0),
-    processing: Number(row.processing_count ?? 0)
+    id: row.id,
+    campaign_id: row.campaign_id,
+    batch_id: row.batch_id,
+    status: row.status as ProcessingJobStatus,
+    total_items: Number(row.total_items ?? 0),
+    processed_items: Number(row.processed_items ?? 0),
+    success_items: Number(row.success_items ?? 0),
+    error_items: Number(row.error_items ?? 0),
+    include_errors: Boolean(row.include_errors),
+    processing_origin: row.processing_origin as ProcessingOrigin,
+    processing_scope: row.processing_scope as ProcessingJobScope,
+    processing_priority: Number(row.processing_priority ?? 0),
+    created,
+    ...(resumed ? { resumed: true } : {})
   };
 }
 
-async function normalizeExhaustedMembers(batchId: string, maxAttempts: number) {
-  const supabase = createSupabaseAdminClient();
-  const { error } = await supabase.rpc("normalize_exhausted_batch_members_v1", {
-    p_batch_id: batchId,
-    p_max_attempts: maxAttempts
-  });
-  if (error) throw error;
+async function lockBatchOrigin(
+  client: PoolClient,
+  batchId: string,
+  processingOrigin: ProcessingOrigin
+) {
+  await clientQuery(
+    client,
+    "select pg_advisory_xact_lock(hashtext($1), hashtext($2))",
+    [batchId, processingOrigin]
+  );
 }
 
-async function reopenUnpaidMembersForManualProcessing(batchId: string, resetAttempts = false) {
-  const supabase = createSupabaseAdminClient();
-  const { error } = await supabase
-    .from("campaign_batch_members")
-    .update({
-      processing_status: "pending",
-      payment_status: null,
-      last_error: null,
-      next_retry_at: null,
-      next_check_at: null,
-      claim_token: null,
-      error_reprocess_requested_at: null,
-      processing_owner: null,
-      processing_started_at: null,
-      processing_heartbeat_at: null,
-      ...(resetAttempts ? { processing_attempts: 0 } : {}),
-      updated_at: new Date().toISOString()
-    })
-    .eq("batch_id", batchId)
-    .is("deleted_at", null)
-    .neq("processing_status", "processing")
-    .or("payment_status.is.null,payment_status.eq.unpaid");
+async function getClaimableSummary(
+  client: PoolClient,
+  batchId: string,
+  includeErrors: boolean
+) {
+  const result = await clientQuery<ClaimableSummaryRow>(
+    client,
+    `select
+       count(*) filter (
+         where payment_status is distinct from 'paid'
+           and (
+             processing_status in ('pending', 'queued')
+             or (
+               processing_status = 'retrying'
+               and (next_retry_at is null or next_retry_at <= now())
+             )
+             or ($2::boolean and processing_status = 'error')
+           )
+       )::int as claimable_count,
+       count(*) filter (
+         where payment_status is distinct from 'paid'
+           and processing_status = 'retrying'
+       )::int as technical_retry_count,
+       count(*) filter (
+         where processing_status = 'processing'
+       )::int as processing_count
+     from campaign_batch_members
+    where batch_id = $1
+      and deleted_at is null`,
+    [batchId, includeErrors]
+  );
 
-  if (error) throw error;
+  const row = result.rows[0];
+  return {
+    claimable: Number(row?.claimable_count ?? 0),
+    technicalRetry: Number(row?.technical_retry_count ?? 0),
+    processing: Number(row?.processing_count ?? 0)
+  };
 }
 
-async function requestErroredMembers(batchId: string) {
-  const supabase = createSupabaseAdminClient();
-  const requestedAt = new Date().toISOString();
-  const { error } = await supabase
-    .from("campaign_batch_members")
-    .update({
-      error_reprocess_requested_at: requestedAt,
-      processing_attempts: 0,
-      updated_at: requestedAt
-    })
-    .eq("batch_id", batchId)
-    .is("deleted_at", null)
-    .eq("processing_status", "error")
-    .is("error_reprocess_requested_at", null)
-    .or("payment_status.is.null,payment_status.neq.paid");
-
-  if (error) throw error;
+async function normalizeExhaustedMembers(
+  client: PoolClient,
+  batchId: string,
+  maxAttempts: number
+) {
+  await clientQuery(
+    client,
+    `update campaign_batch_members
+        set processing_status = 'error',
+            last_error = coalesce(last_error, 'Limite de tentativas atingido.'),
+            next_retry_at = null,
+            processing_owner = null,
+            processing_started_at = null,
+            processing_heartbeat_at = null,
+            claim_token = null,
+            claimed_at = null,
+            updated_at = now()
+      where batch_id = $1
+        and deleted_at is null
+        and payment_status is distinct from 'paid'
+        and processing_status in ('pending', 'queued', 'retrying', 'aguardando')
+        and processing_attempts >= $2`,
+    [batchId, maxAttempts]
+  );
 }
 
-async function resumePausedJob(jobId: string, processingOrigin: ProcessingOrigin) {
-  const supabase = createSupabaseAdminClient();
-  const resumedAt = new Date().toISOString();
+async function reopenUnpaidMembersForManualProcessing(
+  client: PoolClient,
+  batchId: string,
+  resetAttempts = false
+) {
+  await clientQuery(
+    client,
+    `update campaign_batch_members
+        set processing_status = 'pending',
+            last_error = null,
+            next_retry_at = null,
+            next_check_at = null,
+            claim_token = null,
+            claimed_at = null,
+            error_reprocess_requested_at = null,
+            processing_owner = null,
+            processing_started_at = null,
+            processing_heartbeat_at = null,
+            processing_attempts = case when $2::boolean then 0 else processing_attempts end,
+            updated_at = now()
+      where batch_id = $1
+        and deleted_at is null
+        and processing_status <> 'processing'
+        and (payment_status is null or payment_status = 'unpaid')`,
+    [batchId, resetAttempts]
+  );
+}
 
-  const { data, error } = await supabase
-    .from("processing_jobs")
-    .update({
-      status: "queued",
-      stop_requested_at: null,
-      stop_requested_by: null,
-      stop_reason: null,
-      next_run_at: resumedAt,
-      finished_at: null,
-      updated_at: resumedAt
-    })
-    .eq("id", jobId)
-    .eq("processing_origin", processingOrigin)
-    .eq("status", "paused")
-    .select(
-      "id,campaign_id,batch_id,status,total_items,processed_items,success_items,error_items,include_errors,processing_origin,processing_scope,processing_priority"
-    )
-    .maybeSingle();
+async function requestErroredMembers(client: PoolClient, batchId: string) {
+  await clientQuery(
+    client,
+    `update campaign_batch_members
+        set error_reprocess_requested_at = now(),
+            processing_attempts = 0,
+            next_retry_at = null,
+            processing_owner = null,
+            processing_started_at = null,
+            processing_heartbeat_at = null,
+            claim_token = null,
+            claimed_at = null,
+            updated_at = now()
+      where batch_id = $1
+        and deleted_at is null
+        and processing_status = 'error'
+        and payment_status is distinct from 'paid'`,
+    [batchId]
+  );
+}
 
-  if (error) throw error;
-  return data;
+async function resumePausedJob(
+  client: PoolClient,
+  jobId: string,
+  processingOrigin: ProcessingOrigin
+) {
+  const result = await clientQuery<JobRow>(
+    client,
+    `update processing_jobs
+        set status = 'queued',
+            stop_requested_at = null,
+            stop_requested_by = null,
+            stop_reason = null,
+            next_run_at = now(),
+            finished_at = null,
+            updated_at = now()
+      where id = $1
+        and processing_origin = $2
+        and status = 'paused'
+      returning id,
+                campaign_id,
+                batch_id,
+                status,
+                total_items,
+                processed_items,
+                success_items,
+                error_items,
+                include_errors,
+                processing_origin,
+                processing_scope,
+                processing_priority`,
+    [jobId, processingOrigin]
+  );
+
+  return result.rows[0] ?? null;
 }
 
 export async function enqueueBatchJob(input: {
@@ -206,7 +306,6 @@ export async function enqueueBatchJob(input: {
   processingScope?: ProcessingJobScope;
   processingPriority?: number;
 }): Promise<EnqueuedJob | null> {
-  const supabase = createSupabaseAdminClient();
   const includeErrors = input.includeErrors ?? false;
   const scheduledRecheck = input.scheduledRecheck ?? false;
   const processingOrigin = input.processingOrigin ?? "manual";
@@ -214,150 +313,195 @@ export async function enqueueBatchJob(input: {
   const processingPriority = resolvePriority(processingScope, input.processingPriority);
   const config = await getProcessingConfig();
 
-  const { data: activeJob, error: activeJobError } = await supabase
-    .from("processing_jobs")
-    .select(
-      "id,campaign_id,batch_id,status,total_items,processed_items,success_items,error_items,include_errors,processing_origin,processing_scope,processing_priority,target_member_link_id"
-    )
-    .eq("batch_id", input.batchId)
-    .eq("processing_origin", processingOrigin)
-    .in("status", ["queued", "running", "paused", "deferred"])
-    .order("processing_priority", { ascending: false })
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  return withTransaction(async (client) => {
+    await lockBatchOrigin(client, input.batchId, processingOrigin);
 
-  if (activeJobError) throw activeJobError;
-  if (activeJob) {
-    const activeScope = activeJob.processing_scope as ProcessingJobScope;
-    const activePriority = Number(activeJob.processing_priority ?? PROCESSING_PRIORITIES[activeScope] ?? 60);
-    const mergedIncludeErrors = Boolean(activeJob.include_errors || includeErrors);
+    const activeResult = await clientQuery<JobRow>(
+      client,
+      `select id,
+              campaign_id,
+              batch_id,
+              status,
+              total_items,
+              processed_items,
+              success_items,
+              error_items,
+              include_errors,
+              processing_origin,
+              processing_scope,
+              processing_priority,
+              target_member_link_id
+         from processing_jobs
+        where batch_id = $1
+          and processing_origin = $2
+          and status in ('queued', 'running', 'paused', 'deferred')
+        order by processing_priority desc, created_at desc
+        for update
+        limit 1`,
+      [input.batchId, processingOrigin]
+    );
+
+    const activeJob = activeResult.rows[0] ?? null;
 
     if (!includeErrors) {
-      await reopenUnpaidMembersForManualProcessing(input.batchId, scheduledRecheck);
-      await normalizeExhaustedMembers(input.batchId, config.maxAttemptsPerItem);
-    }
-    if (includeErrors && !activeJob.include_errors) {
-      await requestErroredMembers(input.batchId);
+      await reopenUnpaidMembersForManualProcessing(client, input.batchId, scheduledRecheck);
+      await normalizeExhaustedMembers(client, input.batchId, config.maxAttemptsPerItem);
+    } else if (!activeJob?.include_errors) {
+      await requestErroredMembers(client, input.batchId);
     }
 
-    const mergedPriority = Math.max(activePriority, processingPriority);
-    const mergedScope = higherPriorityScope(
-      activeScope,
-      activePriority,
-      processingScope,
-      processingPriority
+    const mergedIncludeErrors = Boolean(activeJob?.include_errors || includeErrors);
+    const summary = await getClaimableSummary(client, input.batchId, mergedIncludeErrors);
+
+    if (activeJob) {
+      const activeScope = activeJob.processing_scope as ProcessingJobScope;
+      const activePriority = Number(
+        activeJob.processing_priority ?? PROCESSING_PRIORITIES[activeScope] ?? 60
+      );
+      const mergedPriority = Math.max(activePriority, processingPriority);
+      const mergedScope = higherPriorityScope(
+        activeScope,
+        activePriority,
+        processingScope,
+        processingPriority
+      );
+
+      const promotedResult = await clientQuery<JobRow>(
+        client,
+        `update processing_jobs
+            set include_errors = $2,
+                processing_priority = $3,
+                processing_scope = $4,
+                target_member_link_id = case
+                  when $4 = 'member' then target_member_link_id
+                  else null
+                end,
+                total_items = greatest(total_items, processed_items + $5::int),
+                requested_by = $6::uuid,
+                updated_at = now()
+          where id = $1
+          returning id,
+                    campaign_id,
+                    batch_id,
+                    status,
+                    total_items,
+                    processed_items,
+                    success_items,
+                    error_items,
+                    include_errors,
+                    processing_origin,
+                    processing_scope,
+                    processing_priority`,
+        [
+          activeJob.id,
+          mergedIncludeErrors,
+          mergedPriority,
+          mergedScope,
+          summary.claimable,
+          input.requestedBy
+        ]
+      );
+
+      const promoted = promotedResult.rows[0];
+      if (!promoted) throw new Error("Job ativo nao pode ser atualizado.");
+
+      if (promoted.status === "paused") {
+        const resumedJob = await resumePausedJob(client, promoted.id, processingOrigin);
+        if (!resumedJob) throw new Error("Job pausado nao pode ser retomado.");
+        return mapJob(resumedJob, false, true);
+      }
+
+      if (
+        promoted.status === "queued" &&
+        summary.claimable === 0 &&
+        summary.processing === 0 &&
+        summary.technicalRetry === 0
+      ) {
+        await clientQuery(
+          client,
+          `update processing_jobs
+              set status = 'completed',
+                  finished_at = now(),
+                  next_run_at = null,
+                  updated_at = now()
+            where id = $1
+              and processing_origin = $2
+              and status = 'queued'`,
+          [promoted.id, processingOrigin]
+        );
+        return null;
+      }
+
+      return mapJob(promoted, false);
+    }
+
+    if (summary.claimable === 0) return null;
+
+    const inserted = await clientQuery<JobRow>(
+      client,
+      `insert into processing_jobs (
+         id,
+         campaign_id,
+         batch_id,
+         requested_by,
+         status,
+         total_items,
+         processed_items,
+         success_items,
+         error_items,
+         include_errors,
+         processing_origin,
+         processing_scope,
+         processing_priority,
+         next_run_at,
+         created_at,
+         updated_at
+       ) values (
+         gen_random_uuid(),
+         $1::uuid,
+         $2::uuid,
+         $3::uuid,
+         'queued',
+         $4::int,
+         0,
+         0,
+         0,
+         $5::boolean,
+         $6,
+         $7,
+         $8::int,
+         now(),
+         now(),
+         now()
+       )
+       returning id,
+                 campaign_id,
+                 batch_id,
+                 status,
+                 total_items,
+                 processed_items,
+                 success_items,
+                 error_items,
+                 include_errors,
+                 processing_origin,
+                 processing_scope,
+                 processing_priority`,
+      [
+        input.campaignId,
+        input.batchId,
+        input.requestedBy,
+        summary.claimable,
+        includeErrors,
+        processingOrigin,
+        processingScope,
+        processingPriority
+      ]
     );
-    const summary = await getClaimableSummary(input.batchId, mergedIncludeErrors, config.maxAttemptsPerItem);
 
-    const { data: promoted, error: promoteError } = await supabase
-      .from("processing_jobs")
-      .update({
-        include_errors: mergedIncludeErrors,
-        processing_priority: mergedPriority,
-        processing_scope: mergedScope,
-        target_member_link_id: mergedScope === "member" ? activeJob.target_member_link_id : null,
-        total_items: Math.max(
-          Number(activeJob.total_items ?? 0),
-          Number(activeJob.processed_items ?? 0) + summary.claimable
-        ),
-        requested_by: input.requestedBy,
-        updated_at: new Date().toISOString()
-      })
-      .eq("id", activeJob.id)
-      .select(
-        "id,campaign_id,batch_id,status,total_items,processed_items,success_items,error_items,include_errors,processing_origin,processing_scope,processing_priority"
-      )
-      .single();
-
-    if (promoteError) throw promoteError;
-
-    if (promoted.status === "paused") {
-      const resumedJob = await resumePausedJob(promoted.id, processingOrigin);
-      if (!resumedJob) throw new Error("Job pausado não pôde ser retomado.");
-      return {
-        ...resumedJob,
-        processing_origin: resumedJob.processing_origin as ProcessingOrigin,
-        processing_scope: resumedJob.processing_scope as ProcessingJobScope,
-        processing_priority: Number(resumedJob.processing_priority),
-        status: resumedJob.status as ProcessingJobStatus,
-        created: false,
-        resumed: true
-      };
-    }
-
-    if (promoted.status === "queued" && summary.claimable === 0 && summary.processing === 0 && summary.technicalRetry === 0) {
-      const finishedAt = new Date().toISOString();
-      const { error: finalizeError } = await supabase
-        .from("processing_jobs")
-        .update({ status: "completed", finished_at: finishedAt, next_run_at: null, updated_at: finishedAt })
-        .eq("id", promoted.id)
-        .eq("processing_origin", processingOrigin)
-        .eq("status", "queued");
-      if (finalizeError) throw finalizeError;
-      return null;
-    }
-
-    return {
-      ...promoted,
-      processing_origin: promoted.processing_origin as ProcessingOrigin,
-      processing_scope: promoted.processing_scope as ProcessingJobScope,
-      processing_priority: Number(promoted.processing_priority),
-      status: promoted.status as ProcessingJobStatus,
-      created: false
-    };
-  }
-
-  // Origens diferentes podem coexistir na fila. Durante uma onda geral, o
-  // trigger do banco converte jobs manuais queued em deferred.
-  if (!includeErrors) {
-    await reopenUnpaidMembersForManualProcessing(input.batchId, scheduledRecheck);
-    await normalizeExhaustedMembers(input.batchId, config.maxAttemptsPerItem);
-  } else {
-    await requestErroredMembers(input.batchId);
-  }
-
-  const summary = await getClaimableSummary(input.batchId, includeErrors, config.maxAttemptsPerItem);
-  const totalItems = summary.claimable;
-  if (totalItems === 0) return null;
-
-  const { data: job, error: insertError } = await supabase
-    .from("processing_jobs")
-    .insert({
-      campaign_id: input.campaignId,
-      batch_id: input.batchId,
-      status: "queued",
-      total_items: totalItems,
-      processed_items: 0,
-      success_items: 0,
-      error_items: 0,
-      include_errors: includeErrors,
-      processing_origin: processingOrigin,
-      processing_scope: processingScope,
-      processing_priority: processingPriority,
-      requested_by: input.requestedBy,
-      next_run_at: new Date().toISOString()
-    })
-    .select(
-      "id,campaign_id,batch_id,status,total_items,processed_items,success_items,error_items,include_errors,processing_origin,processing_scope,processing_priority"
-    )
-    .single();
-
-  if (insertError || !job) {
-    if (insertError?.code === "23505") {
-      return enqueueBatchJob(input);
-    }
-    throw insertError ?? new Error("Job não criado.");
-  }
-
-  return {
-    ...job,
-    processing_origin: job.processing_origin as ProcessingOrigin,
-    processing_scope: job.processing_scope as ProcessingJobScope,
-    processing_priority: Number(job.processing_priority),
-    status: job.status as ProcessingJobStatus,
-    created: true
-  };
+    const job = inserted.rows[0];
+    if (!job) throw new Error("Job nao criado.");
+    return mapJob(job, true);
+  });
 }
 
 export async function enqueueCampaignJobs(input: {
@@ -369,31 +513,34 @@ export async function enqueueCampaignJobs(input: {
   processingPriority?: number;
   skipBatchIds?: string[];
 }) {
-  const supabase = createSupabaseAdminClient();
+  const campaign = await dbQuery<{ id: string }>(
+    `select id
+       from campaigns
+      where id = $1
+        and deleted_at is null
+      limit 1`,
+    [input.campaignId]
+  );
 
-  const { data: campaign, error: campaignError } = await supabase
-    .from("campaigns")
-    .select("id")
-    .eq("id", input.campaignId)
-    .is("deleted_at", null)
-    .maybeSingle();
+  if (!campaign.rows[0]) {
+    return { found: false as const, jobs: [] as EnqueuedJob[] };
+  }
 
-  if (campaignError) throw campaignError;
-  if (!campaign) return { found: false as const, jobs: [] as EnqueuedJob[] };
-
-  const { data: batches, error: batchesError } = await supabase
-    .from("campaign_batches")
-    .select("id,campaign_id")
-    .eq("campaign_id", input.campaignId)
-    .is("deleted_at", null)
-    .order("created_at", { ascending: true });
-
-  if (batchesError) throw batchesError;
+  const batches = await dbQuery<{ id: string; campaign_id: string }>(
+    `select id, campaign_id
+       from campaign_batches
+      where campaign_id = $1
+        and deleted_at is null
+      order by created_at asc`,
+    [input.campaignId]
+  );
 
   const skipped = new Set(input.skipBatchIds ?? []);
   const jobs: EnqueuedJob[] = [];
-  for (const batch of batches ?? []) {
+
+  for (const batch of batches.rows) {
     if (skipped.has(batch.id)) continue;
+
     const job = await enqueueBatchJob({
       campaignId: batch.campaign_id,
       batchId: batch.id,
@@ -403,6 +550,7 @@ export async function enqueueCampaignJobs(input: {
       processingScope: input.processingScope,
       processingPriority: input.processingPriority
     });
+
     if (job) jobs.push(job);
   }
 

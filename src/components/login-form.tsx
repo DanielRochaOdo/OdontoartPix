@@ -2,14 +2,16 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
 type Props = {
   initialError?: string | null;
   clearExistingSession?: boolean;
 };
 
-const ALLOWED_ROLES = new Set(["administrador", "operador", "visualizador"]);
+type ApiEnvelope = {
+  success: boolean;
+  error?: { code?: string; message?: string };
+};
 
 export function LoginForm({ initialError = null, clearExistingSession = false }: Props) {
   const router = useRouter();
@@ -20,9 +22,7 @@ export function LoginForm({ initialError = null, clearExistingSession = false }:
 
   useEffect(() => {
     if (!clearExistingSession) return;
-
-    const supabase = createSupabaseBrowserClient();
-    void supabase.auth.signOut();
+    void fetch("/api/auth/logout", { method: "POST" }).catch(() => undefined);
   }, [clearExistingSession]);
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -31,35 +31,23 @@ export function LoginForm({ initialError = null, clearExistingSession = false }:
     setError(null);
 
     try {
-      const supabase = createSupabaseBrowserClient();
-      const { data, error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, password })
+      });
 
-      if (signInError || !data.user) {
-        setError("Não foi possível entrar com essas credenciais.");
-        return;
-      }
+      const payload = (await response.json().catch(() => null)) as ApiEnvelope | null;
 
-      const { data: profile, error: profileError } = await supabase
-        .from("profiles")
-        .select("role,ativo")
-        .eq("id", data.user.id)
-        .maybeSingle();
-
-      if (
-        profileError ||
-        !profile ||
-        !profile.ativo ||
-        !ALLOWED_ROLES.has(profile.role)
-      ) {
-        await supabase.auth.signOut();
-        setError("Seu usuário não possui um perfil ativo e válido no sistema.");
+      if (!response.ok || !payload?.success) {
+        setError(payload?.error?.message ?? "Não foi possível entrar com essas credenciais.");
         return;
       }
 
       router.replace("/dashboard");
       router.refresh();
     } catch {
-      setError("Falha ao iniciar sessão.");
+      setError("Falha ao iniciar sessão. Verifique a conexão e tente novamente.");
     } finally {
       setLoading(false);
     }
@@ -70,7 +58,7 @@ export function LoginForm({ initialError = null, clearExistingSession = false }:
       <div>
         <h1 className="text-2xl font-semibold">Entrar</h1>
         <p className="mt-2 text-sm text-white/70">
-          Usuários devem ser criados somente no Supabase Auth. O acesso depende de um perfil ativo.
+          Acesso ao OdontoartPix com autenticação própria.
         </p>
       </div>
       <div className="space-y-2">

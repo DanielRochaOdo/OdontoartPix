@@ -1,4 +1,4 @@
-import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { dbQuery } from "@/lib/db/pool";
 
 export type ProcessingConfig = {
   workerCount: number;
@@ -23,25 +23,7 @@ export type ProcessingConfig = {
 };
 
 type ProcessingSettingsRow = {
-  worker_count: number | null;
-  processing_block_size: number | null;
-  processing_concurrency: number | null;
-  processing_erp_concurrency: number | null;
-  processing_persistence_concurrency: number | null;
-  processing_persistence_batch_size: number | null;
-  processing_max_buffered_results: number | null;
-  mensalidades_api_connect_timeout_ms: number | null;
-  mensalidades_api_read_timeout_ms: number | null;
-  processing_max_attempts: number | null;
-  processing_stale_heartbeat_ms: number | null;
-  processing_worker_cycle_budget_ms: number | null;
-  processing_shutdown_reserve_ms: number | null;
-  processing_persistence_reserve_ms: number | null;
-  processing_finalization_reserve_ms: number | null;
-  processing_lease_seconds: number | null;
-  processing_productive_delay_ms: number | null;
-  mensalidades_api_page_size: number | null;
-  mensalidades_api_max_pages: number | null;
+  config: unknown;
 };
 
 const CACHE_TTL_MS = 30_000;
@@ -57,10 +39,25 @@ function buildProcessingConfigFromEnvironment(): ProcessingConfig {
     workerCount: readInteger("PROCESSING_WORKER_COUNT", 10, 1, 100),
     claimBatchSize: readInteger("PROCESSING_BLOCK_SIZE", 60, 1, 500),
     perWorkerConcurrency: readInteger("PROCESSING_CONCURRENCY", 15, 1, 100),
-    erpConcurrency: readInteger("PROCESSING_ERP_CONCURRENCY", Number(process.env.PROCESSING_CONCURRENCY ?? 15), 1, 100),
+    erpConcurrency: readInteger(
+      "PROCESSING_ERP_CONCURRENCY",
+      Number(process.env.PROCESSING_CONCURRENCY ?? 15),
+      1,
+      100
+    ),
     persistenceConcurrency: readInteger("PROCESSING_PERSISTENCE_CONCURRENCY", 1, 1, 20),
-    persistenceBatchSize: readInteger("PROCESSING_PERSISTENCE_BATCH_SIZE", Number(process.env.PROCESSING_CONCURRENCY ?? 15), 1, 60),
-    maxBufferedResults: readInteger("PROCESSING_MAX_BUFFERED_RESULTS", Number(process.env.PROCESSING_CONCURRENCY ?? 15), 1, 60),
+    persistenceBatchSize: readInteger(
+      "PROCESSING_PERSISTENCE_BATCH_SIZE",
+      Number(process.env.PROCESSING_CONCURRENCY ?? 15),
+      1,
+      60
+    ),
+    maxBufferedResults: readInteger(
+      "PROCESSING_MAX_BUFFERED_RESULTS",
+      Number(process.env.PROCESSING_CONCURRENCY ?? 15),
+      1,
+      60
+    ),
     httpConnectTimeoutMs: readInteger("MENSALIDADES_API_CONNECT_TIMEOUT_MS", 30000, 1000, 120000),
     httpReadTimeoutMs: readInteger("MENSALIDADES_API_READ_TIMEOUT_MS", 30000, 1000, 120000),
     maxAttemptsPerItem: readInteger("PROCESSING_MAX_ATTEMPTS", 3, 1, 10),
@@ -76,42 +73,158 @@ function buildProcessingConfigFromEnvironment(): ProcessingConfig {
   };
 }
 
-function mergeStoredSettings(
-  baseConfig: ProcessingConfig,
-  row: ProcessingSettingsRow | null
-): ProcessingConfig {
-  if (!row) return baseConfig;
+function asRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+}
 
+function storedInteger(
+  config: Record<string, unknown>,
+  keys: string[],
+  fallback: number,
+  min: number,
+  max: number
+) {
+  for (const key of keys) {
+    const value = config[key];
+    if (value === undefined || value === null || value === "") continue;
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed)) continue;
+    return Math.min(Math.max(parsed, min), max);
+  }
+  return fallback;
+}
+
+function mergeStoredSettings(base: ProcessingConfig, stored: unknown): ProcessingConfig {
+  const config = asRecord(stored);
   return {
-    workerCount: row.worker_count ?? baseConfig.workerCount,
-    claimBatchSize: row.processing_block_size ?? baseConfig.claimBatchSize,
-    perWorkerConcurrency: row.processing_concurrency ?? baseConfig.perWorkerConcurrency,
-    erpConcurrency: row.processing_erp_concurrency ?? row.processing_concurrency ?? baseConfig.erpConcurrency,
-    persistenceConcurrency: row.processing_persistence_concurrency ?? baseConfig.persistenceConcurrency,
-    persistenceBatchSize: row.processing_persistence_batch_size ?? baseConfig.persistenceBatchSize,
-    maxBufferedResults: row.processing_max_buffered_results ?? baseConfig.maxBufferedResults,
-    httpConnectTimeoutMs:
-      row.mensalidades_api_connect_timeout_ms ?? baseConfig.httpConnectTimeoutMs,
-    httpReadTimeoutMs:
-      row.mensalidades_api_read_timeout_ms ?? baseConfig.httpReadTimeoutMs,
-    maxAttemptsPerItem: row.processing_max_attempts ?? baseConfig.maxAttemptsPerItem,
-    staleHeartbeatMs:
-      row.processing_stale_heartbeat_ms ?? baseConfig.staleHeartbeatMs,
-    workerCycleBudgetMs:
-      row.processing_worker_cycle_budget_ms ?? baseConfig.workerCycleBudgetMs,
-    shutdownReserveMs:
-      row.processing_shutdown_reserve_ms ?? baseConfig.shutdownReserveMs,
-    persistenceReserveMs:
-      row.processing_persistence_reserve_ms ?? baseConfig.persistenceReserveMs,
-    finalizationReserveMs:
-      row.processing_finalization_reserve_ms ?? baseConfig.finalizationReserveMs,
-    globalLockLeaseSeconds:
-      row.processing_lease_seconds ?? baseConfig.globalLockLeaseSeconds,
-    productiveDelayMs:
-      row.processing_productive_delay_ms ?? baseConfig.productiveDelayMs,
-    maxPageSize: row.mensalidades_api_page_size ?? baseConfig.maxPageSize,
-    maxPagesPerOperation:
-      row.mensalidades_api_max_pages ?? baseConfig.maxPagesPerOperation
+    workerCount: storedInteger(config, ["worker_count", "workerCount"], base.workerCount, 1, 100),
+    claimBatchSize: storedInteger(
+      config,
+      ["processing_block_size", "claimBatchSize"],
+      base.claimBatchSize,
+      1,
+      500
+    ),
+    perWorkerConcurrency: storedInteger(
+      config,
+      ["processing_concurrency", "perWorkerConcurrency"],
+      base.perWorkerConcurrency,
+      1,
+      100
+    ),
+    erpConcurrency: storedInteger(
+      config,
+      ["processing_erp_concurrency", "erpConcurrency"],
+      base.erpConcurrency,
+      1,
+      100
+    ),
+    persistenceConcurrency: storedInteger(
+      config,
+      ["processing_persistence_concurrency", "persistenceConcurrency"],
+      base.persistenceConcurrency,
+      1,
+      20
+    ),
+    persistenceBatchSize: storedInteger(
+      config,
+      ["processing_persistence_batch_size", "persistenceBatchSize"],
+      base.persistenceBatchSize,
+      1,
+      60
+    ),
+    maxBufferedResults: storedInteger(
+      config,
+      ["processing_max_buffered_results", "maxBufferedResults"],
+      base.maxBufferedResults,
+      1,
+      60
+    ),
+    httpConnectTimeoutMs: storedInteger(
+      config,
+      ["mensalidades_api_connect_timeout_ms", "httpConnectTimeoutMs"],
+      base.httpConnectTimeoutMs,
+      1000,
+      120000
+    ),
+    httpReadTimeoutMs: storedInteger(
+      config,
+      ["mensalidades_api_read_timeout_ms", "httpReadTimeoutMs"],
+      base.httpReadTimeoutMs,
+      1000,
+      120000
+    ),
+    maxAttemptsPerItem: storedInteger(
+      config,
+      ["processing_max_attempts", "maxAttemptsPerItem"],
+      base.maxAttemptsPerItem,
+      1,
+      10
+    ),
+    staleHeartbeatMs: storedInteger(
+      config,
+      ["processing_stale_heartbeat_ms", "staleHeartbeatMs"],
+      base.staleHeartbeatMs,
+      1000,
+      900000
+    ),
+    workerCycleBudgetMs: storedInteger(
+      config,
+      ["processing_worker_cycle_budget_ms", "workerCycleBudgetMs"],
+      base.workerCycleBudgetMs,
+      5000,
+      120000
+    ),
+    shutdownReserveMs: storedInteger(
+      config,
+      ["processing_shutdown_reserve_ms", "shutdownReserveMs"],
+      base.shutdownReserveMs,
+      5000,
+      20000
+    ),
+    persistenceReserveMs: storedInteger(
+      config,
+      ["processing_persistence_reserve_ms", "persistenceReserveMs"],
+      base.persistenceReserveMs,
+      1000,
+      30000
+    ),
+    finalizationReserveMs: storedInteger(
+      config,
+      ["processing_finalization_reserve_ms", "finalizationReserveMs"],
+      base.finalizationReserveMs,
+      3000,
+      30000
+    ),
+    globalLockLeaseSeconds: storedInteger(
+      config,
+      ["processing_lease_seconds", "globalLockLeaseSeconds"],
+      base.globalLockLeaseSeconds,
+      30,
+      3600
+    ),
+    productiveDelayMs: storedInteger(
+      config,
+      ["processing_productive_delay_ms", "productiveDelayMs"],
+      base.productiveDelayMs,
+      0,
+      10000
+    ),
+    maxPageSize: storedInteger(
+      config,
+      ["mensalidades_api_page_size", "maxPageSize"],
+      base.maxPageSize,
+      1,
+      200
+    ),
+    maxPagesPerOperation: storedInteger(
+      config,
+      ["mensalidades_api_max_pages", "maxPagesPerOperation"],
+      base.maxPagesPerOperation,
+      1,
+      100000
+    )
   };
 }
 
@@ -119,23 +232,13 @@ async function loadProcessingConfig(): Promise<ProcessingConfig> {
   const baseConfig = buildProcessingConfigFromEnvironment();
 
   try {
-    const supabase = createSupabaseAdminClient();
-    const { data, error } = await supabase
-      .from("processing_settings")
-      .select(
-        "worker_count,processing_block_size,processing_concurrency,processing_erp_concurrency,processing_persistence_concurrency,processing_persistence_batch_size,processing_max_buffered_results,mensalidades_api_connect_timeout_ms,mensalidades_api_read_timeout_ms,processing_max_attempts,processing_stale_heartbeat_ms,processing_worker_cycle_budget_ms,processing_shutdown_reserve_ms,processing_persistence_reserve_ms,processing_finalization_reserve_ms,processing_lease_seconds,processing_productive_delay_ms,mensalidades_api_page_size,mensalidades_api_max_pages"
-      )
-      .eq("settings_key", "default")
-      .maybeSingle();
-
-    if (error) {
-      console.error("[PROCESSING_CONFIG_LOAD_FAILED]", {
-        message: error.message
-      });
-      return baseConfig;
-    }
-
-    return mergeStoredSettings(baseConfig, (data as ProcessingSettingsRow | null) ?? null);
+    const result = await dbQuery<ProcessingSettingsRow>(
+      `select config
+         from processing_settings
+        where settings_key = 'default'
+        limit 1`
+    );
+    return mergeStoredSettings(baseConfig, result.rows[0]?.config ?? null);
   } catch (error) {
     console.error("[PROCESSING_CONFIG_FALLBACK_TO_ENV]", {
       message: error instanceof Error ? error.message : "Erro desconhecido"

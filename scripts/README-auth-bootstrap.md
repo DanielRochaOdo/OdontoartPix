@@ -1,0 +1,1 @@
+Para criar o primeiro administrador local, execute `scripts/create-admin.ts` somente em ambiente controlado, fornecendo `ADMIN_NAME`, `ADMIN_EMAIL` e `ADMIN_PASSWORD` por variáveis de ambiente. Nunca versione essas credenciais.

@@ -1,9 +1,15 @@
 import { z } from "zod";
 import { requireApiUser } from "@/lib/auth/require-api-user";
-import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { dbQuery } from "@/lib/db/pool";
 import { fail, ok } from "@/lib/http/api-response";
 
 const ParamsSchema = z.object({ id: z.string().uuid() });
+
+type ResumedJobRow = {
+  id: string;
+  batch_id: string;
+  status: string;
+};
 
 export async function POST(
   _: Request,
@@ -15,39 +21,49 @@ export async function POST(
   const parsed = ParamsSchema.safeParse(await params);
   if (!parsed.success) return fail("VALIDATION_ERROR", "Lote inválido.", 400);
 
-  const supabase = createSupabaseAdminClient();
-  const { data, error } = await supabase
-    .from("processing_jobs")
-    .update({
-      status: "queued",
-      stop_requested_at: null,
-      stop_requested_by: null,
-      stop_reason: null,
-      next_run_at: new Date().toISOString(),
-      finished_at: null,
-      updated_at: new Date().toISOString()
-    })
-    .eq("batch_id", parsed.data.id)
-    .eq("status", "paused")
-    .select("id,batch_id,status")
-    .maybeSingle();
+  try {
+    const result = await dbQuery<ResumedJobRow>(
+      `with target as (
+         select id
+           from processing_jobs
+          where batch_id = $1
+            and processing_origin = 'manual'
+            and status = 'paused'
+          order by created_at desc, id desc
+          limit 1
+       )
+       update processing_jobs pj
+          set status = 'queued',
+              stop_requested_at = null,
+              stop_requested_by = null,
+              stop_reason = null,
+              next_run_at = now(),
+              finished_at = null,
+              updated_at = now()
+         from target
+        where pj.id = target.id
+       returning pj.id, pj.batch_id, pj.status`,
+      [parsed.data.id]
+    );
 
-  if (error) {
+    const data = result.rows[0];
+    if (!data) {
+      return fail("NOT_FOUND", "Nenhum processamento manual pausado foi encontrado para o lote.", 404);
+    }
+
+    return ok(
+      {
+        jobId: data.id,
+        batchId: data.batch_id,
+        status: data.status
+      },
+      "Processamento retomado."
+    );
+  } catch (error) {
     console.error("[BATCH_RESUME_FAILED]", {
       batchId: parsed.data.id,
-      message: error.message
+      message: error instanceof Error ? error.message : "Erro desconhecido"
     });
     return fail("DATABASE_ERROR", "Não foi possível retomar o lote.", 500);
   }
-
-  if (!data) return fail("NOT_FOUND", "Nenhum processamento pausado foi encontrado para o lote.", 404);
-
-  return ok(
-    {
-      jobId: data.id,
-      batchId: data.batch_id,
-      status: data.status
-    },
-    "Processamento retomado."
-  );
 }

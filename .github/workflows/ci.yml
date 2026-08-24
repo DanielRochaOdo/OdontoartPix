@@ -5,13 +5,33 @@ on:
   push:
     branches:
       - main
+      - postgres-local-auth-foundation
+
+permissions:
+  contents: read
 
 jobs:
   validate:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: odontoart_pix_ci
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d odontoart_pix_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
-      - name: Checkout
+      - name: Checkout triggering commit
         uses: actions/checkout@v4
 
       - name: Setup Node
@@ -22,6 +42,40 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Validate deployment scripts
+        shell: bash
+        run: |
+          bash -n deploy/systemd/install-app.sh
+          bash -n deploy/systemd/install-worker.sh
+
+      - name: Apply local PostgreSQL migrations
+        env:
+          DATABASE_HOST: 127.0.0.1
+          DATABASE_PORT: "5432"
+          DATABASE_NAME: odontoart_pix_ci
+          DATABASE_USER: postgres
+          DATABASE_PASSWORD: postgres
+          DATABASE_SSL: "false"
+        run: npm run db:migrate
+
+      - name: Run production preflight in safe mode
+        env:
+          DATABASE_HOST: 127.0.0.1
+          DATABASE_PORT: "5432"
+          DATABASE_NAME: odontoart_pix_ci
+          DATABASE_USER: postgres
+          DATABASE_PASSWORD: postgres
+          DATABASE_SSL: "false"
+          AUTH_COOKIE_SECURE: "true"
+          MENSALIDADES_API_BASE_URL: https://example.com
+          MENSALIDADES_API_TOKEN: ci-token
+          PROCESSING_ALLOW_SCHEDULED_SYNC: "false"
+          PRODUCTION_PREFLIGHT_REQUIRE_SCHEDULER_OFF: "true"
+        run: npm run preflight:production
 
       - name: Generate Next route types and typecheck
         id: typecheck
@@ -37,7 +91,7 @@ jobs:
         with:
           name: typecheck-diagnostics
           path: typecheck.log
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 3
 
       - name: Stop on typecheck failure
@@ -49,10 +103,14 @@ jobs:
 
       - name: Build production bundle
         env:
-          NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
-          NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-anon-key
-          SUPABASE_SERVICE_ROLE_KEY: ci-service-role-key
+          DATABASE_HOST: 127.0.0.1
+          DATABASE_PORT: "5432"
+          DATABASE_NAME: odontoart_pix_ci
+          DATABASE_USER: postgres
+          DATABASE_PASSWORD: postgres
+          DATABASE_SSL: "false"
+          AUTH_COOKIE_SECURE: "false"
           MENSALIDADES_API_BASE_URL: https://example.com
           MENSALIDADES_API_TOKEN: ci-token
-          CRON_SECRET: ci-cron-secret
+          PROCESSING_ALLOW_SCHEDULED_SYNC: "false"
         run: npm run build

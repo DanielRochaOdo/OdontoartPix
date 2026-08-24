@@ -1,4 +1,4 @@
-import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { dbQuery } from "@/lib/db/pool";
 import {
   getProcessingConfig,
   setProcessingConfigCacheForCurrentProcess,
@@ -15,24 +15,33 @@ type ProcessingSettingsRow = {
   scheduled_interval_minutes: 1 | 5 | 30 | 60 | 120 | null;
 };
 
+type ScheduleTimestampRow = {
+  value: string | null;
+  status?: string | null;
+};
+
+function normalizeInterval(value: unknown): 1 | 5 | 30 | 60 | 120 {
+  return value === 1 || value === 5 || value === 30 || value === 60 || value === 120
+    ? value
+    : 60;
+}
+
 export async function getProcessingSettingsView() {
   const effectiveConfig = await getProcessingConfig();
   let storedPresetKey: ProcessingPresetKey | null = null;
   let scheduledIntervalMinutes: 1 | 5 | 30 | 60 | 120 = 60;
 
   try {
-    const supabase = createSupabaseAdminClient();
-    const { data } = await supabase
-      .from("processing_settings")
-      .select("preset_key,scheduled_interval_minutes")
-      .eq("settings_key", "default")
-      .maybeSingle();
+    const result = await dbQuery<ProcessingSettingsRow>(
+      `select preset_key,
+              scheduled_interval_minutes
+         from processing_settings
+        where settings_key = 'default'
+        limit 1`
+    );
 
-    storedPresetKey = ((data as ProcessingSettingsRow | null)?.preset_key ?? null);
-    const storedInterval = (data as ProcessingSettingsRow | null)?.scheduled_interval_minutes;
-    if (storedInterval === 1 || storedInterval === 5 || storedInterval === 30 || storedInterval === 60 || storedInterval === 120) {
-      scheduledIntervalMinutes = storedInterval;
-    }
+    storedPresetKey = result.rows[0]?.preset_key ?? null;
+    scheduledIntervalMinutes = normalizeInterval(result.rows[0]?.scheduled_interval_minutes);
   } catch {}
 
   return {
@@ -55,49 +64,44 @@ export async function getProcessingScheduleView() {
   };
 
   try {
-    const supabase = createSupabaseAdminClient();
-    const [
-      { data: settings },
-      { data: schedulerState },
-      { data: lastStartedRun },
-      { data: lastFinishedRun }
-    ] = await Promise.all([
-      supabase
-        .from("processing_settings")
-        .select("scheduled_interval_minutes")
-        .eq("settings_key", "default")
-        .maybeSingle(),
-      supabase
-        .from("processing_scheduler_state")
-        .select("next_run_at")
-        .eq("settings_key", "default")
-        .maybeSingle(),
-      supabase
-        .from("general_sync_runs")
-        .select("started_at,status")
-        .not("started_at", "is", null)
-        .order("started_at", { ascending: false })
-        .limit(1)
-        .maybeSingle(),
-      supabase
-        .from("general_sync_runs")
-        .select("finished_at,status")
-        .not("finished_at", "is", null)
-        .order("finished_at", { ascending: false })
-        .limit(1)
-        .maybeSingle()
+    const [settingsResult, schedulerResult, lastStartedResult, lastFinishedResult] = await Promise.all([
+      dbQuery<{ scheduled_interval_minutes: number | null }>(
+        `select scheduled_interval_minutes
+           from processing_settings
+          where settings_key = 'default'
+          limit 1`
+      ),
+      dbQuery<ScheduleTimestampRow>(
+        `select next_run_at::text as value
+           from processing_scheduler_state
+          where settings_key = 'default'
+          limit 1`
+      ),
+      dbQuery<ScheduleTimestampRow>(
+        `select started_at::text as value,
+                status
+           from general_sync_runs
+          where started_at is not null
+          order by started_at desc
+          limit 1`
+      ),
+      dbQuery<ScheduleTimestampRow>(
+        `select finished_at::text as value,
+                status
+           from general_sync_runs
+          where finished_at is not null
+          order by finished_at desc
+          limit 1`
+      )
     ]);
 
-    const storedInterval = (settings as { scheduled_interval_minutes?: number } | null)
-      ?.scheduled_interval_minutes;
-    const intervalMinutes = storedInterval === 1 || storedInterval === 5 || storedInterval === 30 || storedInterval === 60 || storedInterval === 120
-      ? storedInterval
-      : 60;
-
-    const lastProcessingAt = (lastStartedRun as { started_at?: string | null } | null)?.started_at ?? null;
-    const lastPulseAt = (lastFinishedRun as { finished_at?: string | null } | null)?.finished_at ?? null;
-    const lastPulseStatus = (lastFinishedRun as { status?: string | null } | null)?.status ?? null;
-    const schedulerNextRunAt = (schedulerState as { next_run_at?: string | null } | null)?.next_run_at ?? null;
+    const intervalMinutes = normalizeInterval(
+      settingsResult.rows[0]?.scheduled_interval_minutes
+    );
+    const lastProcessingAt = lastStartedResult.rows[0]?.value ?? null;
+    const lastPulseAt = lastFinishedResult.rows[0]?.value ?? null;
+    const lastPulseStatus = lastFinishedResult.rows[0]?.status ?? null;
+    const schedulerNextRunAt = schedulerResult.rows[0]?.value ?? null;
     let nextProcessingAt = schedulerNextRunAt ? new Date(schedulerNextRunAt) : null;
 
     if (nextProcessingAt && Number.isNaN(nextProcessingAt.getTime())) {
@@ -126,38 +130,47 @@ export async function applyProcessingPreset(
   scheduledIntervalMinutes: 1 | 5 | 30 | 60 | 120 = 60
 ) {
   const config = PROCESSING_PRESETS[presetKey];
-  const supabase = createSupabaseAdminClient();
+  const storedConfig = {
+    worker_count: config.workerCount,
+    processing_block_size: config.claimBatchSize,
+    processing_concurrency: config.perWorkerConcurrency,
+    processing_erp_concurrency: config.erpConcurrency,
+    processing_persistence_concurrency: config.persistenceConcurrency,
+    processing_persistence_batch_size: config.persistenceBatchSize,
+    processing_max_buffered_results: config.maxBufferedResults,
+    mensalidades_api_connect_timeout_ms: config.httpConnectTimeoutMs,
+    mensalidades_api_read_timeout_ms: config.httpReadTimeoutMs,
+    processing_max_attempts: config.maxAttemptsPerItem,
+    processing_stale_heartbeat_ms: config.staleHeartbeatMs,
+    processing_worker_cycle_budget_ms: config.workerCycleBudgetMs,
+    processing_shutdown_reserve_ms: config.shutdownReserveMs,
+    processing_persistence_reserve_ms: config.persistenceReserveMs,
+    processing_finalization_reserve_ms: config.finalizationReserveMs,
+    processing_lease_seconds: config.globalLockLeaseSeconds,
+    processing_productive_delay_ms: config.productiveDelayMs,
+    mensalidades_api_page_size: config.maxPageSize,
+    mensalidades_api_max_pages: config.maxPagesPerOperation
+  };
 
-  const { error } = await supabase
-    .from("processing_settings")
-    .upsert({
-      settings_key: "default",
-      preset_key: presetKey,
-      scheduled_interval_minutes: scheduledIntervalMinutes,
-      worker_count: config.workerCount,
-      processing_block_size: config.claimBatchSize,
-      processing_concurrency: config.perWorkerConcurrency,
-      processing_erp_concurrency: config.erpConcurrency,
-      processing_persistence_concurrency: config.persistenceConcurrency,
-      processing_persistence_batch_size: config.persistenceBatchSize,
-      processing_max_buffered_results: config.maxBufferedResults,
-      mensalidades_api_connect_timeout_ms: config.httpConnectTimeoutMs,
-      mensalidades_api_read_timeout_ms: config.httpReadTimeoutMs,
-      processing_max_attempts: config.maxAttemptsPerItem,
-      processing_stale_heartbeat_ms: config.staleHeartbeatMs,
-      processing_worker_cycle_budget_ms: config.workerCycleBudgetMs,
-      processing_shutdown_reserve_ms: config.shutdownReserveMs,
-      processing_persistence_reserve_ms: config.persistenceReserveMs,
-      processing_finalization_reserve_ms: config.finalizationReserveMs,
-      processing_lease_seconds: config.globalLockLeaseSeconds,
-      processing_productive_delay_ms: config.productiveDelayMs,
-      mensalidades_api_page_size: config.maxPageSize,
-      mensalidades_api_max_pages: config.maxPagesPerOperation,
-      updated_by: updatedBy,
-      updated_at: new Date().toISOString()
-    }, { onConflict: "settings_key" });
+  await dbQuery(
+    `insert into processing_settings (
+       settings_key,
+       preset_key,
+       scheduled_interval_minutes,
+       config,
+       updated_by,
+       updated_at
+     )
+     values ('default', $1, $2, $3::jsonb, $4::uuid, now())
+     on conflict (settings_key) do update
+       set preset_key = excluded.preset_key,
+           scheduled_interval_minutes = excluded.scheduled_interval_minutes,
+           config = excluded.config,
+           updated_by = excluded.updated_by,
+           updated_at = excluded.updated_at`,
+    [presetKey, scheduledIntervalMinutes, JSON.stringify(storedConfig), updatedBy]
+  );
 
-  if (error) throw error;
   setProcessingConfigCacheForCurrentProcess(config as ProcessingConfig);
   return config;
 }

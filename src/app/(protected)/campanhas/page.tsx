@@ -1,8 +1,6 @@
 import Link from "next/link";
 import { CampaignImportForm } from "@/components/campaign-import-form";
-import { DataAccessError } from "@/lib/errors/data-access-error";
-import { getCampaigns } from "@/lib/data";
-import { listCampaignsWithMetrics } from "@/lib/metrics";
+import { getLocalCampaigns, listLocalCampaignsWithMetrics } from "@/lib/campaign-read";
 import { formatCurrencyBR } from "@/lib/money";
 import { CampaignControlIcon } from "@/components/campaign-control-icon";
 import { PageSurface } from "@/components/page-surface";
@@ -24,18 +22,17 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 export default async function CampaignsPage() {
-  let campaigns: Awaited<ReturnType<typeof listCampaignsWithMetrics>> = [];
-  let campaignOptions: Awaited<ReturnType<typeof getCampaigns>> = [];
+  let campaigns: Awaited<ReturnType<typeof listLocalCampaignsWithMetrics>> = [];
+  let campaignOptions: Awaited<ReturnType<typeof getLocalCampaigns>> = [];
   let errorMessage: string | null = null;
 
   try {
     [campaigns, campaignOptions] = await Promise.all([
-      listCampaignsWithMetrics(),
-      getCampaigns()
+      listLocalCampaignsWithMetrics(),
+      getLocalCampaigns()
     ]);
   } catch (error) {
     console.error("[CAMPAIGN_LIST_LOAD_FAILED]", {
-      operation: error instanceof DataAccessError ? error.operation : "unknown",
       message: error instanceof Error ? error.message : "Erro desconhecido"
     });
     errorMessage = "Nao foi possivel carregar as campanhas e suas metricas.";
@@ -66,9 +63,7 @@ export default async function CampaignsPage() {
 
         <article className="min-w-0 overflow-hidden rounded-2xl border border-default bg-surface-primary p-4 shadow-sm lg:p-5">
           {errorMessage ? (
-            <SemanticAlert>
-              {errorMessage}
-            </SemanticAlert>
+            <SemanticAlert>{errorMessage}</SemanticAlert>
           ) : campaigns.length === 0 ? (
             <div className="rounded-xl border border-dashed border-default p-6 text-sm text-muted">
               Nenhuma campanha encontrada.
@@ -92,26 +87,41 @@ export default async function CampaignsPage() {
                   {campaigns.map((campaign) => (
                     <tr key={campaign.id} className="border-t border-subtle transition hover:bg-surface-hover">
                       <td className="min-w-0 px-2 py-3 lg:px-3">
-                        <div className="flex min-w-0 items-center gap-2"><span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-default bg-surface-secondary"><CampaignControlIcon name="table" className="h-4 w-4" /></span><div className="min-w-0"><div className="truncate font-medium text-primary">{campaign.name}</div>
-                          <div className="max-w-xs truncate text-xs text-muted">
-                            {campaign.description || "Sem descricao"}
-                          </div></div></div>
+                        <div className="flex min-w-0 items-center gap-2">
+                          <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-default bg-surface-secondary">
+                            <CampaignControlIcon name="table" className="h-4 w-4" />
+                          </span>
+                          <div className="min-w-0">
+                            <div className="truncate font-medium text-primary">{campaign.name}</div>
+                            <div className="max-w-xs truncate text-xs text-muted">
+                              {campaign.description || "Sem descricao"}
+                            </div>
+                          </div>
+                        </div>
                       </td>
                       <td className="px-2 py-3 lg:px-3">
-                        <span className="inline-flex items-center gap-1.5 rounded-md border border-success bg-success-soft px-2 py-1 text-xs font-medium text-success"><CampaignControlIcon name="completed" className="h-4 w-4" />{STATUS_LABELS[campaign.calculated_status] ?? campaign.calculated_status}</span>
+                        <span className="inline-flex items-center gap-1.5 rounded-md border border-success bg-success-soft px-2 py-1 text-xs font-medium text-success">
+                          <CampaignControlIcon name="completed" className="h-4 w-4" />
+                          {STATUS_LABELS[campaign.calculated_status] ?? campaign.calculated_status}
+                        </span>
                       </td>
                       <td className="px-2 py-3 lg:px-3">{campaign.total}</td>
-                      <td className="px-2 py-3 lg:px-3"><div>
-                        <div>{campaign.progress_percentage.toLocaleString("pt-BR", {
-                          maximumFractionDigits: 2
-                        })}%</div><div className="mt-1 h-2 overflow-hidden rounded-full bg-surface-tertiary"><div className="h-full rounded-full bg-brand" style={{ width: `${Math.min(100, campaign.progress_percentage)}%` }} /></div></div></td>
+                      <td className="px-2 py-3 lg:px-3">
+                        <div>
+                          <div>{campaign.progress_percentage.toLocaleString("pt-BR", { maximumFractionDigits: 2 })}%</div>
+                          <div className="mt-1 h-2 overflow-hidden rounded-full bg-surface-tertiary">
+                            <div className="h-full rounded-full bg-brand" style={{ width: `${Math.min(100, campaign.progress_percentage)}%` }} />
+                          </div>
+                        </div>
+                      </td>
                       <td className="px-2 py-3 lg:px-3">{campaign.paid}</td>
                       <td className="px-2 py-3 lg:px-3">{campaign.unpaid}</td>
+                      <td className="px-2 py-3 lg:px-3">{formatCurrencyBR(campaign.total_pending_amount_cents)}</td>
                       <td className="px-2 py-3 lg:px-3">
-                        {formatCurrencyBR(campaign.total_pending_amount_cents)}
-                      </td>
-                      <td className="px-2 py-3 lg:px-3">
-                        <Link href={`/campanhas/${campaign.id}`} className="inline-flex max-w-full items-center gap-1 whitespace-nowrap rounded-lg border border-brand px-2 py-2 text-xs text-brand transition hover:bg-brand-soft">
+                        <Link
+                          href={`/campanhas/${campaign.id}`}
+                          className="inline-flex max-w-full items-center gap-1 whitespace-nowrap rounded-lg border border-brand px-2 py-2 text-xs text-brand transition hover:bg-brand-soft"
+                        >
                           Abrir <CampaignControlIcon name="open" className="h-4 w-4 shrink-0" />
                         </Link>
                       </td>

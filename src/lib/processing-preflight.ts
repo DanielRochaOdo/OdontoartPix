@@ -3,34 +3,42 @@ import {
   ProcessingJobOriginConflictError,
   type ProcessingOrigin
 } from "@/lib/batch-job-service";
-import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { dbQuery } from "@/lib/db/pool";
+
+type ActiveJobRow = {
+  id: string;
+  batch_id: string;
+  status: string;
+  include_errors: boolean;
+  processing_origin: string;
+};
 
 export async function assertCampaignProcessingAvailable(input: {
   campaignId: string;
   includeErrors: boolean;
   processingOrigin: ProcessingOrigin;
 }) {
-  const supabase = createSupabaseAdminClient();
-  const { data: batches, error: batchesError } = await supabase
-    .from("campaign_batches")
-    .select("id")
-    .eq("campaign_id", input.campaignId)
-    .is("deleted_at", null);
+  const batches = await dbQuery<{ id: string }>(
+    `select id
+       from campaign_batches
+      where campaign_id = $1
+        and deleted_at is null`,
+    [input.campaignId]
+  );
 
-  if (batchesError) throw batchesError;
-  const batchIds = (batches ?? []).map((batch) => batch.id);
+  const batchIds = batches.rows.map((batch) => batch.id);
   if (batchIds.length === 0) return;
 
-  const { data: activeJobs, error: jobsError } = await supabase
-    .from("processing_jobs")
-    .select("id,batch_id,status,include_errors,processing_origin")
-    .in("batch_id", batchIds)
-    .in("status", ["queued", "running", "paused"])
-    .order("created_at", { ascending: false });
+  const activeJobs = await dbQuery<ActiveJobRow>(
+    `select id, batch_id, status, include_errors, processing_origin
+       from processing_jobs
+      where batch_id = any($1::uuid[])
+        and status = any($2::text[])
+      order by created_at desc`,
+    [batchIds, ["queued", "running", "paused"]]
+  );
 
-  if (jobsError) throw jobsError;
-
-  for (const job of activeJobs ?? []) {
+  for (const job of activeJobs.rows) {
     const jobOrigin = job.processing_origin as ProcessingOrigin;
 
     if (jobOrigin === input.processingOrigin) {
@@ -45,8 +53,6 @@ export async function assertCampaignProcessingAvailable(input: {
       continue;
     }
 
-    // A outra origem pausada não bloqueia uma nova operação manual. Jobs
-    // efetivamente enfileirados ou em execução precisam terminar/pausar antes.
     if (job.status === "queued" || job.status === "running") {
       throw new ProcessingJobOriginConflictError(
         job.batch_id,

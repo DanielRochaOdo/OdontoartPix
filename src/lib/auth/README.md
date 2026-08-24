@@ -1,0 +1,1 @@
+Autenticação própria do OdontoartPix baseada em `users` + `sessions` no PostgreSQL dedicado. Senhas são verificadas com bcrypt; tokens de sessão são aleatórios e somente o SHA-256 é persistido no banco.
