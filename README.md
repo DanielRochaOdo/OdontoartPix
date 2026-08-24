@@ -74,14 +74,15 @@ DATABASE_PASSWORD
 DATABASE_SSL
 ```
 
-Aplique as migrations em ordem:
+Aplique as migrations e execute o preflight:
 
 ```bash
 npm ci
 npm run db:migrate
+npm run preflight:production
 ```
 
-O runner de migrations usa `schema_migrations`, transação por arquivo e advisory lock para evitar duas aplicações simultâneas.
+O runner de migrations usa `schema_migrations`, transação por arquivo e advisory lock para evitar duas aplicações simultâneas. O preflight valida variáveis críticas, conexão, migrations, identidade técnica e o estado seguro das travas do scheduler sem imprimir segredos.
 
 Migrations locais atuais:
 
@@ -198,7 +199,7 @@ A aplicação Next.js fica em `127.0.0.1:3000` por padrão e deve ser publicada 
 deploy/nginx/odontoartpix.conf.example
 ```
 
-Os instaladores **não ativam serviços automaticamente**. A sequência segura é: build, migrations, instalação das units, início manual da aplicação, health check, validação de uma fila pequena e só então ativação do timer do worker.
+Os instaladores **não ativam serviços automaticamente**. A sequência segura é: build, migrations, preflight, instalação das units, início manual da aplicação, health check, validação de uma fila pequena e só então ativação do timer do worker.
 
 Consulte:
 
@@ -216,12 +217,13 @@ A CI sobe PostgreSQL 16 descartável e executa a arquitetura local de ponta a po
 ```bash
 npm ci
 npm run db:migrate
+npm run preflight:production
 npm run typecheck
 npm run test
 npm run build
 ```
 
-Uma alteração só está pronta para publicação quando migrations, typecheck, testes e build passam no mesmo commit.
+Uma alteração só está pronta para publicação quando scripts de deploy, migrations, preflight, typecheck, testes e build passam no mesmo commit.
 
 ## Corte para produção
 
@@ -229,7 +231,7 @@ Antes do primeiro processamento real:
 
 1. fazer backup dos dados que serão preservados/migrados;
 2. configurar o PostgreSQL próprio e o usuário da aplicação;
-3. executar `npm ci`, `npm run db:migrate` e `npm run build`;
+3. executar `npm ci`, `npm run db:migrate`, `npm run preflight:production` e `npm run build`;
 4. configurar as variáveis do Next.js e do worker, mantendo o scheduler automático desligado;
 5. instalar a unit web sem ativação automática e validar `/api/health/db` localmente;
 6. validar login, Dashboard, importação e leitura de uma campanha pequena;
