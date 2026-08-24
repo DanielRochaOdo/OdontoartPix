@@ -15,28 +15,19 @@ type ScheduledBatchRow = {
 };
 
 type RunIdRow = { id: string };
-type SchedulerRow = { next_run_at: Date | string | null };
+type SchedulerRow = {
+  next_run_at: Date | string | null;
+  scheduler_enabled: boolean;
+  system_user_id: string | null;
+};
 type UserRow = { id: string };
 
 type ScheduledStartInternalResult =
-  | {
-      action: "not_due";
-      nextRunAt: string;
-    }
-  | {
-      action: "active_run";
-      runId: string;
-      nextRunAt: string | null;
-    }
-  | {
-      action: "request_already_created";
-      runId: string;
-      nextRunAt: string | null;
-    }
-  | {
-      action: "no_eligible_scope";
-      nextRunAt: string;
-    }
+  | { action: "disabled" }
+  | { action: "not_due"; nextRunAt: string }
+  | { action: "active_run"; runId: string; nextRunAt: string | null }
+  | { action: "request_already_created"; runId: string; nextRunAt: string | null }
+  | { action: "no_eligible_scope"; nextRunAt: string }
   | {
       action: "created";
       runId: string;
@@ -46,19 +37,14 @@ type ScheduledStartInternalResult =
     };
 
 export type LocalScheduledGeneralSyncStartResult =
-  | {
-      action: "not_due";
-      nextRunAt: string;
-    }
+  | { action: "disabled" }
+  | { action: "not_due"; nextRunAt: string }
   | {
       action: "active_run" | "request_already_created";
       run: GeneralSyncRunDetail;
       nextRunAt: string | null;
     }
-  | {
-      action: "no_eligible_scope";
-      nextRunAt: string;
-    }
+  | { action: "no_eligible_scope"; nextRunAt: string }
   | {
       action: "created";
       run: GeneralSyncRunDetail;
@@ -79,23 +65,22 @@ function toIso(value: Date | string | null | undefined) {
   return date.toISOString();
 }
 
-function assertRequestedBy(requestedBy: string) {
-  const value = requestedBy.trim();
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
+function normalizeRequestedBy(value: string | null | undefined) {
+  const normalized = String(value ?? "").trim();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(normalized)) {
     throw new Error("PROCESSING_SYSTEM_USER_INVALID");
   }
-  return value;
+  return normalized;
 }
 
 async function loadSchedulerForUpdate(client: PoolClient) {
   const result = await clientQuery<SchedulerRow>(
     client,
-    `select next_run_at
+    `select next_run_at, scheduler_enabled, system_user_id
        from processing_scheduler_state
       where settings_key = 'default'
       for update`
   );
-
   return result.rows[0] ?? null;
 }
 
@@ -105,11 +90,8 @@ async function recalculateNextRun(client: PoolClient, baseAt?: Date | null) {
     `select recalculate_local_processing_next_run_v1($1::timestamptz) as next_run_at`,
     [baseAt ?? null]
   );
-
   const nextRunAt = toIso(result.rows[0]?.next_run_at);
-  if (!nextRunAt) {
-    throw new Error("LOCAL_PROCESSING_SCHEDULE_NOT_INITIALIZED");
-  }
+  if (!nextRunAt) throw new Error("LOCAL_PROCESSING_SCHEDULE_NOT_INITIALIZED");
   return nextRunAt;
 }
 
@@ -123,7 +105,6 @@ async function findActiveRunId(client: PoolClient) {
       limit 1`,
     [ACTIVE_RUN_STATUSES]
   );
-
   return result.rows[0]?.id ?? null;
 }
 
@@ -136,7 +117,6 @@ async function findRunByRequestKey(client: PoolClient, requestKey: string) {
       limit 1`,
     [requestKey]
   );
-
   return result.rows[0]?.id ?? null;
 }
 
@@ -147,13 +127,11 @@ async function validateSystemUser(client: PoolClient, requestedBy: string) {
        from users
       where id = $1::uuid
         and active = true
+        and login_enabled = false
       limit 1`,
     [requestedBy]
   );
-
-  if (!result.rows[0]?.id) {
-    throw new Error("PROCESSING_SYSTEM_USER_INVALID");
-  }
+  if (!result.rows[0]?.id) throw new Error("PROCESSING_SYSTEM_USER_INVALID");
 }
 
 async function listEligibleScheduledBatches(client: PoolClient) {
@@ -164,12 +142,9 @@ async function listEligibleScheduledBatches(client: PoolClient) {
        cb.campaign_id,
        cb.name as batch_name,
        c.name as campaign_name,
-       count(*) filter (
-         where cbm.processing_status <> 'processing'
-       )::int as eligible_count
+       count(*) filter (where cbm.processing_status <> 'processing')::int as eligible_count
      from campaign_batches cb
-     join campaigns c
-       on c.id = cb.campaign_id
+     join campaigns c on c.id = cb.campaign_id
      join campaign_batch_members cbm
        on cbm.batch_id = cb.id
       and cbm.deleted_at is null
@@ -182,14 +157,8 @@ async function listEligibleScheduledBatches(client: PoolClient) {
          where active_job.batch_id = cb.id
            and active_job.status = any($1::text[])
       )
-    group by
-      cb.id,
-      cb.campaign_id,
-      cb.name,
-      c.name
-   having count(*) filter (
-            where cbm.processing_status <> 'processing'
-          ) > 0
+    group by cb.id, cb.campaign_id, cb.name, c.name
+   having count(*) filter (where cbm.processing_status <> 'processing') > 0
     order by cb.id`,
     [ACTIVE_JOB_STATUSES]
   );
@@ -201,12 +170,10 @@ async function listEligibleScheduledBatches(client: PoolClient) {
 }
 
 export async function startDueLocalScheduledGeneralSync(input: {
-  requestedBy: string;
+  requestedBy?: string | null;
   now?: Date;
-}): Promise<LocalScheduledGeneralSyncStartResult> {
-  const requestedBy = assertRequestedBy(input.requestedBy);
+} = {}): Promise<LocalScheduledGeneralSyncStartResult> {
   const now = input.now ?? new Date();
-
   if (Number.isNaN(now.getTime())) {
     throw new Error("LOCAL_PROCESSING_SCHEDULE_INVALID_NOW");
   }
@@ -219,29 +186,24 @@ export async function startDueLocalScheduledGeneralSync(input: {
         [GENERAL_SYNC_LOCK_NAMESPACE, GENERAL_SYNC_LOCK_KEY]
       );
 
-      let scheduler = await loadSchedulerForUpdate(client);
-      if (!scheduler) {
-        throw new Error("LOCAL_PROCESSING_SCHEDULER_STATE_NOT_FOUND");
-      }
+      const scheduler = await loadSchedulerForUpdate(client);
+      if (!scheduler) throw new Error("LOCAL_PROCESSING_SCHEDULER_STATE_NOT_FOUND");
+      if (!scheduler.scheduler_enabled) return { action: "disabled" as const };
+
+      const requestedBy = normalizeRequestedBy(input.requestedBy ?? scheduler.system_user_id);
+      await validateSystemUser(client, requestedBy);
 
       let nextRunAt = toIso(scheduler.next_run_at);
       if (!nextRunAt) {
         nextRunAt = await recalculateNextRun(client, null);
-        return {
-          action: "not_due" as const,
-          nextRunAt
-        };
+        return { action: "not_due" as const, nextRunAt };
       }
 
       if (now.getTime() < new Date(nextRunAt).getTime()) {
-        return {
-          action: "not_due" as const,
-          nextRunAt
-        };
+        return { action: "not_due" as const, nextRunAt };
       }
 
       const requestKey = `scheduled:${nextRunAt}`;
-
       const existingRequestRunId = await findRunByRequestKey(client, requestKey);
       if (existingRequestRunId) {
         return {
@@ -253,22 +215,13 @@ export async function startDueLocalScheduledGeneralSync(input: {
 
       const activeRunId = await findActiveRunId(client);
       if (activeRunId) {
-        return {
-          action: "active_run" as const,
-          runId: activeRunId,
-          nextRunAt
-        };
+        return { action: "active_run" as const, runId: activeRunId, nextRunAt };
       }
-
-      await validateSystemUser(client, requestedBy);
 
       const batches = await listEligibleScheduledBatches(client);
       if (batches.length === 0) {
         const recalculated = await recalculateNextRun(client, now);
-        return {
-          action: "no_eligible_scope" as const,
-          nextRunAt: recalculated
-        };
+        return { action: "no_eligible_scope" as const, nextRunAt: recalculated };
       }
 
       const campaignCount = new Set(batches.map((batch) => batch.campaign_id)).size;
@@ -278,27 +231,11 @@ export async function startDueLocalScheduledGeneralSync(input: {
       const insertedRun = await clientQuery<RunIdRow>(
         client,
         `insert into general_sync_runs (
-           request_key,
-           requested_by,
-           scope_type,
-           filters,
-           status,
-           trigger_source,
-           sync_mode,
-           campaign_count,
-           batch_count,
-           record_count
+           request_key, requested_by, scope_type, filters, status,
+           trigger_source, sync_mode, campaign_count, batch_count, record_count
          ) values (
-           $1,
-           $2::uuid,
-           'all',
-           $3::jsonb,
-           'queued',
-           'scheduled',
-           'scheduled_recheck',
-           $4,
-           $5,
-           $6
+           $1, $2::uuid, 'all', $3::jsonb, 'queued',
+           'scheduled', 'scheduled_recheck', $4, $5, $6
          )
          returning id`,
         [
@@ -328,26 +265,13 @@ export async function startDueLocalScheduledGeneralSync(input: {
       await clientQuery(
         client,
         `insert into general_sync_run_batches (
-           run_id,
-           batch_id,
-           campaign_id,
-           batch_name,
-           campaign_name,
-           position,
-           record_count,
-           status,
-           message
+           run_id, batch_id, campaign_id, batch_name, campaign_name,
+           position, record_count, status, message
          )
          select
-           $1::uuid,
-           item.batch_id,
-           item.campaign_id,
-           item.batch_name,
-           item.campaign_name,
-           item.position,
-           greatest(coalesce(item.record_count, 0), 0),
-           'pending',
-           null
+           $1::uuid, item.batch_id, item.campaign_id, item.batch_name,
+           item.campaign_name, item.position,
+           greatest(coalesce(item.record_count, 0), 0), 'pending', null
          from jsonb_to_recordset($2::jsonb) as item(
            batch_id uuid,
            campaign_id uuid,
@@ -357,38 +281,6 @@ export async function startDueLocalScheduledGeneralSync(input: {
            record_count integer
          )`,
         [runId, JSON.stringify(batchPayload)]
-      );
-
-      await clientQuery(
-        client,
-        `insert into event_logs (
-           event_type,
-           category,
-           severity,
-           details,
-           created_by
-         ) values (
-           'dashboard_general_sync_started',
-           'processing',
-           'info',
-           $1::jsonb,
-           $2::uuid
-         )`,
-        [
-          JSON.stringify({
-            runId,
-            scopeType: "all",
-            campaignIds: [],
-            batchIds: batches.map((batch) => batch.batch_id),
-            campaignCount,
-            batchCount,
-            recordCount,
-            triggerSource: "scheduled",
-            syncMode: "scheduled_recheck",
-            scheduledFor: nextRunAt
-          }),
-          requestedBy
-        ]
       );
 
       return {
@@ -401,10 +293,7 @@ export async function startDueLocalScheduledGeneralSync(input: {
     });
 
     if (result.action === "created") {
-      return {
-        ...result,
-        run: await getGeneralSyncRun(result.runId)
-      };
+      return { ...result, run: await getGeneralSyncRun(result.runId) };
     }
 
     if (result.action === "active_run" || result.action === "request_already_created") {
