@@ -10,6 +10,10 @@ import {
   type ClaimedGeneralSyncRun
 } from "@/lib/general-sync-claim";
 import {
+  executeClaimedLocalGeneralSyncPause,
+  type LocalGeneralSyncPauseExecutionResult
+} from "@/lib/general-sync-pause-execute";
+import {
   reconcileClaimedLocalGeneralSyncRun,
   type LocalGeneralSyncReconcileResult
 } from "@/lib/general-sync-reconcile";
@@ -20,6 +24,7 @@ export type LocalGeneralSyncCycleResult =
       action: "idle";
       workerId: string;
       claim: null;
+      pause: null;
       reconcile: null;
       cancellation: null;
       advance: null;
@@ -30,7 +35,8 @@ export type LocalGeneralSyncCycleResult =
       workerId: string;
       runId: string;
       claim: ClaimedGeneralSyncRun;
-      reconcile: LocalGeneralSyncReconcileResult;
+      pause: LocalGeneralSyncPauseExecutionResult;
+      reconcile: LocalGeneralSyncReconcileResult | null;
       cancellation: LocalGeneralSyncCancellationExecutionResult | null;
       advance: LocalGeneralSyncAdvanceResult | null;
       released: true;
@@ -63,6 +69,7 @@ export async function runLocalGeneralSyncCycle(input?: {
       action: "idle",
       workerId,
       claim: null,
+      pause: null,
       reconcile: null,
       cancellation: null,
       advance: null,
@@ -70,27 +77,35 @@ export async function runLocalGeneralSyncCycle(input?: {
     };
   }
 
+  let pause: LocalGeneralSyncPauseExecutionResult | null = null;
   let reconcile: LocalGeneralSyncReconcileResult | null = null;
   let cancellation: LocalGeneralSyncCancellationExecutionResult | null = null;
   let advance: LocalGeneralSyncAdvanceResult | null = null;
   let operationError: unknown = null;
 
   try {
-    reconcile = await reconcileClaimedLocalGeneralSyncRun({
+    pause = await executeClaimedLocalGeneralSyncPause({
       runId: claim.id,
       workerId
     });
 
-    if (reconcile.action === "cancelling") {
-      cancellation = await executeClaimedLocalGeneralSyncCancellation({
+    if (pause.action === "not_requested") {
+      reconcile = await reconcileClaimedLocalGeneralSyncRun({
         runId: claim.id,
         workerId
       });
-    } else if (RECONCILE_ACTIONS_THAT_MAY_ADVANCE.has(reconcile.action)) {
-      advance = await advanceClaimedLocalGeneralSyncRun({
-        runId: claim.id,
-        workerId
-      });
+
+      if (reconcile.action === "cancelling") {
+        cancellation = await executeClaimedLocalGeneralSyncCancellation({
+          runId: claim.id,
+          workerId
+        });
+      } else if (RECONCILE_ACTIONS_THAT_MAY_ADVANCE.has(reconcile.action)) {
+        advance = await advanceClaimedLocalGeneralSyncRun({
+          runId: claim.id,
+          workerId
+        });
+      }
     }
   } catch (error) {
     operationError = error;
@@ -132,7 +147,11 @@ export async function runLocalGeneralSyncCycle(input?: {
     throw new Error("GENERAL_SYNC_RELEASE_FAILED");
   }
 
-  if (!reconcile) {
+  if (!pause) {
+    throw new Error("GENERAL_SYNC_PAUSE_CHECK_MISSING_RESULT");
+  }
+
+  if (pause.action === "not_requested" && !reconcile) {
     throw new Error("GENERAL_SYNC_RECONCILE_MISSING_RESULT");
   }
 
@@ -141,6 +160,7 @@ export async function runLocalGeneralSyncCycle(input?: {
     workerId,
     runId: claim.id,
     claim,
+    pause,
     reconcile,
     cancellation,
     advance,
