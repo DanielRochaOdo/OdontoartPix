@@ -42,56 +42,28 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Finalize generated dependency lock and interrupt semantics
+      - name: Finalize definitive dashboard interrupt
         shell: bash
         run: |
           python3 - <<'PY'
           from pathlib import Path
           path = Path('src/components/general-sync-button.tsx')
           text = path.read_text()
-          replacements = [
-            ('''                  <button
-                    type="button"
-                    onClick={() => void pause()}
-                    disabled={pausing || cancelling || resuming}
-                    className="rounded-lg bg-amber-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {pausing ? "Pausando..." : "Pausar sincronização"}
-                  </button>''', '''                  <button
-                    type="button"
-                    onClick={() => void cancel()}
-                    disabled={cancelling || resuming}
-                    className="rounded-lg bg-red-700 px-3 py-2 text-xs font-semibold text-white transition hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {cancelling ? "Interrompendo..." : "Interromper processamento"}
-                  </button>'''),
-            ('''                  <button
-                    type="button"
-                    onClick={() => void pause()}
-                    disabled={pausing || cancelling || resuming}
-                    className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-amber-700 disabled:opacity-60"
-                  >
-                    {pausing ? "Pausando..." : "Pausar sincronizacao"}
-                  </button>''', '''                  <button
-                    type="button"
-                    onClick={() => void cancel()}
-                    disabled={cancelling || resuming}
-                    className="rounded-lg bg-red-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-800 disabled:opacity-60"
-                  >
-                    {cancelling ? "Interrompendo..." : "Interromper processamento"}
-                  </button>''')
-          ]
-          for old, new in replacements:
-              if old in text:
-                  text = text.replace(old, new, 1)
+          if text.count('onClick={() => void pause()}') != 2:
+              raise SystemExit('expected exactly two active dashboard pause controls')
+          text = text.replace('onClick={() => void pause()}', 'onClick={() => void cancel()}')
+          text = text.replace('disabled={pausing || cancelling || resuming}', 'disabled={cancelling || resuming}')
+          text = text.replace('className="rounded-lg bg-amber-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60"', 'className="rounded-lg bg-red-700 px-3 py-2 text-xs font-semibold text-white transition hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-60"')
+          text = text.replace('className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-amber-700 disabled:opacity-60"', 'className="rounded-lg bg-red-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-800 disabled:opacity-60"')
+          text = text.replace('{pausing ? "Pausando..." : "Pausar sincronização"}', '{cancelling ? "Interrompendo..." : "Interromper processamento"}')
+          text = text.replace('{pausing ? "Pausando..." : "Pausar sincronizacao"}', '{cancelling ? "Interrompendo..." : "Interromper processamento"}')
           path.write_text(text)
           PY
-          npm install --package-lock-only
-          if ! git diff --quiet -- package-lock.json src/components/general-sync-button.tsx; then
+          if ! git diff --quiet -- src/components/general-sync-button.tsx; then
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add package-lock.json src/components/general-sync-button.tsx
-            git commit -m "apply secure runtime and dashboard interrupt"
+            git add src/components/general-sync-button.tsx
+            git commit -m "make dashboard interrupt definitive"
             git push origin HEAD:postgres-local-auth-foundation
           fi
 
