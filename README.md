@@ -46,10 +46,12 @@ Regras obrigatórias:
 - sempre consultar com `HistoricoCompleto=true`;
 - usar páginas de 200 registros;
 - parar a paginação assim que `target_installment_id` for encontrada;
-- se a parcela-alvo não for encontrada, continuar até `TotalPages`;
+- se a parcela-alvo não for encontrada na página atual, continuar até `TotalPages`;
 - somente `target_installment_id` define o estado financeiro do vínculo;
-- ausência da parcela-alvo **não confirma pagamento**;
-- pagamento confirmado somente quando `ValorPago` está preenchido, `DescricaoRecebimento` está preenchida e é diferente de `ABERTO`;
+- `DescricaoRecebimento == "ABERTO"` define a parcela-alvo como `unpaid`;
+- `DescricaoRecebimento != "ABERTO"` somente define `paid` quando `ValorPago >= Valor`;
+- parcela-alvo não localizada após a paginação necessária é **erro**; ausência nunca define `paid` nem `unpaid`;
+- erro por parcela-alvo não localizada pode ser reprocessado manualmente ou em uma sincronização completa futura;
 - `Situacao` isoladamente nunca confirma pagamento;
 - `Valor` é a fonte do valor da parcela e do total pendente;
 - `ValorPago` é a fonte do valor recebido;
@@ -231,15 +233,16 @@ Uma alteração só está pronta para publicação quando migrations, typecheck,
 
 Antes do primeiro processamento real:
 
-1. backup do banco de origem/dados que serão migrados;
-2. configurar o PostgreSQL próprio e usuário da aplicação;
-3. executar `npm run db:migrate`;
-4. configurar variáveis do Next.js e do worker;
+1. fazer backup dos dados que serão preservados/migrados;
+2. configurar o PostgreSQL próprio e o usuário da aplicação;
+3. executar `npm ci` e `npm run db:migrate`;
+4. configurar as variáveis do Next.js e do worker, mantendo o scheduler automático desligado;
 5. validar login, Dashboard, importação e leitura de uma campanha pequena;
-6. executar `worker:once` com uma fila pequena;
-7. validar regra `Valor`/`ValorPago`/`DescricaoRecebimento`/`DataPagamento`;
-8. validar Dashboard e interrupção definitiva de uma onda;
-9. habilitar o timer do worker;
-10. somente depois, se desejado, habilitar a criação automática de ondas com as duas travas descritas acima.
+6. executar `npm run worker:once` com uma fila pequena e controlada;
+7. validar explicitamente a matriz financeira: `ABERTO = unpaid`; `!= ABERTO` + `ValorPago >= Valor = paid`; alvo ausente = erro;
+8. validar que alvo ausente pode ser reprocessado manualmente e reaparece em uma sincronização completa futura;
+9. validar Dashboard e interrupção definitiva de uma onda;
+10. habilitar o timer do worker somente após a validação manual;
+11. somente depois, se desejado, habilitar a criação automática de ondas com as duas travas descritas acima.
 
 Não existe necessidade de Supabase Auth, Supabase Realtime, Supabase Cron, Vault ou GitHub Actions para o runtime desta arquitetura local.
