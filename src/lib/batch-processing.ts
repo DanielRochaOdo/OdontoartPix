@@ -125,9 +125,10 @@ export function calculateClaimLimit(
   persistenceReserveMs: number,
   finalizationReserveMs: number
 ) {
-  if (remainingBudgetMs <= persistenceReserveMs + finalizationReserveMs || waveSize <= 0) return 0;
-  const usable = remainingBudgetMs - persistenceReserveMs - finalizationReserveMs;
-  const waves = Math.max(0, Math.floor(usable / Math.max(erpRequestBudgetMs, 1)));
+  if (remainingBudgetMs <= finalizationReserveMs || waveSize <= 0) return 0;
+  const waveBudgetMs = Math.max(erpRequestBudgetMs + persistenceReserveMs, 1);
+  const usable = remainingBudgetMs - finalizationReserveMs;
+  const waves = Math.max(0, Math.floor(usable / waveBudgetMs));
   return Math.min(requestedLimit, waves * waveSize);
 }
 
