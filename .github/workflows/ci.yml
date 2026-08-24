@@ -62,6 +62,21 @@ jobs:
           DATABASE_SSL: "false"
         run: npm run db:migrate
 
+      - name: Run production preflight in safe mode
+        env:
+          DATABASE_HOST: 127.0.0.1
+          DATABASE_PORT: "5432"
+          DATABASE_NAME: odontoart_pix_ci
+          DATABASE_USER: postgres
+          DATABASE_PASSWORD: postgres
+          DATABASE_SSL: "false"
+          AUTH_COOKIE_SECURE: "true"
+          MENSALIDADES_API_BASE_URL: https://example.com
+          MENSALIDADES_API_TOKEN: ci-token
+          PROCESSING_ALLOW_SCHEDULED_SYNC: "false"
+          PRODUCTION_PREFLIGHT_REQUIRE_SCHEDULER_OFF: "true"
+        run: npm run preflight:production
+
       - name: Generate Next route types and typecheck
         id: typecheck
         continue-on-error: true
