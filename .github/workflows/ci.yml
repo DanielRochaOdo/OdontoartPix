@@ -40,6 +40,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Audit production dependencies
+        id: production_audit
+        continue-on-error: true
+        run: npm audit --omit=dev --audit-level=high
+
       - name: Apply local PostgreSQL migrations
         env:
           DATABASE_HOST: 127.0.0.1
