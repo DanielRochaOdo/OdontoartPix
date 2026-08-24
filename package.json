@@ -8,7 +8,11 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "next typegen && tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "db:migrate": "tsx scripts/migrate-local-db.ts",
+    "worker:once": "tsx scripts/process-local-worker.ts",
+    "worker:drain": "tsx scripts/process-local-worker.ts --drain",
+    "worker:provision": "tsx scripts/provision-processing-service.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.1.1",
