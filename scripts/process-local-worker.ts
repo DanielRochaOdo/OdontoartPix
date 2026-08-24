@@ -158,6 +158,7 @@ async function main() {
     const claimLimit = readPositiveIntegerArgument("limit");
     const concurrency = readPositiveIntegerArgument("concurrency");
     const drain = hasFlag("drain");
+    const orchestrationOnly = hasFlag("orchestration-only");
     const delayMs = readNonNegativeIntegerArgument("delay-ms") ?? DEFAULT_DRAIN_DELAY_MS;
     const maxDrainCycles = readPositiveIntegerArgument("max-cycles") ?? DEFAULT_MAX_DRAIN_CYCLES;
     const scheduledSyncEnabled = readScheduledSyncEnabled();
@@ -183,6 +184,11 @@ async function main() {
       const pauseCheckpoint = await finalizeQueuedLocalProcessingPauseRequests();
       if (pauseCheckpoint.pausedJobs > 0) {
         console.info("[LOCAL_WORKER_PAUSE_CHECKPOINT]", pauseCheckpoint);
+      }
+
+      if (orchestrationOnly) {
+        console.info("[LOCAL_WORKER_PROCESSING_SKIPPED]");
+        return;
       }
 
       const result = await runLocalWorkerOnce({
