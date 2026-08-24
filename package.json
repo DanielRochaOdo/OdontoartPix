@@ -10,6 +10,7 @@
     "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run",
     "db:migrate": "tsx scripts/migrate-local-db.ts",
+    "preflight:production": "tsx scripts/preflight-production.ts",
     "worker:once": "tsx scripts/process-local-worker.ts",
     "worker:drain": "tsx scripts/process-local-worker.ts --drain",
     "worker:provision": "tsx scripts/provision-processing-service.ts"
