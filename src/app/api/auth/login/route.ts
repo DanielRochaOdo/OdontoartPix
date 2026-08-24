@@ -17,6 +17,7 @@ type LoginUserRow = {
   password_hash: string;
   role: "administrador" | "operador" | "visualizador";
   active: boolean;
+  login_enabled: boolean;
 };
 
 function requestIp(request: NextRequest) {
@@ -39,7 +40,7 @@ export async function POST(request: NextRequest) {
 
   const email = parsed.data.email.toLowerCase();
   const result = await dbQuery<LoginUserRow>(
-    `select id, name, email, password_hash, role, active
+    `select id, name, email, password_hash, role, active, login_enabled
        from users
       where lower(email) = $1
       limit 1`,
@@ -47,7 +48,12 @@ export async function POST(request: NextRequest) {
   );
 
   const user = result.rows[0];
-  if (!user || !user.active || !(await verifyPassword(parsed.data.password, user.password_hash))) {
+  if (
+    !user ||
+    !user.active ||
+    !user.login_enabled ||
+    !(await verifyPassword(parsed.data.password, user.password_hash))
+  ) {
     return fail("INVALID_CREDENTIALS", "E-mail ou senha inválidos.", 401);
   }
 
