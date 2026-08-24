@@ -3,34 +3,7 @@ import { toCents } from "@/lib/money";
 
 const StringOrNumberSchema = z.union([z.string(), z.number()]);
 const NullableStringOrNumberSchema = StringOrNumberSchema.nullish();
-
-const MonthlyParcelSchema = z
-  .object({
-    cod_usuario: NullableStringOrNumberSchema,
-    cod_parcela: NullableStringOrNumberSchema,
-    vencimento: z.string().nullish(),
-    tipo_parcela: z.string().nullish(),
-    cod_boleto: NullableStringOrNumberSchema,
-    cod_pix: z.string().nullish(),
-    link_cartão: z.string().nullish(),
-    Situacao: z.string().nullish(),
-    Valor: NullableStringOrNumberSchema,
-    Multa: NullableStringOrNumberSchema,
-    Juros: NullableStringOrNumberSchema,
-    AcrescimoAvulso: NullableStringOrNumberSchema,
-    DescontoAvulso: NullableStringOrNumberSchema,
-    ValorFinal: NullableStringOrNumberSchema,
-    Tipo_plano: z.string().nullish(),
-    Observacao: z.string().nullish()
-  })
-  .passthrough();
-
-const MonthlyLegacyResponseSchema = z
-  .object({
-    mensagem: z.string().nullish(),
-    parcelas: z.array(MonthlyParcelSchema)
-  })
-  .passthrough();
+const OPEN_RECEIPT_DESCRIPTION = "ABERTO";
 
 const MonthlyApiDataItemSchema = z
   .object({
@@ -111,7 +84,7 @@ export type MonthlyInstallment = {
 
 export type MonthlyAnalysis = {
   paymentStatus: "paid" | "unpaid";
-  paymentStatusSource: "erp_open_invoice" | "legacy_contract" | "erp_explicit";
+  paymentStatusSource: "erp_open_invoice" | "erp_explicit";
   message: string;
   installmentsCount: number;
   totalPendingAmountCents: number;
@@ -130,82 +103,21 @@ export type MonthlyAnalysis = {
   pageSize: number | null;
 };
 
-export function analyzeTargetInstallment(input: {
-  targetInstallmentId: string;
-  invoices: Array<{ id: string | number | null | undefined; finalAmountCents: number }>;
-  paginationComplete: boolean;
-  message?: string;
-}): MonthlyAnalysis {
-  const targetId = String(input.targetInstallmentId).trim();
-  const matched = input.invoices.find((invoice) => String(invoice.id ?? "").trim() === targetId);
-
-  if (!matched && !input.paginationComplete) {
-    throw new MonthlyResponseError(
-      "A consulta paginada do ERP nao foi concluida; a fatura alvo nao pode ser classificada como paga."
-    );
-  }
-
-  if (!matched) {
-    return {
-      paymentStatus: "unpaid",
-      paymentStatusSource: "erp_open_invoice",
-      message: input.message || "Parcela nao localizada para o associado informado.",
-      installmentsCount: 0,
-      totalPendingAmountCents: 0,
-      totalPaidAmountCents: 0,
-      totalsByPlan: [],
-      installments: [],
-      warnings: [],
-      paginationComplete: true,
-      currentPage: null,
-      totalPages: null,
-      totalCount: null,
-      pageSize: null
-    };
-  }
-
-  return {
-    paymentStatus: "unpaid",
-    paymentStatusSource: "erp_open_invoice",
-    message: input.message || "Parcela localizada como pendente.",
-    installmentsCount: 1,
-    totalPendingAmountCents: matched.finalAmountCents,
-    totalPaidAmountCents: 0,
-    totalsByPlan: [{ planType: "Nao informado", installmentsCount: 1, totalAmountCents: matched.finalAmountCents }],
-    installments: [{
-      installmentCode: targetId,
-      baseAmountCents: matched.finalAmountCents,
-      fineAmountCents: 0,
-      interestAmountCents: 0,
-      additionalAmountCents: 0,
-      discountAmountCents: 0,
-      finalAmountCents: matched.finalAmountCents,
-      planType: "Nao informado",
-      paidAmountCents: null
-    }],
-    warnings: [],
-    paginationComplete: input.paginationComplete,
-    currentPage: null,
-    totalPages: null,
-    totalCount: null,
-    pageSize: null
-  };
-}
-
-type NormalizedLegacyPayload = {
-  source: "legacy";
-  message?: string;
-  parcels: z.infer<typeof MonthlyParcelSchema>[];
-};
-
 type NormalizedPaginatedPayload = {
-  source: "paginated";
   message?: string;
   items: z.infer<typeof MonthlyApiDataItemSchema>[];
-  currentPage: number | null;
-  totalPages: number | null;
-  totalCount: number | null;
-  pageSize: number | null;
+  currentPage: number;
+  totalPages: number;
+  totalCount: number;
+  pageSize: number;
+};
+
+type ItemFinancialState = {
+  status: "paid" | "unpaid" | "invalid";
+  baseAmountCents: number;
+  paidAmountCents: number | null;
+  description?: string;
+  reason?: string;
 };
 
 function optionalText(value: unknown) {
@@ -218,13 +130,8 @@ function hasValue(value: unknown) {
   return value !== null && value !== undefined && String(value).trim() !== "";
 }
 
-function isExplicitlyPaid(item: z.infer<typeof MonthlyApiDataItemSchema>) {
-  const description = optionalText(item.DescricaoRecebimento);
-  return Boolean(
-    hasValue(item.ValorPago) &&
-      description &&
-      description.toLocaleUpperCase("pt-BR") !== "ABERTO"
-  );
+function normalizedReceiptDescription(value: unknown) {
+  return optionalText(value)?.toLocaleUpperCase("pt-BR");
 }
 
 function installmentCodeFromApiItem(item: z.infer<typeof MonthlyApiDataItemSchema>) {
@@ -238,9 +145,7 @@ function isEmptyErros(value: unknown) {
   return false;
 }
 
-function validatePaginatedResponse(
-  parsed: z.infer<typeof MonthlyPaginatedResponseSchema>
-) {
+function validatePaginatedResponse(parsed: z.infer<typeof MonthlyPaginatedResponseSchema>) {
   const data = parsed.dados;
   const currentPage = data.CurrentPage;
   const totalPages = data.TotalPages;
@@ -268,261 +173,199 @@ function validatePaginatedResponse(
   }
 }
 
-function monetaryValue(value: unknown, field: string, warnings: string[]) {
-  const result = toCents(value);
-  if (result.warning && value != null && String(value).trim() !== "") {
-    warnings.push(`${field}: ${result.warning}`);
+function normalizeMonthlyPayload(input: unknown): NormalizedPaginatedPayload {
+  const parsed = MonthlyPaginatedResponseSchema.safeParse(input);
+  if (!parsed.success) {
+    throw new MonthlyResponseError(
+      "A resposta do ERP nao possui o contrato paginado esperado."
+    );
   }
-  return result.cents;
+
+  validatePaginatedResponse(parsed.data);
+  return {
+    message: parsed.data.mensagem?.trim(),
+    items: parsed.data.dados.Data,
+    currentPage: parsed.data.dados.CurrentPage!,
+    totalPages: parsed.data.dados.TotalPages!,
+    totalCount: parsed.data.dados.TotalCount!,
+    pageSize: parsed.data.dados.PageSize!
+  };
 }
 
-function requiredApiValorCents(value: unknown, installmentCode: string) {
+function monetaryValue(value: unknown, field: string, warnings: string[]) {
+  const result = toCents(value);
+  if (result.warning && hasValue(value)) {
+    warnings.push(`${field}: ${result.warning}`);
+  }
+  return result.warning ? 0 : result.cents;
+}
+
+function requiredMoneyCents(value: unknown, field: string, installmentCode: string) {
   if (!hasValue(value)) {
     throw new MonthlyResponseError(
-      `A parcela ${installmentCode} não possui Valor informado pelo ERP.`
+      `A parcela ${installmentCode} nao possui ${field} informado pelo ERP.`
     );
   }
 
   const parsed = toCents(value);
   if (parsed.warning) {
     throw new MonthlyResponseError(
-      `A parcela ${installmentCode} possui Valor inválido.`
+      `A parcela ${installmentCode} possui ${field} invalido.`
     );
   }
   return parsed.cents;
 }
 
-function normalizeMonthlyPayload(input: unknown): NormalizedLegacyPayload | NormalizedPaginatedPayload {
-  const legacy = MonthlyLegacyResponseSchema.safeParse(input);
-  if (legacy.success) {
+function classifyFinancialState(
+  item: z.infer<typeof MonthlyApiDataItemSchema>,
+  installmentCode: string,
+  strict: boolean
+): ItemFinancialState {
+  const description = normalizedReceiptDescription(item.DescricaoRecebimento);
+  const baseValue = toCents(item.Valor);
+  const baseAmountCents = baseValue.warning ? 0 : baseValue.cents;
+
+  if (strict && (!hasValue(item.Valor) || baseValue.warning)) {
     return {
-      source: "legacy",
-      message: legacy.data.mensagem?.trim(),
-      parcels: legacy.data.parcelas
+      status: "invalid",
+      baseAmountCents,
+      paidAmountCents: null,
+      description,
+      reason: !hasValue(item.Valor)
+        ? `A parcela ${installmentCode} nao possui Valor informado pelo ERP.`
+        : `A parcela ${installmentCode} possui Valor invalido.`
     };
   }
 
-  const paginated = MonthlyPaginatedResponseSchema.safeParse(input);
-  if (paginated.success) {
-    validatePaginatedResponse(paginated.data);
+  if (description === OPEN_RECEIPT_DESCRIPTION) {
     return {
-      source: "paginated",
-      message: paginated.data.mensagem?.trim(),
-      items: paginated.data.dados.Data,
-      currentPage: paginated.data.dados.CurrentPage ?? null,
-      totalPages: paginated.data.dados.TotalPages ?? null,
-      totalCount: paginated.data.dados.TotalCount ?? null,
-      pageSize: paginated.data.dados.PageSize ?? null
+      status: "unpaid",
+      baseAmountCents,
+      paidAmountCents: null,
+      description
     };
   }
 
-  throw new MonthlyResponseError(
-    "A resposta do ERP não possui o contrato esperado."
-  );
-}
-
-function analyzeLegacyPayload(payload: NormalizedLegacyPayload, targetInstallmentId?: string, fallbackDueDate?: string): MonthlyAnalysis {
-  const warnings: string[] = [];
-  const seen = new Set<string>();
-  const installments: MonthlyInstallment[] = [];
-
-  for (const item of payload.parcels) {
-    const installmentType = optionalText(item.tipo_parcela);
-    if (installmentType?.toLocaleLowerCase("pt-BR") === "parcela virtual") {
-      continue;
-    }
-
-    const installmentCode = optionalText(item.cod_parcela);
-    if (!installmentCode) continue;
-
-    const userCode = optionalText(item.cod_usuario);
-    const dedupeKey = `${userCode ?? ""}:${installmentCode}`;
-    if (seen.has(dedupeKey)) {
-      warnings.push(`Parcela duplicada ignorada: ${installmentCode}.`);
-      continue;
-    }
-    seen.add(dedupeKey);
-
-    const finalAmount = toCents(item.ValorFinal);
-    if (finalAmount.warning) {
-      throw new MonthlyResponseError(
-        `A parcela ${installmentCode} possui ValorFinal inválido.`
-      );
-    }
-
-    installments.push({
-      userCode,
-      installmentCode,
-      dueDate: optionalText(item.vencimento) ?? (installmentCode === targetInstallmentId ? optionalText(fallbackDueDate) : undefined),
-      installmentType,
-      boletoCode: optionalText(item.cod_boleto),
-      pixCode: optionalText(item.cod_pix),
-      cardPaymentLink: optionalText(item.link_cartão),
-      situation: optionalText(item.Situacao),
-      baseAmountCents: monetaryValue(item.Valor, "Valor", warnings),
-      fineAmountCents: monetaryValue(item.Multa, "Multa", warnings),
-      interestAmountCents: monetaryValue(item.Juros, "Juros", warnings),
-      additionalAmountCents: monetaryValue(item.AcrescimoAvulso, "AcrescimoAvulso", warnings),
-      discountAmountCents: monetaryValue(item.DescontoAvulso, "DescontoAvulso", warnings),
-      finalAmountCents: finalAmount.cents,
-      planType: optionalText(item.Tipo_plano) ?? "Não informado",
-      observation: optionalText(item.Observacao),
-      paidAmountCents: null
-    });
-  }
-
-  if (installments.length === 0) {
+  if (!description) {
     return {
-      paymentStatus: "paid",
-      paymentStatusSource: "legacy_contract",
-      message: payload.message || "Associado sem mensalidades em aberto.",
-      installmentsCount: 0,
-      totalPendingAmountCents: 0,
-      totalPaidAmountCents: 0,
-      totalsByPlan: [],
-      installments: [],
-      warnings,
-      paginationComplete: true,
-      currentPage: null,
-      totalPages: null,
-      totalCount: null,
-      pageSize: null
+      status: "invalid",
+      baseAmountCents,
+      paidAmountCents: null,
+      reason: `A parcela ${installmentCode} nao possui DescricaoRecebimento informada pelo ERP.`
     };
   }
 
-  const grouped = new Map<string, { installmentsCount: number; totalAmountCents: number }>();
-  for (const installment of installments) {
-    const current = grouped.get(installment.planType) ?? {
-      installmentsCount: 0,
-      totalAmountCents: 0
+  if (!hasValue(item.ValorPago)) {
+    return {
+      status: "invalid",
+      baseAmountCents,
+      paidAmountCents: null,
+      description,
+      reason: `A parcela ${installmentCode} possui DescricaoRecebimento diferente de ABERTO sem ValorPago informado.`
     };
-    current.installmentsCount += 1;
-    current.totalAmountCents += installment.finalAmountCents;
-    grouped.set(installment.planType, current);
+  }
+
+  const paidValue = toCents(item.ValorPago);
+  if (paidValue.warning) {
+    return {
+      status: "invalid",
+      baseAmountCents,
+      paidAmountCents: null,
+      description,
+      reason: `A parcela ${installmentCode} possui ValorPago invalido.`
+    };
+  }
+
+  if (!baseValue.warning && paidValue.cents >= baseAmountCents) {
+    return {
+      status: "paid",
+      baseAmountCents,
+      paidAmountCents: paidValue.cents,
+      description
+    };
   }
 
   return {
-    paymentStatus: "unpaid",
-    paymentStatusSource: "legacy_contract",
-    message: payload.message || "Associado possui mensalidades em aberto.",
-    installmentsCount: installments.length,
-    totalPendingAmountCents: installments.reduce((sum, installment) => sum + installment.finalAmountCents, 0),
-    totalPaidAmountCents: 0,
-    totalsByPlan: [...grouped.entries()].map(([planType, total]) => ({ planType, ...total })),
-    installments,
-    warnings,
-    paginationComplete: true,
-    currentPage: null,
-    totalPages: null,
-    totalCount: null,
-    pageSize: null
+    status: "invalid",
+    baseAmountCents,
+    paidAmountCents: paidValue.cents,
+    description,
+    reason: `A parcela ${installmentCode} possui DescricaoRecebimento diferente de ABERTO, mas ValorPago e menor que Valor.`
   };
 }
 
-function analyzePaginatedPayload(
-  payload: NormalizedPaginatedPayload,
-  targetInstallmentId?: string,
+function toInstallment(
+  item: z.infer<typeof MonthlyApiDataItemSchema>,
+  installmentCode: string,
+  state: ItemFinancialState,
+  warnings: string[],
   fallbackDueDate?: string,
-  historyComplete = false
+  isTarget = false
+): MonthlyInstallment {
+  const finalValue = toCents(item.ValorFinal);
+  if (finalValue.warning && hasValue(item.ValorFinal)) {
+    warnings.push(`ValorFinal da parcela ${installmentCode}: ${finalValue.warning}`);
+  }
+
+  return {
+    userCode: optionalText(item.cod_usuario),
+    installmentCode,
+    dueDate:
+      optionalText(item.vencimento) ??
+      optionalText(item.DataVencimento) ??
+      (isTarget ? optionalText(fallbackDueDate) : undefined),
+    installmentType: optionalText(item.tipo_parcela) ?? optionalText(item.DescricaoParcela),
+    situation: optionalText(item.DescricaoRecebimento),
+    paymentDescription: optionalText(item.DescricaoRecebimento),
+    paymentDate: optionalText(item.DataPagamento),
+    paidAmountCents: state.status === "paid" ? state.paidAmountCents : null,
+    baseAmountCents: state.baseAmountCents,
+    fineAmountCents: monetaryValue(item.Multa ?? item.ValorMultaJuros, "Multa", warnings),
+    interestAmountCents: monetaryValue(item.Juros, "Juros", warnings),
+    additionalAmountCents: monetaryValue(item.AcrescimoAvulso, "AcrescimoAvulso", warnings),
+    discountAmountCents: monetaryValue(
+      item.DescontoAvulso ?? item.ValorDescontoAvulso,
+      "DescontoAvulso",
+      warnings
+    ),
+    finalAmountCents: finalValue.warning ? state.baseAmountCents : finalValue.cents,
+    planType: optionalText(item.Tipo_plano) ?? optionalText(item.DescricaoParcela) ?? "Nao informado",
+    observation: optionalText(item.Observacao) ?? optionalText(item.DescricaoPagamento)
+  };
+}
+
+function analyzeNormalizedPayload(
+  payload: NormalizedPaginatedPayload,
+  targetInstallmentId: string,
+  fallbackDueDate: string | undefined,
+  paginationComplete: boolean
 ): MonthlyAnalysis {
-  if (!targetInstallmentId) {
+  const targetId = targetInstallmentId.trim();
+  const targetItem = payload.items.find(
+    (item) => installmentCodeFromApiItem(item) === targetId
+  );
+
+  if (!targetItem) {
+    if (!paginationComplete) {
+      throw new MonthlyResponseError(
+        `A consulta paginada do ERP nao foi concluida e a parcela alvo ${targetId} ainda nao foi localizada.`
+      );
+    }
     throw new MonthlyResponseError(
-      "A análise da API de mensalidades exige a parcela de destino."
+      `A parcela alvo ${targetId} nao foi localizada apos a consulta das paginas informadas pelo ERP.`
     );
   }
 
-  if (historyComplete) {
-    return analyzeCompleteHistoryPayload(payload, targetInstallmentId, fallbackDueDate);
+  const targetState = classifyFinancialState(targetItem, targetId, true);
+  if (targetState.status === "invalid") {
+    throw new MonthlyResponseError(
+      targetState.reason ?? `A parcela ${targetId} possui estado financeiro invalido.`
+    );
   }
 
-  const matched = payload.items.find(
-    (item) => installmentCodeFromApiItem(item) === String(targetInstallmentId).trim()
-  );
-  if (!matched) {
-    const paginationComplete =
-      payload.totalPages === 0 || payload.totalPages === 1;
-    if (!paginationComplete) {
-      throw new MonthlyResponseError(
-        "A consulta paginada do ERP nao foi concluida; a fatura alvo nao pode ser classificada como paga."
-      );
-    }
-    return {
-      paymentStatus: "unpaid",
-      paymentStatusSource: "erp_open_invoice",
-      message: payload.message || "Parcela não localizada para o associado informado.",
-      installmentsCount: 0,
-      totalPendingAmountCents: 0,
-      totalPaidAmountCents: 0,
-      totalsByPlan: [],
-      installments: [],
-      warnings: [],
-      paginationComplete: true,
-      currentPage: payload.currentPage,
-      totalPages: payload.totalPages,
-      totalCount: payload.totalCount,
-      pageSize: payload.pageSize
-    };
-  }
-
-  const explicitlyPaid = isExplicitlyPaid(matched);
-  const paidValue = toCents(matched.ValorPago);
-  const baseAmountCents = requiredApiValorCents(matched.Valor, String(targetInstallmentId).trim());
-  const finalAmount = toCents(matched.ValorFinal);
-  if (explicitlyPaid && paidValue.warning) {
-    throw new MonthlyResponseError(`A parcela ${targetInstallmentId} possui ValorPago inválido.`);
-  }
-
-  const description = optionalText(matched.DescricaoRecebimento);
-  const installment: MonthlyInstallment = {
-    userCode: optionalText(matched.cod_usuario),
-    installmentCode: String(targetInstallmentId).trim(),
-    dueDate: optionalText(matched.vencimento) ?? optionalText(matched.DataVencimento) ?? optionalText(fallbackDueDate),
-    installmentType: optionalText(matched.tipo_parcela) ?? optionalText(matched.DescricaoParcela),
-    situation: description,
-    paymentDescription: description,
-    paymentDate: optionalText(matched.DataPagamento),
-    baseAmountCents,
-    fineAmountCents: monetaryValue(matched.Multa ?? matched.ValorMultaJuros, "Multa", []),
-    interestAmountCents: monetaryValue(matched.Juros, "Juros", []),
-    additionalAmountCents: monetaryValue(matched.AcrescimoAvulso, "AcrescimoAvulso", []),
-    discountAmountCents: monetaryValue(matched.DescontoAvulso ?? matched.ValorDescontoAvulso, "DescontoAvulso", []),
-    paidAmountCents: explicitlyPaid ? paidValue.cents : null,
-    finalAmountCents: finalAmount.warning ? baseAmountCents : finalAmount.cents,
-    planType: optionalText(matched.Tipo_plano) ?? optionalText(matched.DescricaoParcela) ?? "Não informado",
-    observation: optionalText(matched.Observacao) ?? optionalText(matched.DescricaoPagamento)
-  };
-
-  return {
-    paymentStatus: explicitlyPaid ? "paid" : "unpaid",
-    paymentStatusSource: explicitlyPaid ? "erp_explicit" : "erp_open_invoice",
-    message: payload.message || (explicitlyPaid ? "Parcela paga conforme o ERP." : "Parcela localizada como pendente."),
-    installmentsCount: 1,
-    totalPendingAmountCents: explicitlyPaid ? 0 : installment.baseAmountCents,
-    totalPaidAmountCents: explicitlyPaid ? paidValue.cents : 0,
-    totalsByPlan: explicitlyPaid
-      ? []
-      : [{ planType: installment.planType, installmentsCount: 1, totalAmountCents: installment.baseAmountCents }],
-    installments: [installment],
-    warnings: finalAmount.warning && hasValue(matched.ValorFinal)
-      ? [`ValorFinal da parcela ${targetInstallmentId}: ${finalAmount.warning}`]
-      : [],
-    paginationComplete: payload.totalPages === 0 || payload.totalPages === 1,
-    currentPage: payload.currentPage,
-    totalPages: payload.totalPages,
-    totalCount: payload.totalCount,
-    pageSize: payload.pageSize
-  };
-}
-
-function analyzeCompleteHistoryPayload(
-  payload: NormalizedPaginatedPayload,
-  targetInstallmentId: string,
-  fallbackDueDate?: string
-): MonthlyAnalysis {
   const warnings: string[] = [];
   const seen = new Set<string>();
   const installments: MonthlyInstallment[] = [];
-  const normalizedTargetId = targetInstallmentId.trim();
 
   for (const item of payload.items) {
     const installmentCode = installmentCodeFromApiItem(item);
@@ -533,72 +376,69 @@ function analyzeCompleteHistoryPayload(
     }
     seen.add(installmentCode);
 
-    const explicitlyPaid = isExplicitlyPaid(item);
-    const paidValue = toCents(item.ValorPago);
-    if (explicitlyPaid && paidValue.warning) {
-      throw new MonthlyResponseError(`A parcela ${installmentCode} possui ValorPago inválido.`);
-    }
+    const isTarget = installmentCode === targetId;
+    const state = isTarget
+      ? targetState
+      : classifyFinancialState(item, installmentCode, false);
 
-    const isTarget = installmentCode === normalizedTargetId;
-    const baseValue = toCents(item.Valor);
-    if (isTarget && (!hasValue(item.Valor) || baseValue.warning)) {
-      throw new MonthlyResponseError(
-        `A parcela ${installmentCode} ${!hasValue(item.Valor) ? "não possui Valor informado pelo ERP" : "possui Valor inválido"}.`
+    if (!isTarget && state.status === "invalid") {
+      warnings.push(
+        state.reason ?? `A parcela ${installmentCode} possui estado financeiro invalido.`
       );
     }
-    if (!isTarget && baseValue.warning && hasValue(item.Valor)) {
-      warnings.push(`Valor da parcela ${installmentCode}: ${baseValue.warning}`);
-    }
 
-    const finalValue = toCents(item.ValorFinal);
-    if (finalValue.warning && hasValue(item.ValorFinal)) {
-      warnings.push(`ValorFinal da parcela ${installmentCode}: ${finalValue.warning}`);
-    }
-
-    const baseAmountCents = baseValue.warning ? 0 : baseValue.cents;
-    const description = optionalText(item.DescricaoRecebimento);
-    installments.push({
-      userCode: optionalText(item.cod_usuario),
-      installmentCode,
-      dueDate: optionalText(item.vencimento) ?? optionalText(item.DataVencimento) ?? (isTarget ? optionalText(fallbackDueDate) : undefined),
-      installmentType: optionalText(item.tipo_parcela) ?? optionalText(item.DescricaoParcela),
-      situation: description,
-      paymentDescription: description,
-      paymentDate: optionalText(item.DataPagamento),
-      baseAmountCents,
-      fineAmountCents: monetaryValue(item.Multa ?? item.ValorMultaJuros, "Multa", warnings),
-      interestAmountCents: monetaryValue(item.Juros, "Juros", warnings),
-      additionalAmountCents: monetaryValue(item.AcrescimoAvulso, "AcrescimoAvulso", warnings),
-      discountAmountCents: monetaryValue(item.DescontoAvulso ?? item.ValorDescontoAvulso, "DescontoAvulso", warnings),
-      finalAmountCents: finalValue.warning ? baseAmountCents : finalValue.cents,
-      planType: optionalText(item.Tipo_plano) ?? optionalText(item.DescricaoParcela) ?? "Não informado",
-      observation: optionalText(item.Observacao) ?? optionalText(item.DescricaoPagamento),
-      paidAmountCents: explicitlyPaid ? paidValue.cents : null
-    });
+    installments.push(
+      toInstallment(
+        item,
+        installmentCode,
+        state,
+        warnings,
+        fallbackDueDate,
+        isTarget
+      )
+    );
   }
 
-  const target = installments.find((item) => item.installmentCode === normalizedTargetId);
-  const pendingInstallments = installments.filter((item) => item.paidAmountCents === null);
+  const pendingInstallments = installments.filter(
+    (installment) =>
+      normalizedReceiptDescription(installment.paymentDescription) === OPEN_RECEIPT_DESCRIPTION
+  );
   const grouped = new Map<string, { installmentsCount: number; totalAmountCents: number }>();
   for (const installment of pendingInstallments) {
-    const current = grouped.get(installment.planType) ?? { installmentsCount: 0, totalAmountCents: 0 };
+    const current = grouped.get(installment.planType) ?? {
+      installmentsCount: 0,
+      totalAmountCents: 0
+    };
     current.installmentsCount += 1;
     current.totalAmountCents += installment.baseAmountCents;
     grouped.set(installment.planType, current);
   }
 
-  const targetIsPaid = target?.paidAmountCents !== null && target?.paidAmountCents !== undefined;
+  const targetPaid = targetState.status === "paid";
   return {
-    paymentStatus: targetIsPaid ? "paid" : "unpaid",
-    paymentStatusSource: targetIsPaid ? "erp_explicit" : "erp_open_invoice",
-    message: payload.message || (targetIsPaid ? "Parcela paga conforme o historico do ERP." : "Parcela em aberto conforme o historico do ERP."),
+    paymentStatus: targetPaid ? "paid" : "unpaid",
+    paymentStatusSource: targetPaid ? "erp_explicit" : "erp_open_invoice",
+    message:
+      payload.message ||
+      (targetPaid
+        ? "Parcela paga conforme DescricaoRecebimento e ValorPago do ERP."
+        : "Parcela em aberto conforme DescricaoRecebimento do ERP."),
     installmentsCount: installments.length,
-    totalPendingAmountCents: pendingInstallments.reduce((sum, installment) => sum + installment.baseAmountCents, 0),
-    totalPaidAmountCents: installments.reduce((sum, installment) => sum + (installment.paidAmountCents ?? 0), 0),
-    totalsByPlan: [...grouped.entries()].map(([planType, total]) => ({ planType, ...total })),
+    totalPendingAmountCents: pendingInstallments.reduce(
+      (sum, installment) => sum + installment.baseAmountCents,
+      0
+    ),
+    totalPaidAmountCents: installments.reduce(
+      (sum, installment) => sum + (installment.paidAmountCents ?? 0),
+      0
+    ),
+    totalsByPlan: [...grouped.entries()].map(([planType, total]) => ({
+      planType,
+      ...total
+    })),
     installments,
     warnings,
-    paginationComplete: payload.totalPages === 0 || payload.totalPages === 1,
+    paginationComplete,
     currentPage: payload.currentPage,
     totalPages: payload.totalPages,
     totalCount: payload.totalCount,
@@ -610,31 +450,43 @@ export function analyzeMonthlyResponse(
   input: unknown,
   targetInstallmentId?: string,
   fallbackDueDate?: string,
-  options?: { historyComplete?: boolean }
+  _options?: { historyComplete?: boolean }
 ): MonthlyAnalysis {
-  const normalized = normalizeMonthlyPayload(input);
-  if (normalized.source === "paginated") {
-    return analyzePaginatedPayload(normalized, targetInstallmentId, fallbackDueDate, options?.historyComplete === true);
+  const targetId = String(targetInstallmentId ?? "").trim();
+  if (!targetId) {
+    throw new MonthlyResponseError(
+      "A analise da API de mensalidades exige a parcela alvo."
+    );
   }
-  return analyzeLegacyPayload(normalized, targetInstallmentId, fallbackDueDate);
+
+  const payload = normalizeMonthlyPayload(input);
+  const paginationComplete = payload.totalPages === 0 || payload.totalPages === 1;
+  return analyzeNormalizedPayload(
+    payload,
+    targetId,
+    fallbackDueDate,
+    paginationComplete
+  );
 }
 
 export function analyzeMonthlyResponses(
   inputs: unknown[],
   targetInstallmentId: string,
   fallbackDueDate?: string,
-  options?: { historyComplete?: boolean }
+  _options?: { historyComplete?: boolean }
 ): MonthlyAnalysis {
   if (inputs.length === 0) {
-    throw new MonthlyResponseError("Nenhuma página do ERP foi informada para análise.");
+    throw new MonthlyResponseError("Nenhuma pagina do ERP foi informada para analise.");
   }
 
-  const normalizedPages = inputs.map((input) => normalizeMonthlyPayload(input));
-  if (normalizedPages.some((page) => page.source !== "paginated")) {
-    throw new MonthlyResponseError("A consolidação paginada exige respostas do novo contrato do ERP.");
+  const targetId = String(targetInstallmentId ?? "").trim();
+  if (!targetId) {
+    throw new MonthlyResponseError(
+      "A analise da API de mensalidades exige a parcela alvo."
+    );
   }
 
-  const pages = normalizedPages as NormalizedPaginatedPayload[];
+  const pages = inputs.map((input) => normalizeMonthlyPayload(input));
   const first = pages[0]!;
   const expectedTotalPages = first.totalPages;
   const expectedTotalCount = first.totalCount;
@@ -648,46 +500,40 @@ export function analyzeMonthlyResponses(
       page.totalCount !== expectedTotalCount ||
       page.pageSize !== expectedPageSize
     ) {
-      throw new MonthlyResponseError("As páginas do ERP possuem metadados incompatíveis entre si.");
+      throw new MonthlyResponseError(
+        "As paginas do ERP possuem metadados incompativeis entre si."
+      );
     }
-    if (page.currentPage == null || seenPages.has(page.currentPage)) {
-      throw new MonthlyResponseError("As páginas do ERP estão duplicadas ou sem identificação válida.");
+    if (seenPages.has(page.currentPage)) {
+      throw new MonthlyResponseError(
+        "As paginas do ERP estao duplicadas ou sem identificacao valida."
+      );
     }
     seenPages.add(page.currentPage);
     mergedItems.push(...page.items);
   }
 
-  const paginationComplete = expectedTotalPages === 0
-    ? seenPages.size === 1 && seenPages.has(1)
-    : seenPages.size === expectedTotalPages &&
-      Array.from({ length: expectedTotalPages }, (_, index) => index + 1).every((page) => seenPages.has(page));
+  const paginationComplete =
+    expectedTotalPages === 0
+      ? seenPages.size === 1 && seenPages.has(1)
+      : seenPages.size === expectedTotalPages &&
+        Array.from({ length: expectedTotalPages }, (_, index) => index + 1).every(
+          (page) => seenPages.has(page)
+        );
 
   const merged: NormalizedPaginatedPayload = {
-    source: "paginated",
     message: pages.find((page) => page.message)?.message,
     items: mergedItems,
-    currentPage: paginationComplete ? expectedTotalPages : Math.max(...seenPages),
+    currentPage: Math.max(...seenPages),
     totalPages: expectedTotalPages,
     totalCount: expectedTotalCount,
     pageSize: expectedPageSize
   };
 
-  if (!paginationComplete) {
-    const targetFound = mergedItems.some(
-      (item) => installmentCodeFromApiItem(item) === String(targetInstallmentId).trim()
-    );
-    if (!targetFound) {
-      throw new MonthlyResponseError(
-        "A consulta paginada do ERP nao foi concluida; a fatura alvo nao pode ser classificada como paga."
-      );
-    }
-  }
-
-  const result = analyzePaginatedPayload(
+  return analyzeNormalizedPayload(
     merged,
-    targetInstallmentId,
+    targetId,
     fallbackDueDate,
-    options?.historyComplete === true
+    paginationComplete
   );
-  return { ...result, paginationComplete };
 }
