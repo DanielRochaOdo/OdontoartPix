@@ -40,15 +40,13 @@ Exemplo de diretório:
 /opt/odontoartpix
 ```
 
-No diretório da aplicação:
+No diretório da aplicação, instale as dependências:
 
 ```bash
 npm ci
-npm run db:migrate
-npm run build
 ```
 
-Todos os três comandos devem terminar sem erro antes de instalar os serviços.
+As migrations e o build devem usar o ambiente real preparado na etapa seguinte.
 
 ## 3. Arquivos de ambiente e preflight
 
@@ -70,10 +68,18 @@ sudo chmod 640 /etc/odontoartpix/app.env /etc/odontoartpix/worker.env
 
 Nunca grave tokens/senhas no repositório.
 
-Antes de iniciar os serviços, carregue as variáveis reais do ambiente e execute:
+Aplique migrations com o arquivo de ambiente explícito:
 
 ```bash
-npm run preflight:production
+node --env-file=/etc/odontoartpix/app.env \
+  ./node_modules/.bin/tsx scripts/migrate-local-db.ts
+```
+
+Antes de iniciar os serviços, execute o preflight com o mesmo ambiente:
+
+```bash
+node --env-file=/etc/odontoartpix/app.env \
+  ./node_modules/.bin/tsx scripts/preflight-production.ts
 ```
 
 O preflight não imprime senhas/tokens e valida:
@@ -93,6 +99,42 @@ PROCESSING_ALLOW_SCHEDULED_SYNC=false
 ```
 
 Se o preflight falhar, não prossiga com a publicação.
+
+### Build com o ambiente de produção
+
+Não execute o binário do Next.js como filho direto de `node --env-file=...`. O Next/Turbopack cria Worker Threads durante o build e flags do processo Node podem ser herdadas pelos workers; `--env-file` não é uma opção válida de Worker Thread e pode causar `ERR_WORKER_INVALID_EXEC_ARGV`.
+
+Carregue o `.env` de produção para um novo processo `npm` sem herdar `--env-file` em `process.execArgv`:
+
+```bash
+node <<'NODE'
+const fs = require('node:fs');
+const { parseEnv } = require('node:util');
+const { spawnSync } = require('node:child_process');
+
+const envFile = '/etc/odontoartpix/app.env';
+const fileEnv = parseEnv(fs.readFileSync(envFile, 'utf8'));
+const env = { ...process.env, ...fileEnv };
+
+if (env.DATABASE_NAME !== 'odontoart_pix') {
+  throw new Error(`DATABASE_NAME inesperado para build de producao: ${env.DATABASE_NAME}`);
+}
+if (env.AUTH_COOKIE_SECURE !== 'true') {
+  throw new Error('AUTH_COOKIE_SECURE deve ser true no build de producao.');
+}
+
+const result = spawnSync('/usr/bin/npm', ['run', 'build'], {
+  cwd: process.cwd(),
+  env,
+  stdio: 'inherit'
+});
+
+if (result.error) throw result.error;
+process.exit(result.status ?? 1);
+NODE
+```
+
+O ambiente já presente no processo filho tem precedência sobre os arquivos `.env*` que o Next.js possa descobrir no checkout.
 
 ## 4. Instalar a aplicação web sem publicar
 
@@ -194,15 +236,7 @@ Somente após a validação do candidato:
 
 1. mescle o PR aprovado em `main`;
 2. atualize o código do servidor para o commit de `main`;
-3. execute novamente:
-
-```bash
-npm ci
-npm run db:migrate
-npm run preflight:production
-npm run build
-```
-
+3. execute novamente `npm ci`, migrations, preflight e o build com o mesmo procedimento seguro da etapa 3;
 4. reinicie a aplicação:
 
 ```bash
