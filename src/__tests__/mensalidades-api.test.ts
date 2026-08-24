@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   __test__parseRetryAfterMs,
   buildMensalidadesRequestUrl,
-  consultMonthlyByAssociatedCode
+  consultMonthlyByAssociatedCode,
+  ErpError
 } from "@/lib/mensalidades-api";
 
 vi.mock("@/lib/processing-config", () => ({
@@ -92,7 +93,35 @@ describe("mensalidades-api helpers", () => {
     expect(result.analysis.paginationComplete).toBe(false);
   });
 
-  it("percorre ate TotalPages quando a parcela alvo nao aparece e nao infere pagamento", async () => {
+  it("classifica ABERTO como unpaid sem consultar paginas desnecessarias", async () => {
+    process.env.MENSALIDADES_API_BASE_URL = "https://erp.exemplo.com";
+    process.env.MENSALIDADES_API_TOKEN = "token-123";
+
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      codigo: 1,
+      dados: {
+        CurrentPage: 1,
+        TotalPages: 4,
+        TotalCount: 400,
+        PageSize: 200,
+        Data: [{
+          Id: "55",
+          Valor: 100,
+          DescricaoRecebimento: "ABERTO"
+        }]
+      },
+      erros: null
+    }), { status: 200 }));
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await consultMonthlyByAssociatedCode("ASSOC-77", "55");
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result.analysis.paymentStatus).toBe("unpaid");
+  });
+
+  it("percorre ate TotalPages e retorna erro quando a parcela alvo nao aparece", async () => {
     process.env.MENSALIDADES_API_BASE_URL = "https://erp.exemplo.com";
     process.env.MENSALIDADES_API_TOKEN = "token-123";
 
@@ -133,18 +162,58 @@ describe("mensalidades-api helpers", () => {
 
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await consultMonthlyByAssociatedCode("ASSOC-77", "55");
+    let caught: unknown;
+    try {
+      await consultMonthlyByAssociatedCode("ASSOC-77", "55");
+    } catch (error) {
+      caught = error;
+    }
 
     expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect(result.analysis.paginationComplete).toBe(true);
-    expect(result.analysis.paymentStatus).toBe("unpaid");
+    expect(caught).toBeInstanceOf(ErpError);
+    expect(caught).toMatchObject({
+      code: "ERP_INVALID_RESPONSE",
+      retryable: false
+    });
+    expect((caught as Error).message).toContain("parcela alvo 55 nao foi localizada");
+  });
+
+  it("rejeita pagamento parcial mesmo com DescricaoRecebimento diferente de ABERTO", async () => {
+    process.env.MENSALIDADES_API_BASE_URL = "https://erp.exemplo.com";
+    process.env.MENSALIDADES_API_TOKEN = "token-123";
+
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      codigo: 1,
+      dados: {
+        CurrentPage: 1,
+        TotalPages: 1,
+        TotalCount: 1,
+        PageSize: 100,
+        Data: [{
+          Id: "55",
+          Valor: 100,
+          ValorPago: 90,
+          DescricaoRecebimento: "PIX"
+        }]
+      },
+      erros: null
+    }), { status: 200 }));
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      consultMonthlyByAssociatedCode("ASSOC-77", "55")
+    ).rejects.toMatchObject({
+      code: "ERP_INVALID_RESPONSE",
+      retryable: false
+    });
   });
 
   it("interpreta Retry-After em segundos", () => {
     expect(__test__parseRetryAfterMs("12")).toBe(12000);
   });
 
-  it("retorna null para Retry-After inválido", () => {
+  it("retorna null para Retry-After invalido", () => {
     expect(__test__parseRetryAfterMs("invalido")).toBeNull();
   });
 });
