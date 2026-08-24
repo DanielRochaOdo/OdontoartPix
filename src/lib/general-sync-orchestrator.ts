@@ -27,7 +27,7 @@ export type LocalGeneralSyncCycleResult =
       claim: ClaimedGeneralSyncRun;
       reconcile: LocalGeneralSyncReconcileResult;
       advance: LocalGeneralSyncAdvanceResult | null;
-      released: boolean;
+      released: true;
     };
 
 const RECONCILE_ACTIONS_THAT_MAY_ADVANCE = new Set<LocalGeneralSyncReconcileResult["action"]>([
@@ -63,55 +63,73 @@ export async function runLocalGeneralSyncCycle(input?: {
     };
   }
 
+  let reconcile: LocalGeneralSyncReconcileResult | null = null;
+  let advance: LocalGeneralSyncAdvanceResult | null = null;
   let operationError: unknown = null;
-  let released = false;
 
   try {
-    const reconcile = await reconcileClaimedLocalGeneralSyncRun({
+    reconcile = await reconcileClaimedLocalGeneralSyncRun({
       runId: claim.id,
       workerId
     });
 
-    const advance = RECONCILE_ACTIONS_THAT_MAY_ADVANCE.has(reconcile.action)
-      ? await advanceClaimedLocalGeneralSyncRun({
-          runId: claim.id,
-          workerId
-        })
-      : null;
-
-    return {
-      action: "claimed",
-      workerId,
-      runId: claim.id,
-      claim,
-      reconcile,
-      advance,
-      released: false
-    };
-  } catch (error) {
-    operationError = error;
-    throw error;
-  } finally {
-    try {
-      released = await releaseLocalGeneralSyncRun({
+    if (RECONCILE_ACTIONS_THAT_MAY_ADVANCE.has(reconcile.action)) {
+      advance = await advanceClaimedLocalGeneralSyncRun({
         runId: claim.id,
         workerId
       });
-
-      if (!released && operationError == null) {
-        throw new Error("GENERAL_SYNC_RELEASE_FAILED");
-      }
-    } catch (releaseError) {
-      if (operationError != null) {
-        console.error("[GENERAL_SYNC_RELEASE_AFTER_ERROR_FAILED]", {
-          runId: claim.id,
-          workerId,
-          message: releaseError instanceof Error ? releaseError.message : String(releaseError)
-        });
-        return;
-      }
-
-      throw releaseError;
     }
+  } catch (error) {
+    operationError = error;
   }
+
+  let released = false;
+  let releaseError: unknown = null;
+
+  try {
+    released = await releaseLocalGeneralSyncRun({
+      runId: claim.id,
+      workerId
+    });
+  } catch (error) {
+    releaseError = error;
+  }
+
+  if (operationError != null) {
+    if (releaseError != null || !released) {
+      console.error("[GENERAL_SYNC_RELEASE_AFTER_ERROR_FAILED]", {
+        runId: claim.id,
+        workerId,
+        message:
+          releaseError instanceof Error
+            ? releaseError.message
+            : releaseError != null
+              ? String(releaseError)
+              : "O lock nao foi liberado pelo worker atual."
+      });
+    }
+    throw operationError;
+  }
+
+  if (releaseError != null) {
+    throw releaseError;
+  }
+
+  if (!released) {
+    throw new Error("GENERAL_SYNC_RELEASE_FAILED");
+  }
+
+  if (!reconcile) {
+    throw new Error("GENERAL_SYNC_RECONCILE_MISSING_RESULT");
+  }
+
+  return {
+    action: "claimed",
+    workerId,
+    runId: claim.id,
+    claim,
+    reconcile,
+    advance,
+    released: true
+  };
 }
