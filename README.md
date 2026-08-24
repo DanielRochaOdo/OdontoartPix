@@ -1,176 +1,245 @@
 # OdontoartPix
 
-Sistema web para importacao de campanhas, consulta de mensalidades e consolidacao de pendencias financeiras.
+Sistema web para importação de campanhas, consulta de mensalidades no ERP e consolidação financeira por parcela-alvo.
 
-## Fluxo operacional
+Esta branch migra o runtime operacional para **PostgreSQL próprio + autenticação local + worker local**. Supabase e GitHub Actions não fazem parte do caminho ativo de autenticação, banco ou processamento desta arquitetura.
 
-1. A importacao valida o arquivo e grava campanha, lote, associados e vinculos com status `pending`.
-2. A importacao nao consulta o ERP.
-3. Uma acao explicita do usuario — Dashboard, campanha, lote, associado ou reprocessamento de erros — grava o trabalho no PostgreSQL.
-4. A API web apenas cria/altera o job e acorda o worker duravel no GitHub Actions. O ERP nao e processado dentro da request da Vercel.
-5. Em producao, o processamento pesado roda diretamente no runner do GitHub Actions.
-6. Cada resposta do ERP e persistida em `campaign_batch_members`, `member_installments`, `member_plan_totals` e `consultation_logs`.
-7. Dashboard e indicadores acompanham mudancas por Supabase Realtime; nao existe polling continuo de Functions Vercel para descobrir progresso.
-8. Dashboard, lista, campanha e lote leem metricas canonicas calculadas no PostgreSQL.
-
-## Contrato da API de mensalidades
-
-A consulta e server-side por `GET`:
+## Arquitetura
 
 ```text
-/api/Mensalidades?token=...&CodigoAssociadoEmpresa=...&HistoricoCompleto=true&limite=200&pagina=1
+Navegador
+   ↓
+Next.js
+   ├─ autenticação local por cookie opaco + tabela sessions
+   ├─ APIs de comando/leitura
+   └─ SSE /api/processing/events
+          ↑
+PostgreSQL próprio
+   ├─ dados operacionais
+   ├─ fila processing_jobs
+   ├─ general_sync_runs
+   ├─ processing_settings
+   └─ LISTEN/NOTIFY
+          ↑
+worker local (systemd)
+   ↓
+ERP de mensalidades
 ```
 
-Regras:
+As requisições web **não executam processamento pesado**. Ações do usuário alteram o estado/fila no PostgreSQL e o worker local consome esse trabalho.
 
-- a consulta usa `HistoricoCompleto=true` e retorna parcelas pagas e abertas;
-- a consulta usa `limite=200` e avanca pagina a pagina ate localizar a parcela-alvo; ao encontra-la, nao solicita paginas posteriores;
-- se a parcela-alvo nao for localizada, a consulta segue ate `TotalPages`;
-- parcela com `DescricaoRecebimento=ABERTO` representa pendencia;
-- uma parcela so e paga quando `ValorPago` e `DescricaoRecebimento` estao preenchidos e a descricao e diferente de `ABERTO`;
-- `DataPagamento` da parcela-alvo e persistida para exibicao na lista de associados;
-- no dashboard, valores, contagens e status usam somente a parcela `target_installment_id` cadastrada no lote;
-- o total pendente e a soma de `ValorFinal` da parcela-alvo nao paga;
-- os valores de `DescricaoRecebimento` sao persistidos para o grafico de recebimentos do dashboard;
-- as parcelas sao agrupadas por `Tipo_plano`;
-- timeout, falha HTTP, rede ou payload invalido sao erros e nao podem virar pagamento confirmado;
-- token, `CodigoAssociadoEmpresa`, CPF completo, Pix e link de cartao nao devem aparecer nos logs;
-- o quarto grafico do dashboard agrupa somente parcelas-alvo pagas por `DescricaoRecebimento` e respeita os filtros de campanha/lote; sem filtros, considera todo o sistema ativo.
+## Regras financeiras canônicas
 
-## Variaveis
-
-Copie `.env.example` para `.env.local` e configure as variaveis necessarias.
-
-### Nova conta Vercel
-
-A Vercel e apenas camada web/control plane. Configure as variaveis normais da aplicacao e, para que as acoes do usuario possam acordar o worker, configure tambem:
+A consulta ao ERP usa:
 
 ```text
-GITHUB_ACTIONS_TOKEN
-GITHUB_ACTIONS_REPO_OWNER=DanielRochaOdo
-GITHUB_ACTIONS_REPO_NAME=OdontoartPix
-GITHUB_ACTIONS_WORKFLOW_ID=process-batches.yml
-GITHUB_ACTIONS_REF=main
+GET /api/Mensalidades
+  ?token=...
+  &CodigoAssociadoEmpresa=...
+  &HistoricoCompleto=true
+  &limite=200
+  &pagina=1
 ```
 
-`GITHUB_ACTIONS_TOKEN` deve possuir permissao para disparar GitHub Actions no repositorio. Nao crie Vercel Cron para `/api/cron/process-batches`: essa rota esta deliberadamente desativada e retorna HTTP 410.
+Regras obrigatórias:
 
-### GitHub Actions - environment Production
+- sempre consultar com `HistoricoCompleto=true`;
+- usar páginas de 200 registros;
+- parar a paginação assim que `target_installment_id` for encontrada;
+- se a parcela-alvo não for encontrada, continuar até `TotalPages`;
+- somente `target_installment_id` define o estado financeiro do vínculo;
+- ausência da parcela-alvo **não confirma pagamento**;
+- pagamento confirmado somente quando `ValorPago` está preenchido, `DescricaoRecebimento` está preenchida e é diferente de `ABERTO`;
+- `Situacao` isoladamente nunca confirma pagamento;
+- `Valor` é a fonte do valor da parcela e do total pendente;
+- `ValorPago` é a fonte do valor recebido;
+- `ValorFinal` permanece apenas como informação auxiliar da parcela;
+- `DataPagamento` e `DescricaoRecebimento` são persistidos por parcela;
+- falha técnica, retry ou reabertura de processamento não apaga a última verdade financeira confirmada pelo ERP.
 
-O worker duravel exige obrigatoriamente:
+O Dashboard usa somente a parcela-alvo para totais, pagos, pendentes, Pix e agrupamento por `DescricaoRecebimento`.
+
+## PostgreSQL próprio
+
+Copie `.env.example` para o arquivo de ambiente do processo e configure:
 
 ```text
-NEXT_PUBLIC_SUPABASE_URL
-SUPABASE_SERVICE_ROLE_KEY
-MENSALIDADES_API_BASE_URL
-MENSALIDADES_API_TOKEN
-PROCESSING_SYSTEM_USER_ID
+DATABASE_HOST
+DATABASE_PORT
+DATABASE_NAME
+DATABASE_USER
+DATABASE_PASSWORD
+DATABASE_SSL
 ```
 
-O workflow falha se qualquer segredo estiver ausente. Nao existe fallback para processamento pesado na Vercel.
-
-Os parametros operacionais de concorrencia, block size, tentativas, buffers e timeouts continuam sendo carregados de `processing_settings`, configurados pelo modulo **Configuracoes**.
-
-## Banco
-
-Aplique as migrations em ordem. Alem das migrations de fila e verdade financeira, a arquitetura orientada a eventos depende de:
-
-```text
-090_processing_realtime_event_bus.sql
-091_event_driven_processing_scheduler.sql
-092_route_scheduled_sync_v2_to_finish_based_v3.sql
-```
-
-A migration `090` cria um sinal Realtime sem dados de associados. O navegador recebe somente a mudanca de revisao e consulta snapshots agregados diretamente no Supabase autenticado.
-
-A migration `091` usa Supabase Cron (`pg_cron`), `pg_net` e Vault. O cron de banco executa uma verificacao interna leve a cada minuto, mas **nao chama Vercel nem inicia GitHub Actions enquanto `next_run_at` nao tiver vencido**.
-
-Para habilitar o disparo automatico, armazene no **Supabase Vault** um token GitHub com permissao de Actions usando exatamente o nome:
-
-```text
-odontoartpix_github_actions_token
-```
-
-Exemplo no SQL Editor, substituindo apenas o primeiro parametro localmente — nunca versione o valor:
-
-```sql
-select vault.create_secret(
-  'SEU_TOKEN_GITHUB',
-  'odontoartpix_github_actions_token',
-  'Dispara o worker duravel do OdontoartPix quando next_run_at vencer'
-);
-```
-
-O token fica criptografado no Vault e e lido somente pela funcao de dispatch do banco.
-
-## Scheduler orientado ao fim da onda
-
-O automatico nao possui mais cron periodico no GitHub Actions.
-
-A regra e:
-
-```text
-fim real da ultima onda geral
-        +
-intervalo configurado (1, 5, 30, 60 ou 120 min)
-        =
-next_run_at
-```
-
-Exemplo: se o intervalo for 30 minutos e uma onda terminar as 10:18, a proxima fica elegivel as 10:48. Uma onda manual do Dashboard tambem reinicia esse relogio.
-
-A cada minuto o Supabase verifica apenas se `next_run_at <= now()`. Se ainda nao venceu, termina dentro do proprio banco. Se venceu e nao existe onda ativa, ele acorda o GitHub Actions uma unica vez. Se nao houver nenhum lote elegivel naquele momento, `next_run_at` avanca novamente pelo intervalo configurado, evitando runners repetidos.
-
-O workflow `.github/workflows/process-batches.yml` possui somente `workflow_dispatch`:
-
-- `source=scheduler`: permite criar a onda automatica;
-- qualquer acao do usuario: apenas consome o trabalho explicitamente solicitado e nao cria onda automatica por acidente.
-
-## Supabase Realtime em vez de polling
-
-Os componentes de processamento nao executam mais loops `setInterval` para consultar status na Vercel.
-
-Fluxo:
-
-```text
-worker persiste mudanca
-       ↓
-trigger incrementa processing_realtime_signal
-       ↓
-Supabase Realtime avisa o navegador
-       ↓
-navegador autenticado consulta RPC de snapshot direto no Supabase
-```
-
-Quando a aba esta oculta, as leituras de snapshot sao adiadas. Ao voltar para a aba, ocorre uma unica atualizacao. As acoes explicitas do usuario continuam chamando APIs web, pois sao comandos e nao polling.
-
-Isso se aplica ao indicador global, painel completo da onda no Dashboard, tratativa dos erros da onda e progresso do snapshot de erros filtrados.
-
-## Protecao contra Fluid Active CPU
-
-`/api/cron/process-batches` nao contem mais o motor de processamento. A rota retorna HTTP `410 VERCEL_PROCESSING_DISABLED` e tem duracao maxima curta. Mesmo que uma automacao antiga tente chama-la, nenhuma consulta em massa ao ERP sera executada na Vercel.
-
-Em testes locais controlados:
-
-```bash
-PROCESSING_ALLOW_SCHEDULED_SYNC=false npx --yes dotenv-cli@8.0.0 -e .env.local -- npx --yes tsx@4.20.5 scripts/process-batches-worker.ts
-```
-
-## Validacao
+Aplique as migrations em ordem:
 
 ```bash
 npm ci
+npm run db:migrate
+```
+
+O runner de migrations usa `schema_migrations`, transação por arquivo e advisory lock para evitar duas aplicações simultâneas.
+
+Migrations locais atuais:
+
+```text
+001  autenticação local
+002  schema operacional
+003  unicidade parcela/vínculo
+004  fila e prioridade
+005  claims/leases do worker
+006  sincronização geral
+007  compatibilidade de pausa
+008  cálculo do agendamento por fim da onda
+009  bloqueio de login da identidade técnica
+010  verdade financeira target-only e remoção das tabelas físicas de logs
+011  dupla trava do scheduler + identidade técnica local
+012  views de compatibilidade sem persistência de logs
+013  PostgreSQL LISTEN/NOTIFY para atualização da UI
+```
+
+As migrations antigas em `supabase/migrations` são somente referência histórica e **não devem ser aplicadas** no PostgreSQL novo.
+
+## Autenticação local
+
+A autenticação usa as tabelas `users` e `sessions`.
+
+- senha armazenada com hash;
+- cookie de sessão contém token aleatório opaco;
+- somente o SHA-256 do token é armazenado no banco;
+- sessão expira em 12 horas;
+- usuário inativo ou com `login_enabled=false` não autentica;
+- `AUTH_COOKIE_SECURE=true` deve ser usado com HTTPS em produção.
+
+Para criar o primeiro administrador em ambiente controlado, use o script de bootstrap documentado em `scripts/README-auth-bootstrap.md`.
+
+## Worker local
+
+Comandos disponíveis:
+
+```bash
+npm run worker:once
+npm run worker:drain
+```
+
+O worker:
+
+- seleciona jobs por prioridade;
+- usa `FOR UPDATE SKIP LOCKED`/leases para evitar consumo duplicado;
+- respeita o preset atual de `processing_settings`;
+- preserva verdade financeira durante erros técnicos;
+- aplica retry de timeout sem transformar falha em pagamento;
+- recupera claims/jobs locais interrompidos;
+- mantém Dashboard, campanha, lote e associado na mesma fila priorizada.
+
+Prioridades:
+
+```text
+P1  Dashboard
+P2  Campanha
+P3  Lote
+P4  Associado individual
+```
+
+## Processamento geral e agendamento
+
+A próxima execução automática é calculada a partir do **fim real da última onda**:
+
+```text
+finished_at + scheduled_interval_minutes = next_run_at
+```
+
+O automático possui duas travas independentes e nasce desabilitado:
+
+```text
+PROCESSING_ALLOW_SCHEDULED_SYNC=false
+processing_scheduler_state.scheduler_enabled=false
+```
+
+Depois da validação final do ambiente, a trava do banco pode ser habilitada explicitamente:
+
+```sql
+select set_local_processing_scheduler_enabled_v1(true);
+```
+
+Para desligar somente novas ondas automáticas, mantendo o consumo das solicitações manuais:
+
+```sql
+select set_local_processing_scheduler_enabled_v1(false);
+```
+
+## Atualização da UI sem Supabase Realtime
+
+O PostgreSQL emite notificações de mudança por `pg_notify`. O endpoint local:
+
+```text
+GET /api/processing/events
+```
+
+mantém uma conexão SSE autenticada. Ao receber um evento, o navegador busca um snapshot atualizado das APIs internas do Next.js. Assim o painel completo de processamento continua reativo sem depender de Supabase Realtime.
+
+As atividades exibidas no painel são derivadas do estado funcional de `general_sync_runs` e `general_sync_run_batches`. As antigas tabelas físicas `event_logs` e `consultation_logs` são removidas. A migration 012 mantém apenas views de compatibilidade **sem armazenamento**, para que caminhos antigos não causem falhas durante a transição.
+
+## systemd
+
+O instalador está em:
+
+```text
+deploy/systemd/install-worker.sh
+```
+
+Instalação segura, sem ativar o timer:
+
+```bash
+sudo APP_DIR=/opt/odontoartpix \
+  RUN_USER=odontoart \
+  ENV_FILE=/etc/odontoartpix/worker.env \
+  bash deploy/systemd/install-worker.sh
+```
+
+Validação manual:
+
+```bash
+sudo systemctl start odontoartpix-worker.service
+sudo journalctl -u odontoartpix-worker.service -n 100 --no-pager
+```
+
+Somente depois da validação:
+
+```bash
+sudo systemctl enable --now odontoartpix-worker.timer
+```
+
+Consulte `deploy/systemd/README.md` para o procedimento completo.
+
+## Validação de código
+
+A CI sobe PostgreSQL 16 descartável e executa a arquitetura local de ponta a ponta no nível de build:
+
+```bash
+npm ci
+npm run db:migrate
 npm run typecheck
 npm run test
 npm run build
 ```
 
-Antes de processar uma base grande em producao, confirme no GitHub Actions:
+Uma alteração só está pronta para publicação quando migrations, typecheck, testes e build passam no mesmo commit.
 
-```text
-Using direct GitHub durable worker.
-```
+## Corte para produção
 
-Para um dispatch vindo de usuario, o log deve mostrar `Scheduled sync allowed: false`. Para o automatico disparado pelo Supabase, deve mostrar `Scheduled sync allowed: true`.
+Antes do primeiro processamento real:
 
-Depois valide uma campanha pequena, uma onda do Dashboard, um snapshot fechado de erros e um reprocessamento individual.
+1. backup do banco de origem/dados que serão migrados;
+2. configurar o PostgreSQL próprio e usuário da aplicação;
+3. executar `npm run db:migrate`;
+4. configurar variáveis do Next.js e do worker;
+5. validar login, Dashboard, importação e leitura de uma campanha pequena;
+6. executar `worker:once` com uma fila pequena;
+7. validar regra `Valor`/`ValorPago`/`DescricaoRecebimento`/`DataPagamento`;
+8. validar Dashboard e interrupção definitiva de uma onda;
+9. habilitar o timer do worker;
+10. somente depois, se desejado, habilitar a criação automática de ondas com as duas travas descritas acima.
+
+Não existe necessidade de Supabase Auth, Supabase Realtime, Supabase Cron, Vault ou GitHub Actions para o runtime desta arquitetura local.
