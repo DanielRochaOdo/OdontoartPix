@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { clientQuery, withTransaction } from "@/lib/db/transaction";
+import type { MonthlyAnalysis, MonthlyInstallment } from "@/lib/analysis";
 import { dbQuery } from "@/lib/db/pool";
+import { clientQuery, withTransaction } from "@/lib/db/transaction";
 import { consultMonthlyByAssociatedCode, ErpError } from "@/lib/mensalidades-api";
 import { getProcessingConfig } from "@/lib/processing-config";
-import type { MonthlyAnalysis } from "@/lib/analysis";
 
 type LocalJob = {
   id: string;
@@ -15,6 +15,8 @@ type LocalJob = {
   success_items: number;
   error_items: number;
   include_errors: boolean;
+  processing_priority: number;
+  stop_requested_at: string | null;
 };
 
 type ClaimedMember = {
@@ -26,6 +28,7 @@ type ClaimedMember = {
   due_date_text: string | null;
   installment_amount_cents: number | string | null;
   processing_attempts: number;
+  max_attempts: number;
   processing_owner: string | null;
   claim_token: string | null;
 };
@@ -46,21 +49,36 @@ export type LocalWorkerRunResult = {
   jobStatus: "idle" | "queued" | "completed" | "failed";
 };
 
-function retryDelayMs(attempt: number) {
-  return Math.min(60_000, 1000 * 2 ** Math.max(0, attempt - 1));
+function timeoutRetryDelayMs(attempt: number) {
+  return attempt <= 1 ? 10_000 : 30_000;
 }
 
-function getTargetPendingAmountCents(claimed: ClaimedMember, analysis: MonthlyAnalysis) {
-  if (analysis.paymentStatus === "paid") return 0;
+function retryDelayMs(attempt: number, error?: ErpError | null) {
+  if (error?.retryAfterMs != null) return Math.max(error.retryAfterMs, 0);
+  if (error?.code === "ERP_TIMEOUT") return timeoutRetryDelayMs(attempt);
+  return Math.min(60_000, 1200 * 2 ** Math.max(0, attempt - 1));
+}
 
-  const targetInstallmentId = String(claimed.target_installment_id ?? "").trim();
-  const targetInstallment = analysis.installments.find(
-    (installment) => String(installment.installmentCode).trim() === targetInstallmentId
+function targetInstallment(claimed: ClaimedMember, analysis: MonthlyAnalysis): MonthlyInstallment {
+  const targetId = String(claimed.target_installment_id ?? "").trim();
+  const target = analysis.installments.find(
+    (installment) => String(installment.installmentCode).trim() === targetId
   );
-  if (targetInstallment) return targetInstallment.finalAmountCents;
 
-  const fallback = Number(claimed.installment_amount_cents ?? 0);
-  return Number.isFinite(fallback) ? Math.max(Math.round(fallback), 0) : 0;
+  if (!target) {
+    throw new ErpError(
+      "ERP_INVALID_RESPONSE",
+      `A parcela alvo ${targetId || "nao informada"} nao foi localizada no historico completo do ERP.`,
+      false
+    );
+  }
+
+  return target;
+}
+
+function explicitPayment(target: MonthlyInstallment) {
+  const description = String(target.paymentDescription ?? "").trim();
+  return target.paidAmountCents !== null && description !== "" && description.toUpperCase() !== "ABERTO";
 }
 
 async function runWithConcurrency<T>(
@@ -69,7 +87,6 @@ async function runWithConcurrency<T>(
   task: (item: T) => Promise<void>
 ) {
   let cursor = 0;
-
   const workers = Array.from(
     { length: Math.min(concurrency, items.length) },
     async () => {
@@ -80,8 +97,61 @@ async function runWithConcurrency<T>(
       }
     }
   );
-
   await Promise.all(workers);
+}
+
+async function recoverStaleLocalWork(staleHeartbeatMs: number) {
+  const staleSeconds = Math.max(30, Math.ceil(staleHeartbeatMs / 1000));
+
+  await withTransaction(async (client) => {
+    await clientQuery(
+      client,
+      `update processing_jobs
+          set status = 'queued',
+              locked_by = null,
+              locked_at = null,
+              lease_expires_at = null,
+              next_run_at = now(),
+              last_error = coalesce(last_error, 'Job recuperado apos expiracao do lease local.'),
+              updated_at = now()
+        where status = 'running'
+          and lease_expires_at is not null
+          and lease_expires_at < now()`
+    );
+
+    await clientQuery(
+      client,
+      `update campaign_batch_members
+          set processing_status = case
+                when stale_reclaim_count + 1 >= 3 then 'error'
+                else 'retrying'
+              end,
+              processing_error_code = case
+                when stale_reclaim_count + 1 >= 3 then 'PROCESSING_STALE_LIMIT'
+                else 'PROCESSING_STALE_RECLAIM'
+              end,
+              stale_reclaim_count = stale_reclaim_count + 1,
+              next_retry_at = case
+                when stale_reclaim_count + 1 >= 3 then null
+                else now()
+              end,
+              claim_token = null,
+              claimed_at = null,
+              processing_owner = null,
+              processing_started_at = null,
+              processing_heartbeat_at = null,
+              last_error = case
+                when stale_reclaim_count + 1 >= 3
+                  then 'Limite de recuperacoes de processamento travado atingido.'
+                else 'Claim local recuperado apos heartbeat expirado.'
+              end,
+              updated_at = now()
+        where processing_status = 'processing'
+          and coalesce(processing_heartbeat_at, processing_started_at, updated_at)
+              < now() - ($1::text || ' seconds')::interval`,
+      [staleSeconds]
+    );
+  });
 }
 
 async function claimNextJob(workerId: string, leaseSeconds: number) {
@@ -96,11 +166,14 @@ async function claimNextJob(workerId: string, leaseSeconds: number) {
               processed_items,
               success_items,
               error_items,
-              include_errors
+              include_errors,
+              processing_priority,
+              stop_requested_at::text
          from processing_jobs
-        where status = 'queued'
+        where status in ('queued', 'deferred')
+          and stop_requested_at is null
           and (next_run_at is null or next_run_at <= now())
-        order by processing_priority desc, created_at asc
+        order by processing_priority desc, coalesce(next_run_at, created_at), created_at, id
         for update skip locked
         limit 1`
     );
@@ -127,8 +200,10 @@ async function claimNextJob(workerId: string, leaseSeconds: number) {
                   processed_items,
                   success_items,
                   error_items,
-                  include_errors`,
-      [job.id, workerId, leaseSeconds]
+                  include_errors,
+                  processing_priority,
+                  stop_requested_at::text`,
+      [job.id, workerId, Math.max(leaseSeconds, 30)]
     );
 
     return updated.rows[0] ?? null;
@@ -144,15 +219,23 @@ async function claimMembers(job: LocalJob, workerId: string, limit: number) {
         where batch_id = $1
           and deleted_at is null
           and payment_status is distinct from 'paid'
+          and processing_attempts < max_attempts
           and (
-            processing_status in ('pending', 'queued')
+            (
+              processing_status in ('pending', 'queued', 'aguardando')
+              and (next_check_at is null or next_check_at <= now())
+            )
             or (
               processing_status = 'retrying'
               and (next_retry_at is null or next_retry_at <= now())
             )
-            or ($2::boolean and processing_status = 'error')
+            or (
+              $2::boolean
+              and processing_status = 'error'
+              and error_reprocess_requested_at is not null
+            )
           )
-        order by created_at asc, id asc
+        order by coalesce(next_retry_at, next_check_at, updated_at, created_at), created_at, id
         for update skip locked
         limit $3`,
       [job.batch_id, job.include_errors, limit]
@@ -168,10 +251,12 @@ async function claimMembers(job: LocalJob, workerId: string, limit: number) {
               processing_owner = $2::uuid,
               claim_token = gen_random_uuid(),
               claimed_at = now(),
-              processing_started_at = coalesce(processing_started_at, now()),
+              processing_started_at = now(),
               processing_heartbeat_at = now(),
               processing_attempts = processing_attempts + 1,
               next_retry_at = null,
+              error_reprocess_requested_at = null,
+              processing_error_code = null,
               last_error = null,
               updated_at = now()
         where id = any($1::uuid[])
@@ -183,6 +268,7 @@ async function claimMembers(job: LocalJob, workerId: string, limit: number) {
                   due_date_text,
                   installment_amount_cents,
                   processing_attempts,
+                  max_attempts,
                   processing_owner::text,
                   claim_token::text`,
       [ids, workerId]
@@ -208,12 +294,16 @@ async function persistSuccess(input: {
   job: LocalJob;
   claimed: ClaimedMember;
   workerId: string;
-  httpStatus: number;
-  durationMs: number;
   analysis: MonthlyAnalysis;
 }) {
-  const { job, claimed, workerId, httpStatus, durationMs, analysis } = input;
-  const targetPendingAmountCents = getTargetPendingAmountCents(claimed, analysis);
+  const { job, claimed, workerId, analysis } = input;
+  const target = targetInstallment(claimed, analysis);
+  const isPaid = explicitPayment(target);
+  const targetAmountCents = Math.max(Math.round(target.baseAmountCents), 0);
+  const paidAmountCents = isPaid ? Math.max(Math.round(target.paidAmountCents ?? 0), 0) : 0;
+  const pendingAmountCents = isPaid ? 0 : targetAmountCents;
+  const paymentStatus = isPaid ? "paid" : "unpaid";
+  const paymentStatusSource = isPaid ? "erp_explicit" : "erp_open_invoice";
 
   return withTransaction(async (client) => {
     const owned = await clientQuery<{ id: string }>(
@@ -228,15 +318,10 @@ async function persistSuccess(input: {
     );
     if (!owned.rows[0]) return false;
 
-    await clientQuery(
-      client,
-      `delete from member_installments
-        where campaign_batch_member_id = $1`,
-      [claimed.id]
-    );
+    await clientQuery(client, `delete from member_installments where campaign_batch_member_id = $1`, [claimed.id]);
 
     if (analysis.installments.length > 0) {
-      const installmentRows = analysis.installments.map((installment) => ({
+      const rows = analysis.installments.map((installment) => ({
         cod_usuario: installment.userCode ?? null,
         cod_parcela: installment.installmentCode,
         due_date_text: installment.dueDate ?? null,
@@ -261,110 +346,48 @@ async function persistSuccess(input: {
       await clientQuery(
         client,
         `insert into member_installments(
-           campaign_batch_member_id,
-           cod_usuario,
-           cod_parcela,
-           due_date_text,
-           installment_type,
-           boleto_code,
-           pix_code,
-           card_payment_link,
-           situation,
-           payment_description,
-           payment_date_text,
-           paid_amount_cents,
-           base_amount_cents,
-           fine_amount_cents,
-           interest_amount_cents,
-           additional_amount_cents,
-           discount_amount_cents,
-           final_amount_cents,
-           plan_type,
-           observation,
-           updated_at
+           campaign_batch_member_id, cod_usuario, cod_parcela, due_date_text,
+           installment_type, boleto_code, pix_code, card_payment_link, situation,
+           payment_description, payment_date_text, paid_amount_cents,
+           base_amount_cents, fine_amount_cents, interest_amount_cents,
+           additional_amount_cents, discount_amount_cents, final_amount_cents,
+           plan_type, observation, updated_at
          )
-         select
-           $1::uuid,
-           row.cod_usuario,
-           row.cod_parcela,
-           row.due_date_text,
-           row.installment_type,
-           row.boleto_code,
-           row.pix_code,
-           row.card_payment_link,
-           row.situation,
-           row.payment_description,
-           row.payment_date_text,
-           row.paid_amount_cents,
-           row.base_amount_cents,
-           row.fine_amount_cents,
-           row.interest_amount_cents,
-           row.additional_amount_cents,
-           row.discount_amount_cents,
-           row.final_amount_cents,
-           row.plan_type,
-           row.observation,
-           now()
-         from jsonb_to_recordset($2::jsonb) as row(
-           cod_usuario text,
-           cod_parcela text,
-           due_date_text text,
-           installment_type text,
-           boleto_code text,
-           pix_code text,
-           card_payment_link text,
-           situation text,
-           payment_description text,
-           payment_date_text text,
-           paid_amount_cents bigint,
-           base_amount_cents bigint,
-           fine_amount_cents bigint,
-           interest_amount_cents bigint,
-           additional_amount_cents bigint,
-           discount_amount_cents bigint,
-           final_amount_cents bigint,
-           plan_type text,
-           observation text
-         )`,
-        [claimed.id, JSON.stringify(installmentRows)]
+         select $1::uuid, row.cod_usuario, row.cod_parcela, row.due_date_text,
+                row.installment_type, row.boleto_code, row.pix_code,
+                row.card_payment_link, row.situation, row.payment_description,
+                row.payment_date_text, row.paid_amount_cents, row.base_amount_cents,
+                row.fine_amount_cents, row.interest_amount_cents,
+                row.additional_amount_cents, row.discount_amount_cents,
+                row.final_amount_cents, row.plan_type, row.observation, now()
+           from jsonb_to_recordset($2::jsonb) as row(
+             cod_usuario text, cod_parcela text, due_date_text text,
+             installment_type text, boleto_code text, pix_code text,
+             card_payment_link text, situation text, payment_description text,
+             payment_date_text text, paid_amount_cents bigint, base_amount_cents bigint,
+             fine_amount_cents bigint, interest_amount_cents bigint,
+             additional_amount_cents bigint, discount_amount_cents bigint,
+             final_amount_cents bigint, plan_type text, observation text
+           )`,
+        [claimed.id, JSON.stringify(rows)]
       );
     }
 
-    await clientQuery(
-      client,
-      `delete from member_plan_totals
-        where campaign_batch_member_id = $1`,
-      [claimed.id]
-    );
+    await clientQuery(client, `delete from member_plan_totals where campaign_batch_member_id = $1`, [claimed.id]);
 
     if (analysis.totalsByPlan.length > 0) {
-      const planTotalRows = analysis.totalsByPlan.map((total) => ({
-        plan_type: total.planType,
-        installments_count: total.installmentsCount,
-        total_amount_cents: total.totalAmountCents
-      }));
-
       await clientQuery(
         client,
         `insert into member_plan_totals(
-           campaign_batch_member_id,
-           plan_type,
-           installments_count,
-           total_amount_cents,
-           updated_at
+           campaign_batch_member_id, plan_type, installments_count,
+           total_amount_cents, updated_at
          )
-         select
-           $1::uuid,
-           row.plan_type,
-           row.installments_count,
-           row.total_amount_cents,
-           now()
-         from jsonb_to_recordset($2::jsonb) as row(
-           plan_type text,
-           installments_count integer,
-           total_amount_cents bigint
-         )`,
-        [claimed.id, JSON.stringify(planTotalRows)]
+         select $1::uuid, row.plan_type, row.installments_count,
+                row.total_amount_cents, now()
+           from jsonb_to_recordset($2::jsonb) as row(
+             plan_type text, installments_count integer, total_amount_cents bigint
+           )`,
+        [claimed.id, JSON.stringify(analysis.totalsByPlan)]
       );
     }
 
@@ -373,8 +396,13 @@ async function persistSuccess(input: {
       `update campaign_batch_members
           set processing_status = 'completed',
               payment_status = $4,
-              total_pending_amount_cents = $5,
-              installments_count = $6,
+              payment_status_source = $5,
+              installment_amount_cents = $6,
+              payment_amount_cents = $7,
+              total_pending_amount_cents = $8,
+              installments_count = $9,
+              processing_attempts = 0,
+              stale_reclaim_count = 0,
               last_checked_at = now(),
               last_erp_status_at = now(),
               next_check_at = case when $4 = 'unpaid' then now() + interval '55 minutes' else null end,
@@ -382,7 +410,9 @@ async function persistSuccess(input: {
               claim_token = null,
               claimed_at = null,
               processing_owner = null,
+              processing_started_at = null,
               processing_heartbeat_at = null,
+              processing_error_code = null,
               last_error = null,
               updated_at = now()
         where id = $1
@@ -392,36 +422,12 @@ async function persistSuccess(input: {
         claimed.id,
         workerId,
         claimed.claim_token,
-        analysis.paymentStatus,
-        targetPendingAmountCents,
+        paymentStatus,
+        paymentStatusSource,
+        targetAmountCents,
+        paidAmountCents,
+        pendingAmountCents,
         analysis.installmentsCount
-      ]
-    );
-
-    await clientQuery(
-      client,
-      `insert into consultation_logs(
-         campaign_batch_member_id,
-         campaign_id,
-         batch_id,
-         request_status,
-         payment_status,
-         response_message,
-         http_status,
-         duration_ms,
-         attempt_number,
-         total_pending_amount_cents
-       ) values ($1,$2,$3,'success',$4,$5,$6,$7,$8,$9)`,
-      [
-        claimed.id,
-        claimed.campaign_id,
-        claimed.batch_id,
-        analysis.paymentStatus,
-        analysis.message,
-        httpStatus,
-        Math.round(durationMs),
-        claimed.processing_attempts,
-        targetPendingAmountCents
       ]
     );
 
@@ -433,8 +439,7 @@ async function persistSuccess(input: {
               last_progress_at = now(),
               last_heartbeat_at = now(),
               updated_at = now()
-        where id = $1
-          and locked_by = $2`,
+        where id = $1 and locked_by = $2`,
       [job.id, workerId]
     );
 
@@ -452,13 +457,13 @@ async function persistFailure(input: {
   const { job, claimed, workerId, error, maxAttempts } = input;
   const erpError = error instanceof ErpError ? error : null;
   const retryable = erpError ? erpError.retryable : true;
-  const terminal = !retryable || claimed.processing_attempts >= maxAttempts;
+  const attemptLimit = Math.min(maxAttempts, claimed.max_attempts);
+  const terminal = !retryable || claimed.processing_attempts >= attemptLimit;
   const errorCode = erpError?.code ?? "ERP_NETWORK_ERROR";
   const errorMessage = error instanceof Error ? error.message : "Falha desconhecida durante a consulta.";
-  const httpStatus = erpError?.httpStatus ?? null;
   const nextRetryAt = terminal
     ? null
-    : new Date(Date.now() + (erpError?.retryAfterMs ?? retryDelayMs(claimed.processing_attempts))).toISOString();
+    : new Date(Date.now() + retryDelayMs(claimed.processing_attempts, erpError)).toISOString();
 
   return withTransaction(async (client) => {
     const owned = await clientQuery<{ id: string }>(
@@ -473,47 +478,31 @@ async function persistFailure(input: {
     );
     if (!owned.rows[0]) return { terminal, persisted: false };
 
+    -- A falha tecnica nunca apaga payment_status nem os valores da ultima
+    -- verdade financeira confirmada pelo ERP.
     await clientQuery(
       client,
       `update campaign_batch_members
           set processing_status = $4,
-              payment_status = case when $4 = 'error' then payment_status else null end,
               next_retry_at = $5::timestamptz,
               claim_token = null,
               claimed_at = null,
               processing_owner = null,
+              processing_started_at = null,
               processing_heartbeat_at = null,
-              last_error = $6,
+              processing_error_code = $6,
+              last_error = $7,
               updated_at = now()
         where id = $1
           and processing_owner = $2::uuid
           and claim_token = $3::uuid`,
-      [claimed.id, workerId, claimed.claim_token, terminal ? "error" : "retrying", nextRetryAt, errorMessage.slice(0, 1000)]
-    );
-
-    await clientQuery(
-      client,
-      `insert into consultation_logs(
-         campaign_batch_member_id,
-         campaign_id,
-         batch_id,
-         request_status,
-         payment_status,
-         response_message,
-         http_status,
-         attempt_number,
-         error_code,
-         error_message
-       ) values ($1,$2,$3,$4,null,$5,$6,$7,$8,$9)`,
       [
         claimed.id,
-        claimed.campaign_id,
-        claimed.batch_id,
+        workerId,
+        claimed.claim_token,
         terminal ? "error" : "retrying",
-        errorMessage.slice(0, 1000),
-        httpStatus,
-        claimed.processing_attempts,
-        errorCode,
+        nextRetryAt,
+        errorCode.slice(0, 100),
         errorMessage.slice(0, 1000)
       ]
     );
@@ -527,8 +516,7 @@ async function persistFailure(input: {
                 last_progress_at = now(),
                 last_heartbeat_at = now(),
                 updated_at = now()
-          where id = $1
-            and locked_by = $2`,
+          where id = $1 and locked_by = $2`,
         [job.id, workerId]
       );
     } else {
@@ -541,8 +529,7 @@ async function persistFailure(input: {
                               end,
                 last_heartbeat_at = now(),
                 updated_at = now()
-          where id = $1
-            and locked_by = $2`,
+          where id = $1 and locked_by = $2`,
         [job.id, workerId, nextRetryAt]
       );
     }
@@ -562,10 +549,9 @@ async function recalculateBatch(batchId: string) {
          count(*) filter (where processing_status = 'error')::int as error_records,
          coalesce(sum(total_pending_amount_cents), 0)::bigint as total_pending_amount_cents,
          count(*) filter (where processing_status = 'processing')::int as processing_records,
-         count(*) filter (where processing_status in ('pending','queued','retrying'))::int as waiting_records
+         count(*) filter (where processing_status in ('pending','queued','retrying','aguardando'))::int as waiting_records
        from campaign_batch_members
-      where batch_id = $1
-        and deleted_at is null
+      where batch_id = $1 and deleted_at is null
      )
      update campaign_batches b
         set total_records = t.total_records,
@@ -589,6 +575,33 @@ async function recalculateBatch(batchId: string) {
 
 async function releaseAndFinalizeJob(job: LocalJob, workerId: string) {
   return withTransaction(async (client) => {
+    const control = await clientQuery<{ status: string; stop_requested_at: string | null }>(
+      client,
+      `select status, stop_requested_at::text
+         from processing_jobs
+        where id = $1 and locked_by = $2
+        for update`,
+      [job.id, workerId]
+    );
+    const current = control.rows[0];
+    if (!current) return "queued" as const;
+
+    if (current.status === "cancelled" || current.stop_requested_at) {
+      await clientQuery(
+        client,
+        `update processing_jobs
+            set status = case when status = 'cancelled' then 'cancelled' else 'paused' end,
+                locked_by = null,
+                locked_at = null,
+                lease_expires_at = null,
+                last_heartbeat_at = now(),
+                updated_at = now()
+          where id = $1 and locked_by = $2`,
+        [job.id, workerId]
+      );
+      return "queued" as const;
+    }
+
     const queue = await clientQuery<{
       immediate_count: number;
       processing_count: number;
@@ -598,17 +611,17 @@ async function releaseAndFinalizeJob(job: LocalJob, workerId: string) {
       `select
          count(*) filter (
            where payment_status is distinct from 'paid'
+             and processing_attempts < max_attempts
              and (
-               processing_status in ('pending','queued')
+               (processing_status in ('pending','queued','aguardando') and (next_check_at is null or next_check_at <= now()))
                or (processing_status = 'retrying' and (next_retry_at is null or next_retry_at <= now()))
-               or ($2::boolean and processing_status = 'error')
+               or ($2::boolean and processing_status = 'error' and error_reprocess_requested_at is not null)
              )
          )::int as immediate_count,
          count(*) filter (where processing_status = 'processing')::int as processing_count,
          min(next_retry_at) filter (where processing_status = 'retrying')::text as next_retry_at
        from campaign_batch_members
-      where batch_id = $1
-        and deleted_at is null`,
+      where batch_id = $1 and deleted_at is null`,
       [job.batch_id, job.include_errors]
     );
 
@@ -633,8 +646,7 @@ async function releaseAndFinalizeJob(job: LocalJob, workerId: string) {
               lease_expires_at = null,
               last_heartbeat_at = now(),
               updated_at = now()
-        where id = $1
-          and locked_by = $2`,
+        where id = $1 and locked_by = $2`,
       [job.id, workerId, completed ? "completed" : "queued", immediate, nextRetryAt]
     );
 
@@ -654,8 +666,7 @@ async function failJob(job: LocalJob, workerId: string, error: unknown) {
             lease_expires_at = null,
             last_heartbeat_at = now(),
             updated_at = now()
-      where id = $1
-        and locked_by = $2`,
+      where id = $1 and locked_by = $2`,
     [job.id, workerId, message.slice(0, 1000)]
   );
 }
@@ -666,17 +677,20 @@ export async function runLocalWorkerOnce(options?: {
 }): Promise<LocalWorkerRunResult> {
   const workerId = randomUUID();
   const config = await getProcessingConfig();
-  const requestedLimit = options?.claimLimit ?? config.claimBatchSize;
-  const claimLimit = Math.max(1, Math.min(requestedLimit, config.claimBatchSize, 500));
+  await recoverStaleLocalWork(config.staleHeartbeatMs);
 
+  const requestedLimit = options?.claimLimit ?? config.claimBatchSize;
+  const claimLimit = Math.max(
+    1,
+    Math.min(requestedLimit, config.claimBatchSize, config.maxBufferedResults, 500)
+  );
   const requestedConcurrency = options?.concurrency ?? config.erpConcurrency;
   const concurrency = Math.max(
     1,
-    Math.min(requestedConcurrency, config.erpConcurrency, claimLimit, 20)
+    Math.min(requestedConcurrency, config.erpConcurrency, config.perWorkerConcurrency, claimLimit, 100)
   );
 
   const job = await claimNextJob(workerId, config.globalLockLeaseSeconds);
-
   if (!job) {
     return {
       workerId,
@@ -699,12 +713,15 @@ export async function runLocalWorkerOnce(options?: {
 
     await runWithConcurrency(claimed, concurrency, async (item) => {
       const member = await loadMember(item.member_id);
-
       try {
         const associatedCode = String(member?.external_user_code ?? "").trim();
         const targetInstallmentId = String(item.target_installment_id ?? "").trim();
-        if (!associatedCode) throw new Error("Associado sem CodigoAssociadoEmpresa.");
-        if (!targetInstallmentId) throw new Error("Associado sem parcela alvo.");
+        if (!associatedCode) {
+          throw new ErpError("ERP_INVALID_RESPONSE", "Associado sem CodigoAssociadoEmpresa.", false);
+        }
+        if (!targetInstallmentId) {
+          throw new ErpError("ERP_INVALID_RESPONSE", "Associado sem parcela alvo.", false);
+        }
 
         const result = await consultMonthlyByAssociatedCode(
           associatedCode,
@@ -716,11 +733,8 @@ export async function runLocalWorkerOnce(options?: {
           job,
           claimed: item,
           workerId,
-          httpStatus: result.httpStatus,
-          durationMs: result.durationMs,
           analysis: result.analysis
         });
-
         if (persisted) succeeded += 1;
       } catch (error) {
         const outcome = await persistFailure({
@@ -730,7 +744,6 @@ export async function runLocalWorkerOnce(options?: {
           error,
           maxAttempts: config.maxAttemptsPerItem
         });
-
         if (outcome.persisted) {
           if (outcome.terminal) failed += 1;
           else retried += 1;
