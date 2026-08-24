@@ -220,7 +220,6 @@ async function reopenUnpaidMembersForManualProcessing(
     client,
     `update campaign_batch_members
         set processing_status = 'pending',
-            payment_status = null,
             last_error = null,
             next_retry_at = null,
             next_check_at = null,
