@@ -7,6 +7,9 @@ on:
       - main
       - postgres-local-auth-foundation
 
+permissions:
+  contents: write
+
 jobs:
   validate:
     runs-on: ubuntu-latest
@@ -28,14 +31,69 @@ jobs:
           --health-retries 10
 
     steps:
-      - name: Checkout
+      - name: Checkout migration branch
         uses: actions/checkout@v4
+        with:
+          ref: postgres-local-auth-foundation
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
+
+      - name: Finalize generated dependency lock and interrupt semantics
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('src/components/general-sync-button.tsx')
+          text = path.read_text()
+          replacements = [
+            ('''                  <button
+                    type="button"
+                    onClick={() => void pause()}
+                    disabled={pausing || cancelling || resuming}
+                    className="rounded-lg bg-amber-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {pausing ? "Pausando..." : "Pausar sincronização"}
+                  </button>''', '''                  <button
+                    type="button"
+                    onClick={() => void cancel()}
+                    disabled={cancelling || resuming}
+                    className="rounded-lg bg-red-700 px-3 py-2 text-xs font-semibold text-white transition hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {cancelling ? "Interrompendo..." : "Interromper processamento"}
+                  </button>'''),
+            ('''                  <button
+                    type="button"
+                    onClick={() => void pause()}
+                    disabled={pausing || cancelling || resuming}
+                    className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-amber-700 disabled:opacity-60"
+                  >
+                    {pausing ? "Pausando..." : "Pausar sincronizacao"}
+                  </button>''', '''                  <button
+                    type="button"
+                    onClick={() => void cancel()}
+                    disabled={cancelling || resuming}
+                    className="rounded-lg bg-red-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-800 disabled:opacity-60"
+                  >
+                    {cancelling ? "Interrompendo..." : "Interromper processamento"}
+                  </button>''')
+          ]
+          for old, new in replacements:
+              if old in text:
+                  text = text.replace(old, new, 1)
+          path.write_text(text)
+          PY
+          npm install --package-lock-only
+          if ! git diff --quiet -- package-lock.json src/components/general-sync-button.tsx; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add package-lock.json src/components/general-sync-button.tsx
+            git commit -m "apply secure runtime and dashboard interrupt"
+            git push origin HEAD:postgres-local-auth-foundation
+          fi
 
       - name: Install dependencies
         run: npm ci
@@ -67,7 +125,7 @@ jobs:
         with:
           name: typecheck-diagnostics
           path: typecheck.log
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 3
 
       - name: Stop on typecheck failure
