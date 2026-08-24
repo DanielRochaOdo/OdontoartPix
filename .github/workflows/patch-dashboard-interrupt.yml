@@ -1,4 +1,4 @@
-name: Patch dashboard interrupt semantics
+name: Finalize secure runtime patch
 
 on:
   push:
@@ -10,13 +10,19 @@ permissions:
 
 jobs:
   patch:
-    if: github.event.head_commit.message != 'make dashboard interrupt definitive'
+    if: github.event.head_commit.message != 'apply secure runtime and dashboard interrupt'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout branch
         uses: actions/checkout@v4
         with:
           ref: postgres-local-auth-foundation
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
 
       - name: Replace new-wave pause controls with definitive interrupt
         shell: bash
@@ -25,53 +31,62 @@ jobs:
           from pathlib import Path
           path = Path('src/components/general-sync-button.tsx')
           text = path.read_text()
-          old1 = '''                  <button
+          replacements = [
+            ('''                  <button
                     type="button"
                     onClick={() => void pause()}
                     disabled={pausing || cancelling || resuming}
                     className="rounded-lg bg-amber-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {pausing ? "Pausando..." : "Pausar sincronização"}
-                  </button>'''
-          new1 = '''                  <button
+                  </button>''', '''                  <button
                     type="button"
                     onClick={() => void cancel()}
                     disabled={cancelling || resuming}
                     className="rounded-lg bg-red-700 px-3 py-2 text-xs font-semibold text-white transition hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {cancelling ? "Interrompendo..." : "Interromper processamento"}
-                  </button>'''
-          old2 = '''                  <button
+                  </button>'''),
+            ('''                  <button
                     type="button"
                     onClick={() => void pause()}
                     disabled={pausing || cancelling || resuming}
                     className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-amber-700 disabled:opacity-60"
                   >
                     {pausing ? "Pausando..." : "Pausar sincronizacao"}
-                  </button>'''
-          new2 = '''                  <button
+                  </button>''', '''                  <button
                     type="button"
                     onClick={() => void cancel()}
                     disabled={cancelling || resuming}
                     className="rounded-lg bg-red-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-800 disabled:opacity-60"
                   >
                     {cancelling ? "Interrompendo..." : "Interromper processamento"}
-                  </button>'''
-          if old1 not in text or old2 not in text:
-              raise SystemExit('expected dashboard pause controls not found')
-          text = text.replace(old1, new1, 1).replace(old2, new2, 1)
+                  </button>''')
+          ]
+          changed = False
+          for old, new in replacements:
+              if old in text:
+                  text = text.replace(old, new, 1)
+                  changed = True
+          if not changed and 'Interromper processamento' not in text:
+              raise SystemExit('dashboard interrupt controls could not be located')
           path.write_text(text)
           PY
 
-      - name: Commit patch
+      - name: Refresh lock for Next 16
+        run: |
+          npm install --package-lock-only
+          npm audit fix --package-lock-only || true
+
+      - name: Commit final generated changes
         shell: bash
         run: |
-          if git diff --quiet -- src/components/general-sync-button.tsx; then
-            echo "dashboard already patched"
+          if git diff --quiet -- src/components/general-sync-button.tsx package-lock.json; then
+            echo "generated changes already current"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/components/general-sync-button.tsx
-          git commit -m "make dashboard interrupt definitive"
+          git add src/components/general-sync-button.tsx package-lock.json
+          git commit -m "apply secure runtime and dashboard interrupt"
           git push origin HEAD:postgres-local-auth-foundation
