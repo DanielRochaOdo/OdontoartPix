@@ -183,37 +183,31 @@ mantém uma conexão SSE autenticada. Ao receber um evento, o navegador busca um
 
 As atividades exibidas no painel são derivadas do estado funcional de `general_sync_runs` e `general_sync_run_batches`. As antigas tabelas físicas `event_logs` e `consultation_logs` são removidas. A migration 012 mantém apenas views de compatibilidade **sem armazenamento**, para que caminhos antigos não causem falhas durante a transição.
 
-## systemd
+## systemd e publicação web
 
-O instalador está em:
+A arquitetura local possui instaladores separados:
 
 ```text
+deploy/systemd/install-app.sh
 deploy/systemd/install-worker.sh
 ```
 
-Instalação segura, sem ativar o timer:
+A aplicação Next.js fica em `127.0.0.1:3000` por padrão e deve ser publicada por reverse proxy HTTPS. Existe um exemplo com suporte a SSE em:
 
-```bash
-sudo APP_DIR=/opt/odontoartpix \
-  RUN_USER=odontoart \
-  ENV_FILE=/etc/odontoartpix/worker.env \
-  bash deploy/systemd/install-worker.sh
+```text
+deploy/nginx/odontoartpix.conf.example
 ```
 
-Validação manual:
+Os instaladores **não ativam serviços automaticamente**. A sequência segura é: build, migrations, instalação das units, início manual da aplicação, health check, validação de uma fila pequena e só então ativação do timer do worker.
 
-```bash
-sudo systemctl start odontoartpix-worker.service
-sudo journalctl -u odontoartpix-worker.service -n 100 --no-pager
+Consulte:
+
+```text
+deploy/systemd/README.md
+deploy/production/README.md
 ```
 
-Somente depois da validação:
-
-```bash
-sudo systemctl enable --now odontoartpix-worker.timer
-```
-
-Consulte `deploy/systemd/README.md` para o procedimento completo.
+para o procedimento completo de instalação, corte e rollback.
 
 ## Validação de código
 
@@ -235,14 +229,18 @@ Antes do primeiro processamento real:
 
 1. fazer backup dos dados que serão preservados/migrados;
 2. configurar o PostgreSQL próprio e o usuário da aplicação;
-3. executar `npm ci` e `npm run db:migrate`;
+3. executar `npm ci`, `npm run db:migrate` e `npm run build`;
 4. configurar as variáveis do Next.js e do worker, mantendo o scheduler automático desligado;
-5. validar login, Dashboard, importação e leitura de uma campanha pequena;
-6. executar `npm run worker:once` com uma fila pequena e controlada;
-7. validar explicitamente a matriz financeira: `ABERTO = unpaid`; `!= ABERTO` + `ValorPago >= Valor = paid`; alvo ausente = erro;
-8. validar que alvo ausente pode ser reprocessado manualmente e reaparece em uma sincronização completa futura;
-9. validar Dashboard e interrupção definitiva de uma onda;
-10. habilitar o timer do worker somente após a validação manual;
-11. somente depois, se desejado, habilitar a criação automática de ondas com as duas travas descritas acima.
+5. instalar a unit web sem ativação automática e validar `/api/health/db` localmente;
+6. validar login, Dashboard, importação e leitura de uma campanha pequena;
+7. executar `npm run worker:once`/serviço manual com uma fila pequena e controlada;
+8. validar explicitamente a matriz financeira: `ABERTO = unpaid`; `!= ABERTO` + `ValorPago >= Valor = paid`; alvo ausente = erro;
+9. validar que alvo ausente pode ser reprocessado manualmente e reaparece em uma sincronização completa futura;
+10. validar reverse proxy HTTPS, SSE, Dashboard e interrupção definitiva de uma onda;
+11. trocar o tráfego público somente após os testes;
+12. habilitar o timer do worker somente após a estabilização da aplicação web;
+13. somente depois, se desejado, habilitar a criação automática de ondas com as duas travas descritas acima.
+
+O runbook detalhado e o procedimento de rollback estão em `deploy/production/README.md`.
 
 Não existe necessidade de Supabase Auth, Supabase Realtime, Supabase Cron, Vault ou GitHub Actions para o runtime desta arquitetura local.
