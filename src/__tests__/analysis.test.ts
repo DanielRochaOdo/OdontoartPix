@@ -7,10 +7,17 @@ import {
 } from "@/lib/analysis";
 
 describe("analyzeMonthlyResponse", () => {
-  it("nao infere pagamento quando o contrato legado retorna parcelas vazias", () => {
-    const result = analyzeMonthlyResponse({ parcelas: [] });
-    expect(result.paymentStatus).toBe("unpaid");
-    expect(result.totalPendingAmountCents).toBe(0);
+  it("classifica como pago quando o contrato legado não traz cod_parcela", () => {
+    const emptyResult = analyzeMonthlyResponse({ parcelas: [] });
+    const withoutInstallmentCode = analyzeMonthlyResponse({
+      parcelas: [{ cod_usuario: "A", cod_parcela: null, ValorFinal: 10 }]
+    });
+
+    expect(emptyResult.paymentStatus).toBe("paid");
+    expect(emptyResult.totalPendingAmountCents).toBe(0);
+    expect(withoutInstallmentCode.paymentStatus).toBe("paid");
+    expect(withoutInstallmentCode.installmentsCount).toBe(0);
+    expect(withoutInstallmentCode.totalPendingAmountCents).toBe(0);
   });
 
   it("classifica como não pago, soma ValorFinal e preserva os campos financeiros suportados", () => {
