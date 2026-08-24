@@ -1,8 +1,8 @@
+import { getDbPool } from "../src/lib/db/pool";
 import { runLocalGeneralSyncCycle } from "../src/lib/general-sync-orchestrator";
 import { startDueLocalScheduledGeneralSync } from "../src/lib/general-sync-scheduled-start";
 import { finalizeQueuedLocalProcessingPauseRequests } from "../src/lib/local-processing-pause-checkpoint";
 import { runLocalWorkerOnce } from "../src/lib/local-processing-worker";
-import { getDbPool } from "../src/lib/db/pool";
 
 const ADVISORY_LOCK_NAMESPACE = 17483621;
 const ADVISORY_LOCK_WORKER = 20260821;
@@ -18,7 +18,6 @@ function readPositiveIntegerArgument(name: string) {
   if (!Number.isInteger(parsed) || parsed <= 0) {
     throw new Error(`${prefix} deve receber um inteiro maior que zero.`);
   }
-
   return parsed;
 }
 
@@ -31,7 +30,6 @@ function readNonNegativeIntegerArgument(name: string) {
   if (!Number.isInteger(parsed) || parsed < 0) {
     throw new Error(`${prefix} deve receber um inteiro maior ou igual a zero.`);
   }
-
   return parsed;
 }
 
@@ -41,23 +39,9 @@ function hasFlag(name: string) {
 
 function readScheduledSyncEnabled() {
   const raw = process.env.PROCESSING_ALLOW_SCHEDULED_SYNC?.trim().toLowerCase();
-
   if (!raw || raw === "false") return false;
   if (raw === "true") return true;
-
   throw new Error("PROCESSING_ALLOW_SCHEDULED_SYNC deve ser true ou false.");
-}
-
-function readProcessingSystemUserId() {
-  const value = process.env.PROCESSING_SYSTEM_USER_ID?.trim();
-
-  if (!value) {
-    throw new Error(
-      "PROCESSING_SYSTEM_USER_ID deve estar configurado quando PROCESSING_ALLOW_SCHEDULED_SYNC=true."
-    );
-  }
-
-  return value;
 }
 
 function sleep(ms: number) {
@@ -89,14 +73,15 @@ async function recoverInterruptedLocalWork() {
     const reclaimedMembers = await client.query(
       `update campaign_batch_members
           set processing_status = 'retrying',
-              processing_attempts = greatest(processing_attempts - 1, 0),
               processing_owner = null,
               claim_token = null,
               claimed_at = null,
+              processing_started_at = null,
               processing_heartbeat_at = null,
               next_retry_at = now(),
               stale_reclaim_count = stale_reclaim_count + 1,
-              last_error = 'Processamento recuperado automaticamente após interrupção do worker local.',
+              processing_error_code = 'PROCESSING_WORKER_RECOVERY',
+              last_error = 'Processamento recuperado automaticamente apos interrupcao do worker local.',
               updated_at = now()
         where batch_id = any($1::uuid[])
           and deleted_at is null
@@ -119,7 +104,6 @@ async function recoverInterruptedLocalWork() {
     );
 
     await client.query("commit");
-
     return {
       jobs: interruptedJobs.rows.length,
       members: reclaimedMembers.rowCount ?? 0
@@ -144,7 +128,6 @@ async function main() {
     );
 
     lockAcquired = lockResult.rows[0]?.acquired === true;
-
     if (!lockAcquired) {
       console.info("[LOCAL_WORKER_ALREADY_RUNNING]");
       return;
@@ -162,19 +145,15 @@ async function main() {
     const delayMs = readNonNegativeIntegerArgument("delay-ms") ?? DEFAULT_DRAIN_DELAY_MS;
     const maxDrainCycles = readPositiveIntegerArgument("max-cycles") ?? DEFAULT_MAX_DRAIN_CYCLES;
     const scheduledSyncEnabled = readScheduledSyncEnabled();
-    const processingSystemUserId = scheduledSyncEnabled ? readProcessingSystemUserId() : null;
     let productiveCycles = 0;
 
     if (!scheduledSyncEnabled) {
-      console.info("[LOCAL_SCHEDULED_SYNC_DISABLED]");
+      console.info("[LOCAL_SCHEDULED_SYNC_ENV_DISABLED]");
     }
 
     while (true) {
-      if (scheduledSyncEnabled && processingSystemUserId) {
-        const scheduledStartResult = await startDueLocalScheduledGeneralSync({
-          requestedBy: processingSystemUserId
-        });
-
+      if (scheduledSyncEnabled) {
+        const scheduledStartResult = await startDueLocalScheduledGeneralSync();
         console.info("[LOCAL_SCHEDULED_SYNC_START_COMPLETED]", scheduledStartResult);
       }
 
@@ -191,11 +170,7 @@ async function main() {
         return;
       }
 
-      const result = await runLocalWorkerOnce({
-        claimLimit,
-        concurrency
-      });
-
+      const result = await runLocalWorkerOnce({ claimLimit, concurrency });
       console.info("[LOCAL_WORKER_RUN_COMPLETED]", result);
 
       if (result.jobStatus === "failed") {
@@ -203,9 +178,7 @@ async function main() {
         return;
       }
 
-      if (!drain || result.jobStatus === "idle") {
-        return;
-      }
+      if (!drain || result.jobStatus === "idle") return;
 
       productiveCycles += 1;
       if (productiveCycles >= maxDrainCycles) {
@@ -216,9 +189,7 @@ async function main() {
         return;
       }
 
-      if (delayMs > 0) {
-        await sleep(delayMs);
-      }
+      if (delayMs > 0) await sleep(delayMs);
     }
   } finally {
     if (lockAcquired) {
