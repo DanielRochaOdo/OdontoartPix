@@ -36,6 +36,10 @@ type ProcessingJobRow = {
 
 export type LocalGeneralSyncPauseExecutionResult =
   | {
+      action: "not_requested";
+      runId: string;
+    }
+  | {
       action: "waiting_running_job";
       runId: string;
       batchId: string;
@@ -76,9 +80,7 @@ async function loadOwnedPauseRequestedRun(client: PoolClient, runId: string, wor
     [runId, workerId]
   );
 
-  const run = result.rows[0];
-  if (!run) throw new Error("GENERAL_SYNC_PAUSE_NOT_OWNED_OR_NOT_REQUESTED");
-  return run;
+  return result.rows[0] ?? null;
 }
 
 async function loadRunBatches(client: PoolClient, runId: string) {
@@ -200,6 +202,13 @@ export async function executeClaimedLocalGeneralSyncPause(input: {
   try {
     return await withTransaction(async (client) => {
       const run = await loadOwnedPauseRequestedRun(client, input.runId, input.workerId);
+      if (!run) {
+        return {
+          action: "not_requested" as const,
+          runId: input.runId
+        };
+      }
+
       const batches = await loadRunBatches(client, run.id);
       const ownJobs = await loadOwnJobs(client, batches);
 
@@ -414,10 +423,6 @@ export async function executeClaimedLocalGeneralSyncPause(input: {
       };
     });
   } catch (error) {
-    if (error instanceof Error && error.message === "GENERAL_SYNC_PAUSE_NOT_OWNED_OR_NOT_REQUESTED") {
-      throw error;
-    }
-
     throw new DataAccessError(
       "Nao foi possivel executar a pausa da sincronizacao geral local.",
       "generalSyncPause.execute",
