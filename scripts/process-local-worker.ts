@@ -1,4 +1,5 @@
 import { runLocalGeneralSyncCycle } from "../src/lib/general-sync-orchestrator";
+import { finalizeQueuedLocalProcessingPauseRequests } from "../src/lib/local-processing-pause-checkpoint";
 import { runLocalWorkerOnce } from "../src/lib/local-processing-worker";
 import { getDbPool } from "../src/lib/db/pool";
 
@@ -142,6 +143,11 @@ async function main() {
     while (true) {
       const generalSyncResult = await runLocalGeneralSyncCycle();
       console.info("[LOCAL_GENERAL_SYNC_CYCLE_COMPLETED]", generalSyncResult);
+
+      const pauseCheckpoint = await finalizeQueuedLocalProcessingPauseRequests();
+      if (pauseCheckpoint.pausedJobs > 0) {
+        console.info("[LOCAL_WORKER_PAUSE_CHECKPOINT]", pauseCheckpoint);
+      }
 
       const result = await runLocalWorkerOnce({
         claimLimit,
