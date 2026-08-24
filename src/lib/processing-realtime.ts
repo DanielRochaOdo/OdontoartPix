@@ -13,17 +13,8 @@ export type ProcessingActiveSnapshot = {
   processedItems: number;
   successItems: number;
   errorItems: number;
-  origins?: {
-    manual: number;
-    dashboard: number;
-    unknown: number;
-  };
-  scopes?: {
-    campaign: number;
-    batch: number;
-    member: number;
-    dashboard: number;
-  };
+  origins?: { manual: number; dashboard: number; unknown: number };
+  scopes?: { campaign: number; batch: number; member: number; dashboard: number };
   generalSync?: {
     id: string;
     status: string;
@@ -45,12 +36,7 @@ export type DashboardErrorReplaySnapshot = {
   failedCount: number;
   completedCount?: number;
   remainingCount?: number;
-  activities: Array<{
-    id: string;
-    type: string;
-    label: string;
-    createdAt: string;
-  }>;
+  activities: Array<{ id: string; type: string; label: string; createdAt: string }>;
 };
 
 export type FilteredErrorReplaySnapshot = {
@@ -108,22 +94,22 @@ export function getGeneralSyncRunSnapshot(runId: string | null): Promise<General
   );
 }
 
-// Os dois snapshots de replay permanecem com contrato estável para os
-// componentes antigos. A migração local não cria requests paralelos ocultos;
-// quando não há uma API de replay específica, o estado é representado pelos
-// jobs/batches canônicos e o retorno é nulo.
 export function getDashboardErrorReplaySnapshot(
   runId: string | null
 ): Promise<DashboardErrorReplaySnapshot | null> {
-  void runId;
-  return Promise.resolve(null);
+  if (!runId) return Promise.resolve(null);
+  return fetchSnapshot<DashboardErrorReplaySnapshot>(
+    `/api/dashboard/general-sync/${encodeURIComponent(runId)}/error-reprocess-status`
+  );
 }
 
 export function getFilteredErrorReplaySnapshot(
   requestId: string | null
 ): Promise<FilteredErrorReplaySnapshot | null> {
-  void requestId;
-  return Promise.resolve(null);
+  if (!requestId) return Promise.resolve(null);
+  return fetchSnapshot<FilteredErrorReplaySnapshot>(
+    `/api/associados/reprocessar-erros-filtrados/${encodeURIComponent(requestId)}`
+  );
 }
 
 export function subscribeProcessingRealtime(onChange: () => void) {
