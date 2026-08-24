@@ -1,11 +1,8 @@
 import { z } from "zod";
-import { DataAccessError } from "@/lib/errors/data-access-error";
-import { dbQuery } from "@/lib/db/pool";
-import {
-  getLocalBatchMetrics,
-  getLocalCampaignMetrics
-} from "@/lib/campaign-detail-read";
+import { getLocalBatchMetrics, getLocalCampaignMetrics } from "@/lib/campaign-detail-read";
 import { listLocalCampaignsWithMetrics } from "@/lib/campaign-read";
+import { dbQuery } from "@/lib/db/pool";
+import { DataAccessError } from "@/lib/errors/data-access-error";
 
 export const CalculatedStatusSchema = z.enum([
   "aguardando",
@@ -123,7 +120,6 @@ export async function getCampaignMetrics(campaignId: string) {
   try {
     const data = await getLocalCampaignMetrics(campaignId);
     if (!data) return null;
-
     const parsed = CampaignMetricsSchema.safeParse(data);
     if (!parsed.success) {
       throw new DataAccessError(
@@ -147,7 +143,6 @@ export async function getBatchMetrics(batchId: string) {
   try {
     const data = await getLocalBatchMetrics(batchId);
     if (!data) return null;
-
     const parsed = BatchMetricsSchema.safeParse(data);
     if (!parsed.success) {
       throw new DataAccessError(
@@ -190,30 +185,19 @@ export async function getDashboardMetrics(filters: DashboardMetricsFilters = {})
            cbm.member_id,
            cbm.processing_status,
            cbm.payment_status as stored_payment_status,
-           case
-             when target.id is not null then coalesce(target.base_amount_cents, 0)::bigint
-             else coalesce(cbm.installment_amount_cents, 0)::bigint
-           end as target_base_amount_cents,
-           case
-             when target.id is not null then coalesce(target.final_amount_cents, target.base_amount_cents, 0)::bigint
-             else coalesce(cbm.installment_amount_cents, 0)::bigint
-           end as target_pending_amount_cents,
+           coalesce(target.base_amount_cents, cbm.installment_amount_cents, 0)::bigint as target_amount_cents,
            target.paid_amount_cents as target_paid_amount_cents,
-           case
-             when target.paid_amount_cents is not null
-              and nullif(trim(coalesce(target.payment_description, target.situation)), '') is not null
-              and upper(trim(coalesce(target.payment_description, target.situation))) <> 'ABERTO'
-             then true
-             else false
-           end as is_explicit_paid
+           nullif(trim(target.payment_description), '') as payment_description,
+           (
+             target.paid_amount_cents is not null
+             and nullif(trim(target.payment_description), '') is not null
+             and upper(trim(target.payment_description)) <> 'ABERTO'
+           ) as is_explicit_paid
          from campaign_batch_members cbm
          left join lateral (
-           select mi.id,
-                  mi.base_amount_cents,
-                  mi.final_amount_cents,
+           select mi.base_amount_cents,
                   mi.paid_amount_cents,
-                  mi.payment_description,
-                  mi.situation
+                  mi.payment_description
              from member_installments mi
             where mi.campaign_batch_member_id = cbm.id
               and trim(mi.cod_parcela) = trim(cbm.target_installment_id)
@@ -238,16 +222,16 @@ export async function getDashboardMetrics(filters: DashboardMetricsFilters = {})
            count(*) filter (where financial_status = 'paid')::int as paid,
            count(*) filter (where financial_status = 'unpaid')::int as unpaid,
            count(*) filter (where processing_status = 'error')::int as errored,
-           coalesce(sum(target_pending_amount_cents) filter (where financial_status = 'unpaid'), 0)::float8 as pending_amount,
+           coalesce(sum(target_amount_cents) filter (where financial_status = 'unpaid'), 0)::float8 as pending_amount,
            coalesce(sum(target_paid_amount_cents) filter (where financial_status = 'paid'), 0)::float8 as paid_amount,
-           coalesce(sum(target_base_amount_cents), 0)::float8 as total_amount
+           coalesce(sum(target_amount_cents), 0)::float8 as total_amount
          from financial_rows
        ), campaign_metrics as (
          select count(*)::int as total_campaigns from selected_campaigns
        ), job_metrics as (
          select count(distinct pj.campaign_id)::int as campaigns_in_progress
            from processing_jobs pj
-          where pj.status in ('queued', 'running')
+          where pj.status in ('queued', 'running', 'deferred')
             and pj.campaign_id in (select id from selected_campaigns)
             and pj.batch_id in (select id from selected_batches)
        )
@@ -303,14 +287,12 @@ export async function getDashboardReceiptStatusMetrics(filters: DashboardMetrics
            cbm.campaign_id,
            cbm.batch_id,
            target.paid_amount_cents,
-           nullif(trim(coalesce(target.payment_description, target.situation)), '') as payment_description
+           nullif(trim(target.payment_description), '') as payment_description
          from campaign_batch_members cbm
          join campaigns c on c.id = cbm.campaign_id and c.deleted_at is null
          join campaign_batches cb on cb.id = cbm.batch_id and cb.deleted_at is null
          left join lateral (
-           select mi.paid_amount_cents,
-                  mi.payment_description,
-                  mi.situation
+           select mi.paid_amount_cents, mi.payment_description
              from member_installments mi
             where mi.campaign_batch_member_id = cbm.id
               and trim(mi.cod_parcela) = trim(cbm.target_installment_id)
@@ -364,14 +346,12 @@ export async function getDashboardPixPaidMetrics(filters: DashboardMetricsFilter
            cbm.campaign_id,
            cbm.batch_id,
            target.paid_amount_cents,
-           nullif(trim(coalesce(target.payment_description, target.situation)), '') as payment_description
+           nullif(trim(target.payment_description), '') as payment_description
          from campaign_batch_members cbm
          join campaigns c on c.id = cbm.campaign_id and c.deleted_at is null
          join campaign_batches cb on cb.id = cbm.batch_id and cb.deleted_at is null
          left join lateral (
-           select mi.paid_amount_cents,
-                  mi.payment_description,
-                  mi.situation
+           select mi.paid_amount_cents, mi.payment_description
              from member_installments mi
             where mi.campaign_batch_member_id = cbm.id
               and trim(mi.cod_parcela) = trim(cbm.target_installment_id)
