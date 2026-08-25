@@ -79,7 +79,7 @@ describe("analyzeMonthlyResponse - contrato atual do ERP", () => {
     expect(result.installments[0]?.paidAmountCents).toBeNull();
   });
 
-  it("classifica como paid somente quando DescricaoRecebimento nao e ABERTO e ValorPago >= Valor", () => {
+  it("classifica como paid quando DescricaoRecebimento nao e ABERTO e ValorPago esta informado", () => {
     const result = analyzeMonthlyResponse(
       page({
         data: [{
@@ -116,8 +116,8 @@ describe("analyzeMonthlyResponse - contrato atual do ERP", () => {
     expect(result.paymentStatus).toBe("paid");
   });
 
-  it("rejeita pagamento parcial quando DescricaoRecebimento nao e ABERTO", () => {
-    expect(() => analyzeMonthlyResponse(
+  it("classifica pagamento parcial como paid e preserva a pendencia residual", () => {
+    const result = analyzeMonthlyResponse(
       page({
         data: [{
           Id: "55",
@@ -127,7 +127,14 @@ describe("analyzeMonthlyResponse - contrato atual do ERP", () => {
         }]
       }),
       "55"
-    )).toThrow("ValorPago e menor que Valor");
+    );
+
+    expect(result.paymentStatus).toBe("paid");
+    expect(result.paymentStatusSource).toBe("erp_explicit");
+    expect(result.totalPaidAmountCents).toBe(9999);
+    expect(result.totalPendingAmountCents).toBe(1);
+    expect(result.installments[0]?.paidAmountCents).toBe(9999);
+    expect(result.message).toContain("paga com pendencia");
   });
 
   it("rejeita DescricaoRecebimento diferente de ABERTO sem ValorPago", () => {
@@ -329,6 +336,38 @@ describe("analyzeMonthlyResponses - paginacao", () => {
     expect(result.paginationComplete).toBe(true);
     expect(result.totalPaidAmountCents).toBe(6000);
     expect(result.totalPendingAmountCents).toBe(4500);
+  });
+
+  it("soma pendencia aberta e saldo residual de pagamento parcial", () => {
+    const result = analyzeMonthlyResponses([
+      page({
+        currentPage: 1,
+        totalPages: 2,
+        totalCount: 2,
+        pageSize: 1,
+        data: [{ Id: "10", Valor: 45, DescricaoRecebimento: "ABERTO", Tipo_plano: "Plano A" }]
+      }),
+      page({
+        currentPage: 2,
+        totalPages: 2,
+        totalCount: 2,
+        pageSize: 1,
+        data: [{
+          Id: "55",
+          Valor: 60,
+          ValorPago: 50,
+          DescricaoRecebimento: "PIX",
+          Tipo_plano: "Plano A"
+        }]
+      })
+    ], "55");
+
+    expect(result.paymentStatus).toBe("paid");
+    expect(result.totalPaidAmountCents).toBe(5000);
+    expect(result.totalPendingAmountCents).toBe(5500);
+    expect(result.totalsByPlan).toEqual([
+      { planType: "Plano A", installmentsCount: 2, totalAmountCents: 5500 }
+    ]);
   });
 
   it("nao exige paginas restantes quando a parcela alvo ja foi encontrada", () => {
