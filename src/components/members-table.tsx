@@ -7,6 +7,10 @@ import * as XLSX from "xlsx";
 import { MemberActions } from "@/components/member-actions";
 import { emitMetricsSync } from "@/lib/metrics-sync";
 import {
+  INSTALLMENT_NOT_FOUND_LABEL,
+  isMissingTargetInstallmentError
+} from "@/lib/processing-errors";
+import {
   getFilteredErrorReplaySnapshot,
   subscribeProcessingRealtime
 } from "@/lib/processing-realtime";
@@ -23,6 +27,7 @@ type MemberItem = {
   payment_description: string | null;
   payment_date_text: string | null;
   total_pending_amount_cents: number;
+  last_error: string | null;
   member: Relation<{
     cpf: string | null;
     name: string | null;
@@ -48,9 +53,10 @@ type Row = {
   receiptDescription: string;
   paymentDate: string;
   pending: number;
+  missingInstallment: boolean;
 };
 
-type SortKey = keyof Omit<Row, "id">;
+type SortKey = keyof Omit<Row, "id" | "missingInstallment">;
 
 type BulkErrorReprocessProgress = {
   requestId: string;
@@ -246,6 +252,10 @@ export function MembersTable({
         const member = first(item.member);
         const batch = first(item.batch);
         const campaign = first(item.campaign);
+        const missingInstallment = isMissingTargetInstallmentError({
+          processingStatus: item.processing_status,
+          lastError: item.last_error
+        });
 
         return {
           id: item.id,
@@ -262,7 +272,8 @@ export function MembersTable({
           payment: normalizePayment(item.payment_status ?? "-"),
           receiptDescription: String(item.payment_description ?? "").trim() || "-",
           paymentDate: formatDueDate(item.payment_date_text ?? "") || "-",
-          pending: item.total_pending_amount_cents ?? 0
+          pending: item.total_pending_amount_cents ?? 0,
+          missingInstallment
         };
       }),
     [members]
@@ -292,6 +303,7 @@ export function MembersTable({
             row.campaign,
             row.batch,
             row.status,
+            row.missingInstallment ? INSTALLMENT_NOT_FOUND_LABEL : "",
             row.payment,
             row.receiptDescription,
             row.paymentDate
@@ -536,7 +548,9 @@ export function MembersTable({
         CPF: row.cpf ? `***.***.***-${row.cpf.slice(-2)}` : "",
         Campanha: row.campaign,
         Lote: row.batch,
-        Status: statusLabel(row.status),
+        Status: row.missingInstallment
+          ? `Erro — ${INSTALLMENT_NOT_FOUND_LABEL}`
+          : statusLabel(row.status),
         Pagamento: paymentLabel(row.payment),
         "Tipo de Pagto": row.receiptDescription,
         "Data de Pagamento": row.paymentDate === "-" ? "" : row.paymentDate,
@@ -545,7 +559,7 @@ export function MembersTable({
     );
     worksheet["!cols"] = [
       { wch: 32 }, { wch: 28 }, { wch: 18 }, { wch: 16 }, { wch: 18 }, { wch: 28 },
-      { wch: 28 }, { wch: 16 }, { wch: 16 }, { wch: 22 }, { wch: 20 }, { wch: 16 }
+      { wch: 28 }, { wch: 28 }, { wch: 16 }, { wch: 22 }, { wch: 20 }, { wch: 16 }
     ];
 
     const workbook = XLSX.utils.book_new();
@@ -676,15 +690,15 @@ export function MembersTable({
       {filteredRows.length === 0 ? <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">Nenhum associado encontrado com os filtros aplicados. Confira os valores informados e tente novamente.</div> : null}
 
       <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <table className="min-w-[1580px] divide-y divide-slate-200 text-sm">
+        <table className="min-w-[1660px] divide-y divide-slate-200 text-sm">
           <thead className="bg-slate-50 text-slate-600"><tr>{columns.map(([key, label]) => <th key={key} className="px-4 py-3 text-left font-medium"><button type="button" onClick={() => changeSort(key)}>{label}{sortKey === key ? (ascending ? " ↑" : " ↓") : ""}</button></th>)}<th className="px-4 py-3 text-left font-medium">Acoes</th></tr></thead>
           <tbody className="divide-y divide-slate-200">
             {paginatedRows.length === 0 ? (
               <tr><td colSpan={columns.length + 1} className="px-4 py-8 text-center text-slate-500">Nenhum associado encontrado.</td></tr>
             ) : paginatedRows.map((row) => (
               <tr key={row.id}>
-                <td className="px-4 py-3 font-medium">{row.name}</td><td className="px-4 py-3">{row.associatedCode || "-"}</td><td className="px-4 py-3">{row.installment || "-"}</td><td className="px-4 py-3">{row.dueDate || "-"}</td><td className="px-4 py-3">{row.cpf ? `***.***.***-${row.cpf.slice(-2)}` : "-"}</td><td className="px-4 py-3">{row.campaign}</td><td className="px-4 py-3">{row.batch}</td><td className="px-4 py-3">{statusLabel(row.status)}</td><td className="px-4 py-3">{paymentLabel(row.payment)}</td><td className="px-4 py-3">{row.receiptDescription}</td><td className="px-4 py-3">{row.paymentDate}</td><td className="px-4 py-3">R$ {(row.pending / 100).toFixed(2).replace(".", ",")}</td>
-                <td className="min-w-[100px] px-4 py-3"><div className="flex flex-nowrap items-center gap-2 whitespace-nowrap"><Link className="inline-flex h-9 w-9 items-center justify-center rounded-md border text-slate-600 transition hover:bg-slate-50" href={`/associados/${row.id}`} aria-label="Abrir associado" title="Abrir associado"><svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z" /><circle cx="12" cy="12" r="2.5" /></svg></Link><MemberActions memberId={row.id} /></div></td>
+                <td className="px-4 py-3 font-medium">{row.name}</td><td className="px-4 py-3">{row.associatedCode || "-"}</td><td className="px-4 py-3">{row.installment || "-"}</td><td className="px-4 py-3">{row.dueDate || "-"}</td><td className="px-4 py-3">{row.cpf ? `***.***.***-${row.cpf.slice(-2)}` : "-"}</td><td className="px-4 py-3">{row.campaign}</td><td className="px-4 py-3">{row.batch}</td><td className="px-4 py-3">{row.missingInstallment ? <span className="font-medium text-rose-700">Erro — {INSTALLMENT_NOT_FOUND_LABEL}</span> : statusLabel(row.status)}</td><td className="px-4 py-3">{paymentLabel(row.payment)}</td><td className="px-4 py-3">{row.receiptDescription}</td><td className="px-4 py-3">{row.paymentDate}</td><td className="px-4 py-3">R$ {(row.pending / 100).toFixed(2).replace(".", ",")}</td>
+                <td className="min-w-[140px] px-4 py-3"><div className="flex flex-nowrap items-center gap-2 whitespace-nowrap"><Link className="inline-flex h-9 w-9 items-center justify-center rounded-md border text-slate-600 transition hover:bg-slate-50" href={`/associados/${row.id}`} aria-label="Abrir associado" title="Abrir associado"><svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z" /><circle cx="12" cy="12" r="2.5" /></svg></Link><MemberActions memberId={row.id} canDeleteMissingInstallment={row.missingInstallment} /></div></td>
               </tr>
             ))}
           </tbody>
