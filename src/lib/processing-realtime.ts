@@ -63,6 +63,12 @@ type ApiEnvelope<T> = {
   error?: { message?: string };
 };
 
+type ProcessingRealtimeListener = () => void;
+
+const processingRealtimeListeners = new Set<ProcessingRealtimeListener>();
+let processingRealtimeSource: EventSource | null = null;
+let processingRealtimeHandler: (() => void) | null = null;
+
 async function fetchSnapshot<T>(url: string): Promise<T | null> {
   const response = await fetch(url, {
     method: "GET",
@@ -77,6 +83,51 @@ async function fetchSnapshot<T>(url: string): Promise<T | null> {
     throw new Error(payload?.error?.message ?? "Nao foi possivel atualizar o processamento.");
   }
   return payload.data ?? null;
+}
+
+function dispatchProcessingRealtimeChange() {
+  for (const listener of Array.from(processingRealtimeListeners)) {
+    try {
+      listener();
+    } catch {
+      // Um consumidor nao deve interromper os demais assinantes do realtime.
+    }
+  }
+}
+
+function closeProcessingRealtimeSource() {
+  const source = processingRealtimeSource;
+  const handler = processingRealtimeHandler;
+
+  processingRealtimeSource = null;
+  processingRealtimeHandler = null;
+
+  if (!source) return;
+  if (handler) {
+    source.removeEventListener("ready", handler);
+    source.removeEventListener("change", handler);
+  }
+  source.close();
+}
+
+function ensureProcessingRealtimeSource() {
+  if (
+    processingRealtimeSource ||
+    processingRealtimeListeners.size === 0 ||
+    typeof window === "undefined" ||
+    typeof EventSource === "undefined"
+  ) {
+    return;
+  }
+
+  const source = new EventSource("/api/processing/events", { withCredentials: true });
+  const handler = () => dispatchProcessingRealtimeChange();
+
+  source.addEventListener("ready", handler);
+  source.addEventListener("change", handler);
+
+  processingRealtimeSource = source;
+  processingRealtimeHandler = handler;
 }
 
 export function getProcessingActiveSnapshot(): Promise<ProcessingActiveSnapshot | null> {
@@ -117,14 +168,13 @@ export function subscribeProcessingRealtime(onChange: () => void) {
     return () => undefined;
   }
 
-  const source = new EventSource("/api/processing/events", { withCredentials: true });
-  const handleChange = () => onChange();
-  source.addEventListener("ready", handleChange);
-  source.addEventListener("change", handleChange);
+  processingRealtimeListeners.add(onChange);
+  ensureProcessingRealtimeSource();
 
   return () => {
-    source.removeEventListener("ready", handleChange);
-    source.removeEventListener("change", handleChange);
-    source.close();
+    processingRealtimeListeners.delete(onChange);
+    if (processingRealtimeListeners.size === 0) {
+      closeProcessingRealtimeSource();
+    }
   };
 }
