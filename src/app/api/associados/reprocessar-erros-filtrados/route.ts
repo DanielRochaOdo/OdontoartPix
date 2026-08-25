@@ -24,7 +24,7 @@ export async function POST(request: Request) {
     const result = await withTransaction(async (client) => {
       const eligibleResult = await clientQuery<EligibleRow>(
         client,
-        `select distinct id, campaign_id, batch_id
+        `select id, campaign_id, batch_id
            from campaign_batch_members
           where id = any($1::uuid[])
             and deleted_at is null
