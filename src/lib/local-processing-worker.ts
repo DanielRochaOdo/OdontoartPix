@@ -16,6 +16,8 @@ type LocalJob = {
   error_items: number;
   include_errors: boolean;
   processing_priority: number;
+  processing_scope: string;
+  target_member_link_id: string | null;
   stop_requested_at: string | null;
 };
 
@@ -168,6 +170,8 @@ async function claimNextJob(workerId: string, leaseSeconds: number) {
               error_items,
               include_errors,
               processing_priority,
+              processing_scope,
+              target_member_link_id,
               stop_requested_at::text
          from processing_jobs
         where status in ('queued', 'deferred')
@@ -202,6 +206,8 @@ async function claimNextJob(workerId: string, leaseSeconds: number) {
                   error_items,
                   include_errors,
                   processing_priority,
+                  processing_scope,
+                  target_member_link_id,
                   stop_requested_at::text`,
       [job.id, workerId, Math.max(leaseSeconds, 30)]
     );
@@ -211,12 +217,19 @@ async function claimNextJob(workerId: string, leaseSeconds: number) {
 }
 
 async function claimMembers(job: LocalJob, workerId: string, limit: number) {
+  const targetMemberLinkId = String(job.target_member_link_id ?? "").trim() || null;
+  if (job.processing_scope === "member" && !targetMemberLinkId) {
+    throw new Error("MEMBER_SCOPED_JOB_WITHOUT_TARGET");
+  }
+  const effectiveLimit = targetMemberLinkId ? 1 : limit;
+
   return withTransaction(async (client) => {
     const candidates = await clientQuery<{ id: string }>(
       client,
       `select id
          from campaign_batch_members
         where batch_id = $1
+          and ($4::uuid is null or id = $4::uuid)
           and deleted_at is null
           and payment_status is distinct from 'paid'
           and processing_attempts < max_attempts
@@ -238,7 +251,7 @@ async function claimMembers(job: LocalJob, workerId: string, limit: number) {
         order by coalesce(next_retry_at, next_check_at, updated_at, created_at), created_at, id
         for update skip locked
         limit $3`,
-      [job.batch_id, job.include_errors, limit]
+      [job.batch_id, job.include_errors, effectiveLimit, targetMemberLinkId]
     );
 
     const ids = candidates.rows.map((row) => row.id);
@@ -606,7 +619,16 @@ async function releaseAndFinalizeJob(job: LocalJob, workerId: string) {
       [job.id, workerId]
     );
     const current = control.rows[0];
-    if (!current) return "queued" as const;
+    if (!current) {
+      // Jobs de escopo exato podem ser finalizados pelo trigger de seguranca
+      // assim que o unico item terminal e contabilizado.
+      const finalized = await clientQuery<{ status: string }>(
+        client,
+        `select status from processing_jobs where id = $1`,
+        [job.id]
+      );
+      return finalized.rows[0]?.status === "completed" ? "completed" as const : "queued" as const;
+    }
 
     if (current.status === "cancelled" || current.stop_requested_at) {
       await clientQuery(
@@ -624,6 +646,7 @@ async function releaseAndFinalizeJob(job: LocalJob, workerId: string) {
       return "queued" as const;
     }
 
+    const targetMemberLinkId = String(job.target_member_link_id ?? "").trim() || null;
     const queue = await clientQuery<{
       immediate_count: number;
       processing_count: number;
@@ -643,8 +666,10 @@ async function releaseAndFinalizeJob(job: LocalJob, workerId: string) {
          count(*) filter (where processing_status = 'processing')::int as processing_count,
          min(next_retry_at) filter (where processing_status = 'retrying')::text as next_retry_at
        from campaign_batch_members
-      where batch_id = $1 and deleted_at is null`,
-      [job.batch_id, job.include_errors]
+      where batch_id = $1
+        and ($3::uuid is null or id = $3::uuid)
+        and deleted_at is null`,
+      [job.batch_id, job.include_errors, targetMemberLinkId]
     );
 
     const row = queue.rows[0];
@@ -731,9 +756,12 @@ export async function runLocalWorkerOnce(options?: {
   let retried = 0;
 
   try {
-    const claimed = await claimMembers(job, workerId, claimLimit);
+    const exactMemberJob = Boolean(String(job.target_member_link_id ?? "").trim());
+    const effectiveClaimLimit = exactMemberJob ? 1 : claimLimit;
+    const effectiveConcurrency = exactMemberJob ? 1 : concurrency;
+    const claimed = await claimMembers(job, workerId, effectiveClaimLimit);
 
-    await runWithConcurrency(claimed, concurrency, async (item) => {
+    await runWithConcurrency(claimed, effectiveConcurrency, async (item) => {
       const member = await loadMember(item.member_id);
       let erpConsultStarted = false;
       try {
