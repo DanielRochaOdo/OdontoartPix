@@ -7,6 +7,8 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 const CHANNEL = "odontoartpix_processing";
+const HEARTBEAT_INTERVAL_MS = 10_000;
+const STREAM_MAX_LIFETIME_MS = 15_000;
 const encoder = new TextEncoder();
 
 type ActiveStreamCloser = () => void;
@@ -55,6 +57,7 @@ export async function GET(request: Request) {
 
   let closed = false;
   let heartbeat: ReturnType<typeof setInterval> | null = null;
+  let lifetime: ReturnType<typeof setTimeout> | null = null;
   let notificationHandler: ((message: Notification) => void) | null = null;
   let abortHandler: (() => void) | null = null;
   let shutdownCloser: ActiveStreamCloser | null = null;
@@ -68,6 +71,7 @@ export async function GET(request: Request) {
       shutdownCloser = null;
     }
     if (heartbeat) clearInterval(heartbeat);
+    if (lifetime) clearTimeout(lifetime);
     if (notificationHandler) client.off("notification", notificationHandler);
     if (abortHandler) request.signal.removeEventListener("abort", abortHandler);
 
@@ -104,7 +108,7 @@ export async function GET(request: Request) {
 
       heartbeat = setInterval(() => {
         safeEnqueue(encoder.encode(`: heartbeat ${Date.now()}\n\n`));
-      }, 20_000);
+      }, HEARTBEAT_INTERVAL_MS);
 
       const closeStream = () => {
         if (closed) return;
@@ -121,6 +125,11 @@ export async function GET(request: Request) {
 
       abortHandler = closeStream;
       request.signal.addEventListener("abort", abortHandler, { once: true });
+
+      // O EventSource reconecta automaticamente. Limitar a vida do stream garante
+      // que o graceful shutdown do Next.js nunca precise esperar uma requisicao SSE
+      // indefinida ate o TimeoutStopSec do systemd.
+      lifetime = setTimeout(closeStream, STREAM_MAX_LIFETIME_MS);
 
       if (shuttingDown) {
         closeStream();
