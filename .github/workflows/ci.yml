@@ -99,6 +99,14 @@ jobs:
         run: exit 1
 
       - name: Run tests
+        env:
+          DATABASE_HOST: 127.0.0.1
+          DATABASE_PORT: "5432"
+          DATABASE_NAME: odontoart_pix_ci
+          DATABASE_USER: postgres
+          DATABASE_PASSWORD: postgres
+          DATABASE_SSL: "false"
+          PROCESSING_ALLOW_SCHEDULED_SYNC: "false"
         run: npm run test
 
       - name: Build production bundle
