@@ -2,13 +2,16 @@ import { z } from "zod";
 import { requireApiUser } from "@/lib/auth/require-api-user";
 import { clientQuery, withTransaction } from "@/lib/db/transaction";
 import { fail, ok } from "@/lib/http/api-response";
+import {
+  queueMemberReprocess,
+  type MemberReprocessTarget
+} from "@/lib/member-reprocess-queue";
 import { isMissingTargetInstallmentError } from "@/lib/processing-errors";
 
 const ParamsSchema = z.object({ id: z.string().uuid() });
 
-type MemberLinkRow = {
-  id: string;
-  batch_id: string;
+type MemberLinkRow = MemberReprocessTarget & {
+  member_id: string;
   processing_status: string;
   last_error: string | null;
 };
@@ -27,7 +30,14 @@ export async function DELETE(
     const result = await withTransaction(async (client) => {
       const memberResult = await clientQuery<MemberLinkRow>(
         client,
-        `select id, batch_id, processing_status, last_error
+        `select id,
+                campaign_id,
+                batch_id,
+                member_id,
+                target_installment_id,
+                payment_status,
+                processing_status,
+                last_error
            from campaign_batch_members
           where id = $1::uuid
             and deleted_at is null
@@ -53,6 +63,54 @@ export async function DELETE(
           where id = $1::uuid`,
         [member.id]
       );
+
+      // Um job manual antigo desse registro nao deve continuar concorrendo
+      // depois que a parcela foi removida do lote.
+      await clientQuery(
+        client,
+        `update processing_jobs
+            set status = 'cancelled',
+                finished_at = coalesce(finished_at, now()),
+                next_run_at = null,
+                locked_by = null,
+                locked_at = null,
+                lease_expires_at = null,
+                stop_reason = coalesce(stop_reason, 'Parcela excluida do lote.'),
+                updated_at = now()
+          where target_member_link_id = $1::uuid
+            and processing_origin = 'manual'
+            and processing_scope = 'member'
+            and status in ('queued', 'paused', 'deferred')`,
+        [member.id]
+      );
+
+      const remainingResult = await clientQuery<MemberReprocessTarget>(
+        client,
+        `select id, campaign_id, batch_id, target_installment_id, payment_status
+           from campaign_batch_members
+          where batch_id = $1::uuid
+            and member_id = $2::uuid
+            and deleted_at is null
+          order by created_at, id
+          for update`,
+        [member.batch_id, member.member_id]
+      );
+
+      let reprocessJobId: string | null = null;
+      let reprocessMemberId: string | null = null;
+
+      // Quando a exclusao deixa uma unica parcela para o associado, ela e
+      // reconsultada a partir de um estado limpo. Assim o resultado final nao
+      // depende do snapshot/erro do registro que acabou de ser removido.
+      if (remainingResult.rows.length === 1) {
+        const survivor = remainingResult.rows[0]!;
+        const hasTarget = Boolean(String(survivor.target_installment_id ?? "").trim());
+        if (survivor.payment_status !== "paid" && hasTarget) {
+          const job = await queueMemberReprocess(client, survivor, auth.profile.id);
+          reprocessJobId = job?.id ?? null;
+          reprocessMemberId = survivor.id;
+        }
+      }
 
       await clientQuery(
         client,
@@ -93,7 +151,13 @@ export async function DELETE(
         [member.batch_id]
       );
 
-      return { kind: "deleted" as const, memberId: member.id, batchId: member.batch_id };
+      return {
+        kind: "deleted" as const,
+        memberId: member.id,
+        batchId: member.batch_id,
+        reprocessJobId,
+        reprocessMemberId
+      };
     });
 
     if (result.kind === "not_found") {
@@ -109,8 +173,16 @@ export async function DELETE(
     }
 
     return ok(
-      { memberId: result.memberId, batchId: result.batchId },
-      "Registro com parcela não encontrada excluído do lote."
+      {
+        memberId: result.memberId,
+        batchId: result.batchId,
+        reprocessMemberId: result.reprocessMemberId,
+        reprocessJobId: result.reprocessJobId,
+        survivorRevalidationQueued: Boolean(result.reprocessJobId)
+      },
+      result.reprocessJobId
+        ? "Registro excluído do lote e parcela restante enfileirada para nova validação no ERP."
+        : "Registro com parcela não encontrada excluído do lote."
     );
   } catch (error) {
     console.error("[DELETE_MISSING_INSTALLMENT_MEMBER_FAILED]", {
