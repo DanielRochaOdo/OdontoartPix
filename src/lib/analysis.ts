@@ -495,10 +495,12 @@ export function analyzeMonthlyResponses(
   const mergedItems: z.infer<typeof MonthlyApiDataItemSchema>[] = [];
 
   for (const page of pages) {
+    // O ERP informa PageSize como a quantidade efetivamente retornada na pagina.
+    // Assim, a ultima pagina pode ter PageSize menor (ex.: 200 + 24 de um total de 224).
+    // TotalPages e TotalCount continuam sendo metadados globais e devem permanecer estaveis.
     if (
       page.totalPages !== expectedTotalPages ||
-      page.totalCount !== expectedTotalCount ||
-      page.pageSize !== expectedPageSize
+      page.totalCount !== expectedTotalCount
     ) {
       throw new MonthlyResponseError(
         "As paginas do ERP possuem metadados incompativeis entre si."
