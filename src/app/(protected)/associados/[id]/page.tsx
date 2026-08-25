@@ -35,6 +35,11 @@ function translateStatus(value: string | null | undefined) {
   return STATUS_LABELS[normalized] ?? value;
 }
 
+function isPaid(value: string | null | undefined) {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === "paid" || normalized === "pago";
+}
+
 export const dynamic = "force-dynamic";
 
 export default async function MemberDetailPage({
@@ -78,6 +83,8 @@ export default async function MemberDetailPage({
       ? link.campaign[0]
       : link.campaign
     : null;
+  const hasPendingAmount = Number(link?.total_pending_amount_cents ?? 0) > 0;
+  const paidWithPending = Boolean(link && isPaid(link.payment_status) && hasPendingAmount);
 
   return (
     <PageSurface>
@@ -122,13 +129,15 @@ export default async function MemberDetailPage({
               <p className="text-sm text-slate-500">Processamento</p>
               <p className="mt-2 text-xl font-semibold">{translateStatus(link.processing_status)}</p>
             </article>
-            <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-              <p className="text-sm text-slate-500">Pagamento</p>
-              <p className="mt-2 text-xl font-semibold">{translateStatus(link.payment_status)}</p>
+            <article className={`rounded-2xl border p-4 shadow-sm ${paidWithPending ? "border-amber-300 bg-amber-50" : "border-slate-200 bg-white"}`}>
+              <p className={paidWithPending ? "text-sm font-medium text-amber-800" : "text-sm text-slate-500"}>Pagamento</p>
+              <p className={`mt-2 text-xl font-semibold ${paidWithPending ? "text-amber-950" : ""}`}>
+                {paidWithPending ? "Pago com pendência" : translateStatus(link.payment_status)}
+              </p>
             </article>
-            <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-              <p className="text-sm text-slate-500">Valor pendente</p>
-              <p className="mt-2 text-xl font-semibold">
+            <article className={`rounded-2xl border p-4 shadow-sm ${hasPendingAmount ? "border-amber-300 bg-amber-50" : "border-slate-200 bg-white"}`}>
+              <p className={hasPendingAmount ? "text-sm font-medium text-amber-800" : "text-sm text-slate-500"}>Valor pendente</p>
+              <p className={`mt-2 text-xl font-semibold ${hasPendingAmount ? "text-amber-950" : ""}`}>
                 {formatCurrencyBR(link.total_pending_amount_cents)}
               </p>
             </article>
