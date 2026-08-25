@@ -3,12 +3,19 @@
 import { useMemo, useState, type ComponentProps } from "react";
 import { MembersTable } from "@/components/members-table";
 
- type MembersTableProps = ComponentProps<typeof MembersTable>;
+type MembersTableProps = ComponentProps<typeof MembersTable>;
 type PendingFilter = "all" | "with" | "without";
 
 function normalizePendingFilter(value: string | undefined): PendingFilter {
   if (value === "with" || value === "without") return value;
   return "all";
+}
+
+function formatCurrencyFromCents(value: number) {
+  return new Intl.NumberFormat("pt-BR", {
+    style: "currency",
+    currency: "BRL"
+  }).format(value / 100);
 }
 
 export function MembersPendingTable({
@@ -29,18 +36,30 @@ export function MembersPendingTable({
     return members.filter((member) => Number(member.total_pending_amount_cents ?? 0) <= 0);
   }, [members, pendingFilter]);
 
-  const pendingCount = useMemo(
-    () => members.filter((member) => Number(member.total_pending_amount_cents ?? 0) > 0).length,
-    [members]
-  );
+  const pendingSummary = useMemo(() => {
+    let count = 0;
+    let totalCents = 0;
+
+    for (const member of members) {
+      const pendingCents = Number(member.total_pending_amount_cents ?? 0);
+      if (pendingCents <= 0) continue;
+      count += 1;
+      totalCents += pendingCents;
+    }
+
+    return { count, totalCents };
+  }, [members]);
 
   return (
     <>
       <div className="mb-4 flex flex-col gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-sm font-semibold text-amber-950">Pendências financeiras</p>
+          <p className="mt-1 text-lg font-bold text-amber-950">
+            {formatCurrencyFromCents(pendingSummary.totalCents)}
+          </p>
           <p className="mt-1 text-xs text-amber-800">
-            {pendingCount} associado(s) possuem valor pendente. Ao filtrar, o XLSX exporta somente os registros exibidos.
+            {pendingSummary.count} associado(s) possuem valor pendente. Ao filtrar, o XLSX exporta somente os registros exibidos.
           </p>
         </div>
         <label className="flex min-w-[220px] items-center gap-2 text-sm font-medium text-amber-950">
