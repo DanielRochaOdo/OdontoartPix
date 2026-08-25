@@ -9,13 +9,45 @@ export const maxDuration = 300;
 const CHANNEL = "odontoartpix_processing";
 const encoder = new TextEncoder();
 
+type ActiveStreamCloser = () => void;
+
+const activeStreamClosers = new Set<ActiveStreamCloser>();
+let shutdownHandlersRegistered = false;
+let shuttingDown = false;
+
 function encodeEvent(event: string, data: unknown) {
   return encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+}
+
+function closeActiveStreams() {
+  shuttingDown = true;
+  for (const closeStream of Array.from(activeStreamClosers)) {
+    try {
+      closeStream();
+    } catch {
+      // O shutdown nao deve ser bloqueado por uma conexao individual.
+    }
+  }
+}
+
+function ensureShutdownHandlers() {
+  if (shutdownHandlersRegistered) return;
+  shutdownHandlersRegistered = true;
+  process.once("SIGTERM", closeActiveStreams);
+  process.once("SIGINT", closeActiveStreams);
 }
 
 export async function GET(request: Request) {
   const auth = await requireApiUser(["administrador", "operador", "visualizador"]);
   if (!auth.ok) return auth.response;
+
+  ensureShutdownHandlers();
+  if (shuttingDown) {
+    return new Response(null, {
+      status: 503,
+      headers: { "Cache-Control": "no-store" }
+    });
+  }
 
   const pool = getDbPool();
   const client = await pool.connect();
@@ -25,17 +57,24 @@ export async function GET(request: Request) {
   let heartbeat: ReturnType<typeof setInterval> | null = null;
   let notificationHandler: ((message: Notification) => void) | null = null;
   let abortHandler: (() => void) | null = null;
+  let shutdownCloser: ActiveStreamCloser | null = null;
 
   const cleanup = async () => {
     if (closed) return;
     closed = true;
+
+    if (shutdownCloser) {
+      activeStreamClosers.delete(shutdownCloser);
+      shutdownCloser = null;
+    }
     if (heartbeat) clearInterval(heartbeat);
     if (notificationHandler) client.off("notification", notificationHandler);
     if (abortHandler) request.signal.removeEventListener("abort", abortHandler);
+
     try {
       await client.query(`unlisten ${CHANNEL}`);
     } catch {
-      // A conexao pode ja ter sido encerrada pelo cliente.
+      // A conexao pode ja ter sido encerrada pelo cliente ou pelo processo.
     }
     client.release();
   };
@@ -67,7 +106,8 @@ export async function GET(request: Request) {
         safeEnqueue(encoder.encode(`: heartbeat ${Date.now()}\n\n`));
       }, 20_000);
 
-      abortHandler = () => {
+      const closeStream = () => {
+        if (closed) return;
         try {
           controller.close();
         } catch {
@@ -75,7 +115,17 @@ export async function GET(request: Request) {
         }
         void cleanup();
       };
+
+      shutdownCloser = closeStream;
+      activeStreamClosers.add(closeStream);
+
+      abortHandler = closeStream;
       request.signal.addEventListener("abort", abortHandler, { once: true });
+
+      if (shuttingDown) {
+        closeStream();
+        return;
+      }
 
       safeEnqueue(encodeEvent("ready", { connected: true }));
     },
