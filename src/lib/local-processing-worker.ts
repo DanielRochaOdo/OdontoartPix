@@ -459,8 +459,9 @@ async function persistFailure(input: {
   workerId: string;
   error: unknown;
   maxAttempts: number;
+  erpConsultStarted: boolean;
 }) {
-  const { job, claimed, workerId, error, maxAttempts } = input;
+  const { job, claimed, workerId, error, maxAttempts, erpConsultStarted } = input;
   const erpError = error instanceof ErpError ? error : null;
 
   // Somente erros explicitamente classificados pelo cliente do ERP
@@ -475,6 +476,8 @@ async function persistFailure(input: {
     error instanceof Error
       ? error.message
       : "Falha interna desconhecida durante o processamento.";
+  const shouldUpdateLastCheckedAt =
+    erpConsultStarted && erpError?.code !== "ERP_NOT_CONFIGURED";
   const nextRetryAt = terminal
     ? null
     : new Date(Date.now() + retryDelayMs(claimed.processing_attempts, erpError)).toISOString();
@@ -506,6 +509,10 @@ async function persistFailure(input: {
               processing_heartbeat_at = null,
               processing_error_code = $6,
               last_error = $7,
+              last_checked_at = case
+                when $8::boolean then now()
+                else last_checked_at
+              end,
               updated_at = now()
         where id = $1
           and processing_owner = $2::uuid
@@ -517,7 +524,8 @@ async function persistFailure(input: {
         terminal ? "error" : "retrying",
         nextRetryAt,
         errorCode.slice(0, 100),
-        errorMessage.slice(0, 1000)
+        errorMessage.slice(0, 1000),
+        shouldUpdateLastCheckedAt
       ]
     );
 
@@ -727,6 +735,7 @@ export async function runLocalWorkerOnce(options?: {
 
     await runWithConcurrency(claimed, concurrency, async (item) => {
       const member = await loadMember(item.member_id);
+      let erpConsultStarted = false;
       try {
         const associatedCode = String(member?.external_user_code ?? "").trim();
         const targetInstallmentId = String(item.target_installment_id ?? "").trim();
@@ -737,6 +746,7 @@ export async function runLocalWorkerOnce(options?: {
           throw new ErpError("ERP_INVALID_RESPONSE", "Associado sem parcela alvo.", false);
         }
 
+        erpConsultStarted = true;
         const result = await consultMonthlyByAssociatedCode(
           associatedCode,
           targetInstallmentId,
@@ -756,7 +766,8 @@ export async function runLocalWorkerOnce(options?: {
           claimed: item,
           workerId,
           error,
-          maxAttempts: config.maxAttemptsPerItem
+          maxAttempts: config.maxAttemptsPerItem,
+          erpConsultStarted
         });
         if (outcome.persisted) {
           if (outcome.terminal) failed += 1;
