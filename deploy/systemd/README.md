@@ -3,18 +3,17 @@
 A arquitetura de produção local usa dois componentes independentes:
 
 - `odontoartpix-app.service`: mantém o Next.js em execução;
-- `odontoartpix-worker.service` + `odontoartpix-worker.timer`: consomem a fila de processamento.
+- `odontoart-pix-worker.service` + `odontoart-pix-worker.timer`: consomem a fila de processamento.
 
 Os instaladores são seguros por padrão: **nem a aplicação web nem o timer do worker são ativados automaticamente**.
 
 ## Pré-requisitos
 
-- aplicação instalada (padrão: `/opt/odontoartpix`);
+- aplicação instalada em `/opt/odontoart-pix`;
 - `npm ci` executado no diretório da aplicação;
 - build de produção criado com `npm run build`;
 - migrations aplicadas com `npm run db:migrate`;
-- arquivo de ambiente da aplicação (padrão: `/etc/odontoartpix/app.env`);
-- arquivo de ambiente do worker (padrão: `/etc/odontoartpix/worker.env`);
+- arquivo de ambiente da aplicação e do worker em `/etc/odontoartpix/app.env`;
 - usuário Linux dos serviços (padrão: `odontoart`).
 
 ## 1. Aplicação Next.js
@@ -22,7 +21,7 @@ Os instaladores são seguros por padrão: **nem a aplicação web nem o timer do
 Instale a unit sem iniciar/publicar a aplicação:
 
 ```bash
-sudo APP_DIR=/opt/odontoartpix \
+sudo APP_DIR=/opt/odontoart-pix \
   RUN_USER=odontoart \
   ENV_FILE=/etc/odontoartpix/app.env \
   APP_HOST=127.0.0.1 \
@@ -53,26 +52,49 @@ sudo systemctl enable odontoartpix-app.service
 
 ## 2. Worker local
 
-O worker roda no ambiente que consegue acessar o PostgreSQL próprio e o ERP.
+O worker roda no ambiente que acessa o PostgreSQL próprio e o ERP.
+
+O perfil abaixo foi validado em produção em 25/08/2026 com throughput de aproximadamente `5,35 associados/s` em um lote real de 732 itens:
+
+```text
+WORKER_LIMIT=60
+WORKER_CONCURRENCY=50
+WORKER_DELAY_MS=0
+WORKER_DATABASE_POOL_MAX=30
+PROCESSING_BLOCK_SIZE=60
+PROCESSING_CONCURRENCY=50
+PROCESSING_ERP_CONCURRENCY=50
+PROCESSING_MAX_BUFFERED_RESULTS=60
+PROCESSING_PRODUCTIVE_DELAY_MS=0
+```
 
 Instalação sem ativar o timer:
 
 ```bash
-sudo APP_DIR=/opt/odontoartpix \
+sudo APP_DIR=/opt/odontoart-pix \
   RUN_USER=odontoart \
-  ENV_FILE=/etc/odontoartpix/worker.env \
+  ENV_FILE=/etc/odontoartpix/app.env \
+  SERVICE_NAME=odontoart-pix-worker \
+  TIMER_SECONDS=30 \
+  WORKER_LIMIT=60 \
+  WORKER_CONCURRENCY=50 \
+  WORKER_DELAY_MS=0 \
+  WORKER_DATABASE_POOL_MAX=30 \
+  ENABLE_TIMER=false \
   bash deploy/systemd/install-worker.sh
 ```
 
-Isso instala `odontoartpix-worker.service` e `odontoartpix-worker.timer`, mas mantém o timer desabilitado.
+Isso instala `odontoart-pix-worker.service` e `odontoart-pix-worker.timer`, mas mantém o timer desabilitado.
+
+> Não instale uma segunda unit com outro nome enquanto `odontoart-pix-worker.timer` estiver ativo. O objetivo é manter um único consumidor local da fila.
 
 ### Teste manual do worker
 
 Antes do teste, mantenha a fila pequena e controlada.
 
 ```bash
-sudo systemctl start odontoartpix-worker.service
-sudo journalctl -u odontoartpix-worker.service -n 100 --no-pager
+sudo systemctl start odontoart-pix-worker.service
+sudo journalctl -u odontoart-pix-worker.service -n 100 --no-pager
 ```
 
 Valide no banco/UI os resultados da parcela-alvo:
@@ -87,7 +109,7 @@ Valide no banco/UI os resultados da parcela-alvo:
 Somente depois da validação manual:
 
 ```bash
-sudo systemctl enable --now odontoartpix-worker.timer
+sudo systemctl enable --now odontoart-pix-worker.timer
 ```
 
 O timer apenas acorda o worker local. A criação automática de novas ondas gerais possui uma dupla trava independente:
@@ -102,7 +124,7 @@ Enquanto qualquer uma das duas estiver desabilitada, o automático não cria nov
 Parar o consumo da fila:
 
 ```bash
-sudo systemctl disable --now odontoartpix-worker.timer
+sudo systemctl disable --now odontoart-pix-worker.timer
 ```
 
 Parar a aplicação web local:
@@ -128,5 +150,5 @@ select set_local_processing_scheduler_enabled_v1(false);
 7. conferir a regra financeira e o reprocessamento de erros;
 8. configurar/validar reverse proxy HTTPS e SSE;
 9. trocar o tráfego público somente após os testes;
-10. habilitar o timer do worker;
+10. habilitar `odontoart-pix-worker.timer`;
 11. manter o scheduler de ondas automáticas desligado até uma validação posterior, se desejado.
