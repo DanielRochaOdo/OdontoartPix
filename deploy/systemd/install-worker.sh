@@ -63,8 +63,8 @@ User=${RUN_USER}
 Group=${RUN_USER}
 WorkingDirectory=${APP_DIR}
 Environment=NODE_ENV=production
-Environment=DATABASE_POOL_MAX=${WORKER_DATABASE_POOL_MAX}
 EnvironmentFile=${ENV_FILE}
+Environment=DATABASE_POOL_MAX=${WORKER_DATABASE_POOL_MAX}
 ExecStart=/usr/bin/npx tsx scripts/process-local-worker.ts --limit=${WORKER_LIMIT} --concurrency=${WORKER_CONCURRENCY} --drain --delay-ms=${WORKER_DELAY_MS}
 TimeoutStartSec=infinity
 Nice=5
