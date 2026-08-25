@@ -376,6 +376,12 @@ async function persistSuccess(input: {
     await clientQuery(client, `delete from member_plan_totals where campaign_batch_member_id = $1`, [claimed.id]);
 
     if (analysis.totalsByPlan.length > 0) {
+      const rows = analysis.totalsByPlan.map((total) => ({
+        plan_type: total.planType,
+        installments_count: total.installmentsCount,
+        total_amount_cents: total.totalAmountCents
+      }));
+
       await clientQuery(
         client,
         `insert into member_plan_totals(
@@ -387,7 +393,7 @@ async function persistSuccess(input: {
            from jsonb_to_recordset($2::jsonb) as row(
              plan_type text, installments_count integer, total_amount_cents bigint
            )`,
-        [claimed.id, JSON.stringify(analysis.totalsByPlan)]
+        [claimed.id, JSON.stringify(rows)]
       );
     }
 
@@ -456,11 +462,19 @@ async function persistFailure(input: {
 }) {
   const { job, claimed, workerId, error, maxAttempts } = input;
   const erpError = error instanceof ErpError ? error : null;
-  const retryable = erpError ? erpError.retryable : true;
+
+  // Somente erros explicitamente classificados pelo cliente do ERP
+  // podem participar do mecanismo automatico de retry.
+  // Falhas internas de persistencia/aplicacao sao terminais e nao
+  // devem ser mascaradas como erro de rede do ERP.
+  const retryable = erpError?.retryable ?? false;
   const attemptLimit = Math.min(maxAttempts, claimed.max_attempts);
   const terminal = !retryable || claimed.processing_attempts >= attemptLimit;
-  const errorCode = erpError?.code ?? "ERP_NETWORK_ERROR";
-  const errorMessage = error instanceof Error ? error.message : "Falha desconhecida durante a consulta.";
+  const errorCode = erpError?.code ?? "PROCESSING_INTERNAL_ERROR";
+  const errorMessage =
+    error instanceof Error
+      ? error.message
+      : "Falha interna desconhecida durante o processamento.";
   const nextRetryAt = terminal
     ? null
     : new Date(Date.now() + retryDelayMs(claimed.processing_attempts, erpError)).toISOString();
