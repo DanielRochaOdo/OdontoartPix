@@ -24,28 +24,8 @@ export const PROCESSING_PRESETS: Record<ProcessingPresetKey, ProcessingConfig> =
     maxPageSize: 200,
     maxPagesPerOperation: 1000
   },
+  // O antigo perfil Agressivo passa a ser o perfil intermediario.
   mediano: {
-    workerCount: 10,
-    claimBatchSize: 60,
-    perWorkerConcurrency: 8,
-    erpConcurrency: 8,
-    persistenceConcurrency: 1,
-    persistenceBatchSize: 8,
-    maxBufferedResults: 8,
-    httpConnectTimeoutMs: 15000,
-    httpReadTimeoutMs: 20000,
-    maxAttemptsPerItem: 3,
-    staleHeartbeatMs: 120000,
-    workerCycleBudgetMs: 110000,
-    shutdownReserveMs: 9000,
-    persistenceReserveMs: 5000,
-    finalizationReserveMs: 8000,
-    globalLockLeaseSeconds: 900,
-    productiveDelayMs: 10,
-    maxPageSize: 200,
-    maxPagesPerOperation: 1000
-  },
-  agressivo: {
     workerCount: 20,
     claimBatchSize: 120,
     perWorkerConcurrency: 12,
@@ -63,6 +43,30 @@ export const PROCESSING_PRESETS: Record<ProcessingPresetKey, ProcessingConfig> =
     finalizationReserveMs: 8000,
     globalLockLeaseSeconds: 900,
     productiveDelayMs: 10,
+    maxPageSize: 200,
+    maxPagesPerOperation: 1000
+  },
+  // Perfil validado em producao: bloco 60, concorrencia ERP 50, buffer 60
+  // e atraso produtivo zero. Os demais limites acompanham o perfil de
+  // producao versionado no .env.example.
+  agressivo: {
+    workerCount: 10,
+    claimBatchSize: 60,
+    perWorkerConcurrency: 50,
+    erpConcurrency: 50,
+    persistenceConcurrency: 1,
+    persistenceBatchSize: 15,
+    maxBufferedResults: 60,
+    httpConnectTimeoutMs: 30000,
+    httpReadTimeoutMs: 30000,
+    maxAttemptsPerItem: 3,
+    staleHeartbeatMs: 120000,
+    workerCycleBudgetMs: 110000,
+    shutdownReserveMs: 9000,
+    persistenceReserveMs: 5000,
+    finalizationReserveMs: 8000,
+    globalLockLeaseSeconds: 900,
+    productiveDelayMs: 0,
     maxPageSize: 200,
     maxPagesPerOperation: 1000
   }

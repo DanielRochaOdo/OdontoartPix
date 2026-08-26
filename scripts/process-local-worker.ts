@@ -37,13 +37,6 @@ function hasFlag(name: string) {
   return process.argv.includes(`--${name}`);
 }
 
-function readScheduledSyncEnabled() {
-  const raw = process.env.PROCESSING_ALLOW_SCHEDULED_SYNC?.trim().toLowerCase();
-  if (!raw || raw === "false") return false;
-  if (raw === "true") return true;
-  throw new Error("PROCESSING_ALLOW_SCHEDULED_SYNC deve ser true ou false.");
-}
-
 function sleep(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
@@ -144,18 +137,15 @@ async function main() {
     const orchestrationOnly = hasFlag("orchestration-only");
     const delayMs = readNonNegativeIntegerArgument("delay-ms") ?? DEFAULT_DRAIN_DELAY_MS;
     const maxDrainCycles = readPositiveIntegerArgument("max-cycles") ?? DEFAULT_MAX_DRAIN_CYCLES;
-    const scheduledSyncEnabled = readScheduledSyncEnabled();
     let productiveCycles = 0;
 
-    if (!scheduledSyncEnabled) {
-      console.info("[LOCAL_SCHEDULED_SYNC_ENV_DISABLED]");
-    }
-
     while (true) {
-      if (scheduledSyncEnabled) {
-        const scheduledStartResult = await startDueLocalScheduledGeneralSync();
-        console.info("[LOCAL_SCHEDULED_SYNC_START_COMPLETED]", scheduledStartResult);
-      }
+      // O estado processing_scheduler_state.scheduler_enabled e a fonte unica
+      // de verdade para a criacao automatica de novas sincronizacoes. Quando
+      // desativado pela interface, esta chamada retorna action=disabled e o
+      // worker continua consumindo normalmente os jobs iniciados manualmente.
+      const scheduledStartResult = await startDueLocalScheduledGeneralSync();
+      console.info("[LOCAL_SCHEDULED_SYNC_START_COMPLETED]", scheduledStartResult);
 
       const generalSyncResult = await runLocalGeneralSyncCycle();
       console.info("[LOCAL_GENERAL_SYNC_CYCLE_COMPLETED]", generalSyncResult);
