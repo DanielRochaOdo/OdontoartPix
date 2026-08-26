@@ -1,4 +1,5 @@
 import { dbQuery } from "@/lib/db/pool";
+import { clientQuery, withTransaction } from "@/lib/db/transaction";
 import {
   getProcessingConfig,
   setProcessingConfigCacheForCurrentProcess,
@@ -13,6 +14,7 @@ import {
 type ProcessingSettingsRow = {
   preset_key: ProcessingPresetKey | null;
   scheduled_interval_minutes: 1 | 5 | 30 | 60 | 120 | null;
+  scheduler_enabled: boolean | null;
 };
 
 type ScheduleTimestampRow = {
@@ -20,7 +22,9 @@ type ScheduleTimestampRow = {
   status?: string | null;
 };
 
-function normalizeInterval(value: unknown): 1 | 5 | 30 | 60 | 120 {
+export type ScheduledIntervalMinutes = 1 | 5 | 30 | 60 | 120;
+
+function normalizeInterval(value: unknown): ScheduledIntervalMinutes {
   return value === 1 || value === 5 || value === 30 || value === 60 || value === 120
     ? value
     : 60;
@@ -29,25 +33,31 @@ function normalizeInterval(value: unknown): 1 | 5 | 30 | 60 | 120 {
 export async function getProcessingSettingsView() {
   const effectiveConfig = await getProcessingConfig();
   let storedPresetKey: ProcessingPresetKey | null = null;
-  let scheduledIntervalMinutes: 1 | 5 | 30 | 60 | 120 = 60;
+  let scheduledIntervalMinutes: ScheduledIntervalMinutes = 60;
+  let automaticSyncEnabled = false;
 
   try {
     const result = await dbQuery<ProcessingSettingsRow>(
-      `select preset_key,
-              scheduled_interval_minutes
-         from processing_settings
-        where settings_key = 'default'
+      `select ps.preset_key,
+              ps.scheduled_interval_minutes,
+              coalesce(s.scheduler_enabled, false) as scheduler_enabled
+         from processing_settings ps
+         left join processing_scheduler_state s
+           on s.settings_key = ps.settings_key
+        where ps.settings_key = 'default'
         limit 1`
     );
 
     storedPresetKey = result.rows[0]?.preset_key ?? null;
     scheduledIntervalMinutes = normalizeInterval(result.rows[0]?.scheduled_interval_minutes);
+    automaticSyncEnabled = result.rows[0]?.scheduler_enabled === true;
   } catch {}
 
   return {
     effectiveConfig,
     selectedPresetKey: storedPresetKey ?? matchProcessingPreset(effectiveConfig),
     scheduledIntervalMinutes,
+    automaticSyncEnabled,
     scheduledIntervalOptions: [1, 5, 30, 60, 120] as const,
     presets: PROCESSING_PRESETS
   };
@@ -60,7 +70,8 @@ export async function getProcessingScheduleView() {
     lastProcessingAt: null as string | null,
     nextProcessingAt: null as string | null,
     nextProcessingDue: false,
-    intervalMinutes: 60 as 1 | 5 | 30 | 60 | 120
+    automaticSyncEnabled: false,
+    intervalMinutes: 60 as ScheduledIntervalMinutes
   };
 
   try {
@@ -71,8 +82,8 @@ export async function getProcessingScheduleView() {
           where settings_key = 'default'
           limit 1`
       ),
-      dbQuery<ScheduleTimestampRow>(
-        `select next_run_at::text as value
+      dbQuery<{ next_run_at: string | null; scheduler_enabled: boolean }>(
+        `select next_run_at::text, scheduler_enabled
            from processing_scheduler_state
           where settings_key = 'default'
           limit 1`
@@ -98,17 +109,22 @@ export async function getProcessingScheduleView() {
     const intervalMinutes = normalizeInterval(
       settingsResult.rows[0]?.scheduled_interval_minutes
     );
+    const automaticSyncEnabled = schedulerResult.rows[0]?.scheduler_enabled === true;
     const lastProcessingAt = lastStartedResult.rows[0]?.value ?? null;
     const lastPulseAt = lastFinishedResult.rows[0]?.value ?? null;
     const lastPulseStatus = lastFinishedResult.rows[0]?.status ?? null;
-    const schedulerNextRunAt = schedulerResult.rows[0]?.value ?? null;
+    const schedulerNextRunAt = automaticSyncEnabled
+      ? schedulerResult.rows[0]?.next_run_at ?? null
+      : null;
     let nextProcessingAt = schedulerNextRunAt ? new Date(schedulerNextRunAt) : null;
 
     if (nextProcessingAt && Number.isNaN(nextProcessingAt.getTime())) {
       nextProcessingAt = null;
     }
 
-    const nextProcessingDue = Boolean(nextProcessingAt && nextProcessingAt.getTime() <= Date.now());
+    const nextProcessingDue = Boolean(
+      automaticSyncEnabled && nextProcessingAt && nextProcessingAt.getTime() <= Date.now()
+    );
     if (nextProcessingDue) nextProcessingAt = null;
 
     return {
@@ -117,6 +133,7 @@ export async function getProcessingScheduleView() {
       lastProcessingAt,
       nextProcessingAt: nextProcessingAt?.toISOString() ?? null,
       nextProcessingDue,
+      automaticSyncEnabled,
       intervalMinutes
     };
   } catch {
@@ -124,10 +141,52 @@ export async function getProcessingScheduleView() {
   }
 }
 
+export async function setAutomaticSyncSettings(
+  enabled: boolean,
+  scheduledIntervalMinutes: ScheduledIntervalMinutes,
+  updatedBy: string
+) {
+  const interval = normalizeInterval(scheduledIntervalMinutes);
+
+  return withTransaction(async (client) => {
+    const settings = await clientQuery(
+      client,
+      `update processing_settings
+          set scheduled_interval_minutes = $1,
+              updated_by = $2::uuid,
+              updated_at = now()
+        where settings_key = 'default'`,
+      [interval, updatedBy]
+    );
+
+    if ((settings.rowCount ?? 0) !== 1) {
+      throw new Error("PROCESSING_SETTINGS_NOT_FOUND");
+    }
+
+    const scheduler = await clientQuery<{ enabled: boolean }>(
+      client,
+      `select set_local_processing_scheduler_enabled_v1($1::boolean) as enabled`,
+      [enabled]
+    );
+
+    if (enabled) {
+      await clientQuery(
+        client,
+        `select recalculate_local_processing_next_run_v1(now())`
+      );
+    }
+
+    return {
+      automaticSyncEnabled: scheduler.rows[0]?.enabled === true,
+      scheduledIntervalMinutes: interval
+    };
+  });
+}
+
 export async function applyProcessingPreset(
   presetKey: ProcessingPresetKey,
   updatedBy: string,
-  scheduledIntervalMinutes: 1 | 5 | 30 | 60 | 120 = 60
+  scheduledIntervalMinutes: ScheduledIntervalMinutes = 60
 ) {
   const config = PROCESSING_PRESETS[presetKey];
   const storedConfig = {
