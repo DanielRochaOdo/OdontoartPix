@@ -276,21 +276,21 @@ function classifyFinancialState(
     };
   }
 
-  if (!baseValue.warning && paidValue.cents >= baseAmountCents) {
+  if (baseValue.warning) {
     return {
-      status: "paid",
+      status: "invalid",
       baseAmountCents,
       paidAmountCents: paidValue.cents,
-      description
+      description,
+      reason: `A parcela ${installmentCode} possui Valor invalido.`
     };
   }
 
   return {
-    status: "invalid",
+    status: "paid",
     baseAmountCents,
     paidAmountCents: paidValue.cents,
-    description,
-    reason: `A parcela ${installmentCode} possui DescricaoRecebimento diferente de ABERTO, mas ValorPago e menor que Valor.`
+    description
   };
 }
 
@@ -332,6 +332,15 @@ function toInstallment(
     planType: optionalText(item.Tipo_plano) ?? optionalText(item.DescricaoParcela) ?? "Nao informado",
     observation: optionalText(item.Observacao) ?? optionalText(item.DescricaoPagamento)
   };
+}
+
+function pendingAmountForInstallment(installment: MonthlyInstallment) {
+  if (normalizedReceiptDescription(installment.paymentDescription) === OPEN_RECEIPT_DESCRIPTION) {
+    return installment.baseAmountCents;
+  }
+
+  if (installment.paidAmountCents == null) return 0;
+  return Math.max(0, installment.baseAmountCents - installment.paidAmountCents);
 }
 
 function analyzeNormalizedPayload(
@@ -399,33 +408,45 @@ function analyzeNormalizedPayload(
     );
   }
 
-  const pendingInstallments = installments.filter(
-    (installment) =>
-      normalizedReceiptDescription(installment.paymentDescription) === OPEN_RECEIPT_DESCRIPTION
-  );
+  const pendingInstallments = installments
+    .map((installment) => ({
+      installment,
+      pendingAmountCents: pendingAmountForInstallment(installment)
+    }))
+    .filter((item) => item.pendingAmountCents > 0);
+
   const grouped = new Map<string, { installmentsCount: number; totalAmountCents: number }>();
-  for (const installment of pendingInstallments) {
+  for (const { installment, pendingAmountCents } of pendingInstallments) {
     const current = grouped.get(installment.planType) ?? {
       installmentsCount: 0,
       totalAmountCents: 0
     };
     current.installmentsCount += 1;
-    current.totalAmountCents += installment.baseAmountCents;
+    current.totalAmountCents += pendingAmountCents;
     grouped.set(installment.planType, current);
   }
 
   const targetPaid = targetState.status === "paid";
+  const targetInstallment = installments.find(
+    (installment) => installment.installmentCode === targetId
+  );
+  const targetPendingAmountCents = targetInstallment
+    ? pendingAmountForInstallment(targetInstallment)
+    : 0;
+
   return {
     paymentStatus: targetPaid ? "paid" : "unpaid",
     paymentStatusSource: targetPaid ? "erp_explicit" : "erp_open_invoice",
     message:
       payload.message ||
       (targetPaid
-        ? "Parcela paga conforme DescricaoRecebimento e ValorPago do ERP."
+        ? targetPendingAmountCents > 0
+          ? "Parcela paga com pendencia conforme DescricaoRecebimento e ValorPago do ERP."
+          : "Parcela paga conforme DescricaoRecebimento e ValorPago do ERP."
         : "Parcela em aberto conforme DescricaoRecebimento do ERP."),
     installmentsCount: installments.length,
     totalPendingAmountCents: pendingInstallments.reduce(
-      (sum, installment) => sum + installment.baseAmountCents,
+      (sum, item) => sum + item.pendingAmountCents,
       0
     ),
     totalPaidAmountCents: installments.reduce(
