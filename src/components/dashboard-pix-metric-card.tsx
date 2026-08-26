@@ -4,6 +4,11 @@ import { useEffect, useRef, useState } from "react";
 import { ManualDashboardIcon } from "@/components/manual-dashboard-icon";
 import { formatCurrencyBR } from "@/lib/money";
 
+type PixDetails = {
+  installmentCount: number;
+  memberCount: number;
+};
+
 export function DashboardPixMetricCard({
   amountCents,
   installmentCount,
@@ -19,6 +24,8 @@ export function DashboardPixMetricCard({
   const initializedKeyRef = useRef<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [previous, setPrevious] = useState<number | null>(null);
+  const [pixDetails, setPixDetails] = useState<PixDetails | null>(null);
+  const [detailsLoading, setDetailsLoading] = useState(false);
 
   useEffect(() => {
     try {
@@ -63,11 +70,43 @@ export function DashboardPixMetricCard({
 
   const variation = previous === null ? null : Math.max(0, amountCents - previous);
 
+  async function openCard() {
+    setModalOpen(true);
+    setDetailsLoading(true);
+    setPixDetails(null);
+
+    try {
+      const [campaignScope = "all", batchScope = "all"] = scopeKey.split("|");
+      const params = new URLSearchParams();
+      if (campaignScope && campaignScope !== "all") params.set("campaignIds", campaignScope);
+      if (batchScope && batchScope !== "all") params.set("batchIds", batchScope);
+
+      const query = params.toString();
+      const response = await fetch(`/api/dashboard/pix-details${query ? `?${query}` : ""}`, {
+        cache: "no-store"
+      });
+      if (!response.ok) throw new Error("Falha ao carregar detalhes do Pix.");
+
+      const payload = await response.json();
+      const data = payload?.data;
+      setPixDetails({
+        installmentCount: Number(data?.installmentCount ?? installmentCount),
+        memberCount: Number(data?.memberCount ?? 0)
+      });
+    } catch {
+      setPixDetails(null);
+    } finally {
+      setDetailsLoading(false);
+    }
+  }
+
+  const displayedInstallmentCount = pixDetails?.installmentCount ?? installmentCount;
+
   return (
     <>
       <button
         type="button"
-        onClick={() => setModalOpen(true)}
+        onClick={openCard}
         className="group flex min-h-[112px] w-full items-center gap-4 rounded-2xl border border-[#d6e3ef] bg-white p-4 text-left shadow-sm transition hover:border-[#00a98f]/70 hover:bg-[#f4fffc] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#00a98f] dark:border-[#284665] dark:bg-[#071b34]/90 dark:hover:border-[#00E5C3]/70 dark:hover:bg-[#0b2440]"
       >
         <span className="inline-flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-[#22D58C]/50 bg-[#22D58C]/10 text-[#22D58C] transition group-hover:shadow-[0_0_18px_rgba(34,213,140,0.22)]">
@@ -78,7 +117,7 @@ export function DashboardPixMetricCard({
           <span className="mt-1 block text-2xl font-semibold leading-tight tracking-tight text-[#00a98f] dark:text-[#18d8b6]">
             {formatCurrencyBR(amountCents)}
           </span>
-          <span className="mt-1 block text-[10px] text-[#7b91a3]">Clique para ver a quantidade de parcelas</span>
+          <span className="mt-1 block text-[10px] text-[#7b91a3]">Clique para ver parcelas e associados</span>
         </span>
       </button>
 
@@ -92,7 +131,7 @@ export function DashboardPixMetricCard({
             aria-modal="true"
             aria-labelledby="dashboard-pix-metric-title"
             onMouseDown={(event) => event.stopPropagation()}
-            className="w-full max-w-xl rounded-2xl border border-[#d6e3ef] bg-white p-5 text-[#102033] shadow-2xl dark:border-[#284665] dark:bg-[#071b34] dark:text-[#f5f8ff]"
+            className="w-full max-w-2xl rounded-2xl border border-[#d6e3ef] bg-white p-5 text-[#102033] shadow-2xl dark:border-[#284665] dark:bg-[#071b34] dark:text-[#f5f8ff]"
           >
             <div className="flex items-start justify-between gap-4">
               <div>
@@ -109,14 +148,23 @@ export function DashboardPixMetricCard({
               </button>
             </div>
 
-            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+            <div className="mt-5 grid gap-3 sm:grid-cols-3">
               <div className="rounded-xl border border-[#d6e3ef] bg-[#f5f8fc] p-4 dark:border-[#284665] dark:bg-[#0b2133]">
                 <p className="text-xs text-[#5d7184] dark:text-[#9bb2c7]">Valor pago via Pix</p>
                 <p className="mt-1 text-2xl font-semibold text-[#00a98f] dark:text-[#18d8b6]">{formatCurrencyBR(amountCents)}</p>
               </div>
               <div className="rounded-xl border border-[#d6e3ef] bg-[#f5f8fc] p-4 dark:border-[#284665] dark:bg-[#0b2133]">
                 <p className="text-xs text-[#5d7184] dark:text-[#9bb2c7]">Quantidade de parcelas</p>
-                <p className="mt-1 text-2xl font-semibold">{installmentCount.toLocaleString("pt-BR")}</p>
+                <p className="mt-1 text-2xl font-semibold">
+                  {detailsLoading ? "..." : displayedInstallmentCount.toLocaleString("pt-BR")}
+                </p>
+              </div>
+              <div className="rounded-xl border border-[#d6e3ef] bg-[#f5f8fc] p-4 dark:border-[#284665] dark:bg-[#0b2133]">
+                <p className="text-xs text-[#5d7184] dark:text-[#9bb2c7]">Associados únicos</p>
+                <p className="mt-1 text-2xl font-semibold">
+                  {detailsLoading ? "..." : pixDetails ? pixDetails.memberCount.toLocaleString("pt-BR") : "Não disponível"}
+                </p>
+                <p className="mt-1 text-[10px] text-[#7b91a3]">Um associado é contado uma vez, mesmo com várias parcelas Pix.</p>
               </div>
             </div>
 
