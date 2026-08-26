@@ -314,7 +314,9 @@ async function persistSuccess(input: {
   const isPaid = explicitPayment(target);
   const targetAmountCents = Math.max(Math.round(target.baseAmountCents), 0);
   const paidAmountCents = isPaid ? Math.max(Math.round(target.paidAmountCents ?? 0), 0) : 0;
-  const pendingAmountCents = isPaid ? 0 : targetAmountCents;
+  const pendingAmountCents = isPaid
+    ? Math.max(targetAmountCents - paidAmountCents, 0)
+    : targetAmountCents;
   const paymentStatus = isPaid ? "paid" : "unpaid";
   const paymentStatusSource = isPaid ? "erp_explicit" : "erp_open_invoice";
 
@@ -477,10 +479,6 @@ async function persistFailure(input: {
   const { job, claimed, workerId, error, maxAttempts, erpConsultStarted } = input;
   const erpError = error instanceof ErpError ? error : null;
 
-  // Somente erros explicitamente classificados pelo cliente do ERP
-  // podem participar do mecanismo automatico de retry.
-  // Falhas internas de persistencia/aplicacao sao terminais e nao
-  // devem ser mascaradas como erro de rede do ERP.
   const retryable = erpError?.retryable ?? false;
   const attemptLimit = Math.min(maxAttempts, claimed.max_attempts);
   const terminal = !retryable || claimed.processing_attempts >= attemptLimit;
@@ -508,8 +506,6 @@ async function persistFailure(input: {
     );
     if (!owned.rows[0]) return { terminal, persisted: false };
 
-    // A falha tecnica nunca apaga payment_status nem os valores da ultima
-    // verdade financeira confirmada pelo ERP.
     await clientQuery(
       client,
       `update campaign_batch_members
@@ -620,8 +616,6 @@ async function releaseAndFinalizeJob(job: LocalJob, workerId: string) {
     );
     const current = control.rows[0];
     if (!current) {
-      // Jobs de escopo exato podem ser finalizados pelo trigger de seguranca
-      // assim que o unico item terminal e contabilizado.
       const finalized = await clientQuery<{ status: string }>(
         client,
         `select status from processing_jobs where id = $1`,

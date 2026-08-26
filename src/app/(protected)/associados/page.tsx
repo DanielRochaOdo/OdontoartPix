@@ -1,4 +1,4 @@
-import { MembersPendingTable } from "@/components/members-pending-table";
+import { MembersTable } from "@/components/members-table";
 import { canAdmin, getCurrentProfile } from "@/lib/auth";
 import { getMembers } from "@/lib/data";
 import { PageSurface } from "@/components/page-surface";
@@ -35,13 +35,15 @@ export default async function MembersPage({
     status: typeof resolvedSearchParams.status === "string" ? resolvedSearchParams.status : "all",
     payment:
       typeof resolvedSearchParams.payment === "string" ? resolvedSearchParams.payment : "all",
+    paidPending:
+      typeof resolvedSearchParams.paidPending === "string"
+        ? resolvedSearchParams.paidPending
+        : "all",
     receipt:
       typeof resolvedSearchParams.receipt === "string" ? resolvedSearchParams.receipt : "all",
     campaign: readSearchParamArray(resolvedSearchParams.campaign),
     batch: readSearchParamArray(resolvedSearchParams.batch)
   };
-  const initialPendingFilter =
-    typeof resolvedSearchParams.pending === "string" ? resolvedSearchParams.pending : "all";
 
   const [members, profile] = await Promise.all([
     getMembers({
@@ -60,10 +62,9 @@ export default async function MembersPage({
         description="Consulte CodigoAssociadoEmpresa, parcela, CPF, campanha, lote, status e pendencias. Use os filtros ou clique nos cabecalhos para ordenar."
       />
       <div className="mt-6">
-        <MembersPendingTable
+        <MembersTable
           members={members}
           initialFilters={initialFilters}
-          initialPendingFilter={initialPendingFilter}
           canReprocessErrors={canAdmin(profile?.role)}
         />
       </div>

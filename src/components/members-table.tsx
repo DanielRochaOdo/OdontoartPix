@@ -7,6 +7,11 @@ import * as XLSX from "xlsx";
 import { MemberActions } from "@/components/member-actions";
 import { emitMetricsSync } from "@/lib/metrics-sync";
 import {
+  isPaidWithPending,
+  matchesPaidPendingFilter,
+  normalizePaidPendingFilter
+} from "@/lib/paid-pending";
+import {
   INSTALLMENT_NOT_FOUND_LABEL,
   isMissingTargetInstallmentError
 } from "@/lib/processing-errors";
@@ -53,10 +58,11 @@ type Row = {
   receiptDescription: string;
   paymentDate: string;
   pending: number;
+  paidWithPending: boolean;
   missingInstallment: boolean;
 };
 
-type SortKey = keyof Omit<Row, "id" | "missingInstallment">;
+type SortKey = keyof Omit<Row, "id" | "missingInstallment" | "paidWithPending">;
 
 type BulkErrorReprocessProgress = {
   requestId: string;
@@ -200,6 +206,7 @@ export function MembersTable({
     dueDateTo?: string;
     status?: string;
     payment?: string;
+    paidPending?: string;
     receipt?: string;
     campaign?: string[];
     batch?: string[];
@@ -229,6 +236,7 @@ export function MembersTable({
   const [filters, setFilters] = useState({
     status: initialFilters?.status ? normalizeStatus(initialFilters.status) : "all",
     payment: normalizePayment(initialFilters?.payment ?? "all"),
+    paidPending: normalizePaidPendingFilter(initialFilters?.paidPending),
     receipt: initialFilters?.receipt?.trim() || "all",
     campaign:
       initialFilters?.campaign && initialFilters.campaign.length === 1
@@ -256,6 +264,8 @@ export function MembersTable({
           processingStatus: item.processing_status,
           lastError: item.last_error
         });
+        const payment = normalizePayment(item.payment_status ?? "-");
+        const pending = Number(item.total_pending_amount_cents ?? 0);
 
         return {
           id: item.id,
@@ -269,10 +279,11 @@ export function MembersTable({
           campaign: campaign?.name ?? "-",
           batch: batch?.name ?? "-",
           status: normalizeStatus(item.processing_status),
-          payment: normalizePayment(item.payment_status ?? "-"),
+          payment,
           receiptDescription: String(item.payment_description ?? "").trim() || "-",
           paymentDate: formatDueDate(item.payment_date_text ?? "") || "-",
-          pending: item.total_pending_amount_cents ?? 0,
+          pending,
+          paidWithPending: isPaidWithPending(payment, pending),
           missingInstallment
         };
       }),
@@ -305,6 +316,7 @@ export function MembersTable({
             row.status,
             row.missingInstallment ? INSTALLMENT_NOT_FOUND_LABEL : "",
             row.payment,
+            row.paidWithPending ? "pago com pendencia" : "",
             row.receiptDescription,
             row.paymentDate
           ]
@@ -324,6 +336,7 @@ export function MembersTable({
             })() &&
             (filters.status === "all" || row.status === filters.status) &&
             (filters.payment === "all" || row.payment === filters.payment) &&
+            matchesPaidPendingFilter(row.payment, row.pending, filters.paidPending) &&
             (filters.receipt === "all" || row.receiptDescription === filters.receipt) &&
             (seededCampaignIds.length > 0
               ? seededCampaignIds.includes(row.campaignId)
@@ -531,7 +544,14 @@ export function MembersTable({
     setDueDateTo("");
     setSeededCampaignIds([]);
     setSeededBatchIds([]);
-    setFilters({ status: "all", payment: "all", receipt: "all", campaign: "all", batch: "all" });
+    setFilters({
+      status: "all",
+      payment: "all",
+      paidPending: "all",
+      receipt: "all",
+      campaign: "all",
+      batch: "all"
+    });
     setPage(1);
     router.replace("/associados");
   }
@@ -551,7 +571,7 @@ export function MembersTable({
         Status: row.missingInstallment
           ? `Erro — ${INSTALLMENT_NOT_FOUND_LABEL}`
           : statusLabel(row.status),
-        Pagamento: paymentLabel(row.payment),
+        Pagamento: row.paidWithPending ? "Pago com pendência" : paymentLabel(row.payment),
         "Tipo de Pagto": row.receiptDescription,
         "Data de Pagamento": row.paymentDate === "-" ? "" : row.paymentDate,
         Pendencia: `R$ ${(row.pending / 100).toFixed(2).replace(".", ",")}`
@@ -559,7 +579,7 @@ export function MembersTable({
     );
     worksheet["!cols"] = [
       { wch: 32 }, { wch: 28 }, { wch: 18 }, { wch: 16 }, { wch: 18 }, { wch: 28 },
-      { wch: 28 }, { wch: 28 }, { wch: 16 }, { wch: 22 }, { wch: 20 }, { wch: 16 }
+      { wch: 28 }, { wch: 28 }, { wch: 20 }, { wch: 22 }, { wch: 20 }, { wch: 16 }
     ];
 
     const workbook = XLSX.utils.book_new();
@@ -567,10 +587,20 @@ export function MembersTable({
     XLSX.writeFile(workbook, `associados-filtrados-${new Date().toISOString().slice(0, 10)}.xlsx`);
   }
 
-  function updateSelectFilter(key: "status" | "payment" | "receipt" | "campaign" | "batch", value: string) {
+  function updateSelectFilter(
+    key: "status" | "payment" | "paidPending" | "receipt" | "campaign" | "batch",
+    value: string
+  ) {
     if (key === "campaign") setSeededCampaignIds([]);
     if (key === "batch") setSeededBatchIds([]);
-    const normalizedValue = key === "status" ? normalizeStatus(value) : key === "payment" ? normalizePayment(value) : value;
+    const normalizedValue =
+      key === "status"
+        ? normalizeStatus(value)
+        : key === "payment"
+          ? normalizePayment(value)
+          : key === "paidPending"
+            ? normalizePaidPendingFilter(value)
+            : value;
     setFilters((current) => ({ ...current, [key]: normalizedValue }));
     setPage(1);
   }
@@ -675,6 +705,19 @@ export function MembersTable({
             ) : null}
           </div>
           <div className="hidden flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm"><span className="whitespace-nowrap text-slate-500">Vencimento:</span><input type="date" value={dueDateFrom} max={dueDateTo || undefined} onChange={(event) => { setDueDateFrom(event.target.value); setPage(1); }} aria-label="Vencimento inicial" className="min-w-0 bg-transparent text-sm outline-none" /><span className="text-slate-400">até</span><input type="date" value={dueDateTo} min={dueDateFrom || undefined} onChange={(event) => { setDueDateTo(event.target.value); setPage(1); }} aria-label="Vencimento final" className="min-w-0 bg-transparent text-sm outline-none" /></div>
+          <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">
+            <span className="whitespace-nowrap text-slate-500">Pago com pendência?</span>
+            <select
+              value={filters.paidPending}
+              onChange={(event) => updateSelectFilter("paidPending", event.target.value)}
+              className="min-w-0 flex-1 bg-transparent text-sm text-slate-700 outline-none"
+              aria-label="Filtrar pago com pendência"
+            >
+              <option value="all">Selecione</option>
+              <option value="yes">Sim</option>
+              <option value="no">Não</option>
+            </select>
+          </label>
           {(["status", "payment", "receipt", "campaign", "batch"] as const).map((key) => (
             <select key={key} value={filters[key]} onChange={(event) => updateSelectFilter(key, event.target.value)} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">
               <option value="all">Todos: {key === "payment" ? "Pagamento" : key === "receipt" ? "Tipo de Pagto" : key === "campaign" ? "Campanha" : key === "batch" ? "Lote" : "Status"}</option>
@@ -697,7 +740,7 @@ export function MembersTable({
               <tr><td colSpan={columns.length + 1} className="px-4 py-8 text-center text-slate-500">Nenhum associado encontrado.</td></tr>
             ) : paginatedRows.map((row) => (
               <tr key={row.id}>
-                <td className="px-4 py-3 font-medium">{row.name}</td><td className="px-4 py-3">{row.associatedCode || "-"}</td><td className="px-4 py-3">{row.installment || "-"}</td><td className="px-4 py-3">{row.dueDate || "-"}</td><td className="px-4 py-3">{row.cpf ? `***.***.***-${row.cpf.slice(-2)}` : "-"}</td><td className="px-4 py-3">{row.campaign}</td><td className="px-4 py-3">{row.batch}</td><td className="px-4 py-3">{row.missingInstallment ? <span className="font-medium text-rose-700">Erro — {INSTALLMENT_NOT_FOUND_LABEL}</span> : statusLabel(row.status)}</td><td className="px-4 py-3">{paymentLabel(row.payment)}</td><td className="px-4 py-3">{row.receiptDescription}</td><td className="px-4 py-3">{row.paymentDate}</td><td className="px-4 py-3">R$ {(row.pending / 100).toFixed(2).replace(".", ",")}</td>
+                <td className={`px-4 py-3 font-medium ${row.paidWithPending ? "font-semibold text-amber-700" : ""}`}>{row.name}</td><td className="px-4 py-3">{row.associatedCode || "-"}</td><td className="px-4 py-3">{row.installment || "-"}</td><td className="px-4 py-3">{row.dueDate || "-"}</td><td className="px-4 py-3">{row.cpf ? `***.***.***-${row.cpf.slice(-2)}` : "-"}</td><td className="px-4 py-3">{row.campaign}</td><td className="px-4 py-3">{row.batch}</td><td className="px-4 py-3">{row.missingInstallment ? <span className="font-medium text-rose-700">Erro — {INSTALLMENT_NOT_FOUND_LABEL}</span> : statusLabel(row.status)}</td><td className="px-4 py-3">{row.paidWithPending ? "Pago com pendência" : paymentLabel(row.payment)}</td><td className="px-4 py-3">{row.receiptDescription}</td><td className="px-4 py-3">{row.paymentDate}</td><td className="px-4 py-3">R$ {(row.pending / 100).toFixed(2).replace(".", ",")}</td>
                 <td className="min-w-[140px] px-4 py-3"><div className="flex flex-nowrap items-center gap-2 whitespace-nowrap"><Link className="inline-flex h-9 w-9 items-center justify-center rounded-md border text-slate-600 transition hover:bg-slate-50" href={`/associados/${row.id}`} aria-label="Abrir associado" title="Abrir associado"><svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z" /><circle cx="12" cy="12" r="2.5" /></svg></Link><MemberActions memberId={row.id} canDeleteMissingInstallment={row.missingInstallment} /></div></td>
               </tr>
             ))}
