@@ -74,6 +74,7 @@ export const DashboardMetricsSchema = z.object({
 export const DashboardReceiptStatusSchema = z.object({
   label: z.string(),
   installmentCount: NumberSchema,
+  associateCount: NumberSchema,
   amountCents: NumberSchema
 });
 
@@ -284,6 +285,7 @@ export async function getDashboardReceiptStatusMetrics(filters: DashboardMetrics
       `with selected as (
          select
            cbm.id,
+           cbm.member_id,
            cbm.campaign_id,
            cbm.batch_id,
            target.paid_amount_cents,
@@ -306,6 +308,7 @@ export async function getDashboardReceiptStatusMetrics(filters: DashboardMetrics
        select
          payment_description as label,
          count(*)::int as "installmentCount",
+         count(distinct member_id)::int as "associateCount",
          coalesce(sum(paid_amount_cents), 0)::float8 as "amountCents"
        from selected
        where paid_amount_cents is not null

@@ -137,6 +137,7 @@ function ReceiptStatusChart({ statuses }: { statuses: DashboardReceiptStatus[] }
   const values = statuses.map((status, index) => ({
     label: status.label,
     value: status.installmentCount,
+    associateCount: status.associateCount,
     amountCents: status.amountCents,
     color: RECEIPT_STATUS_COLORS[index % RECEIPT_STATUS_COLORS.length]
   }));
@@ -189,7 +190,7 @@ function ReceiptStatusChart({ statuses }: { statuses: DashboardReceiptStatus[] }
                 </Pie>
                 <Tooltip
                   formatter={(value, _name, item) => [
-                    `${Number(value ?? 0).toLocaleString("pt-BR")} parcela(s)`,
+                    `${Number(value ?? 0).toLocaleString("pt-BR")} parcela(s) · ${Number(item.payload.associateCount ?? 0).toLocaleString("pt-BR")} associado(s)`,
                     item.payload.label
                   ]}
                   contentStyle={{
@@ -230,6 +231,7 @@ function ReceiptStatusChart({ statuses }: { statuses: DashboardReceiptStatus[] }
                   <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-1">
                     <span className="flex min-w-0 items-start gap-2 break-words text-sm font-medium text-[#30485d] dark:text-[#c4d3e2]"><span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: item.color }} />{item.label}</span>
                     <span className="shrink-0 text-right text-sm font-semibold text-[#102033] dark:text-[#edf6ff]">{item.value.toLocaleString("pt-BR")} parcela(s)</span>
+                    <p className="col-span-2 text-sm text-[#5d7184] dark:text-[#a9bdd0]">Associados: <strong className="text-[#102033] dark:text-[#edf6ff]">{item.associateCount.toLocaleString("pt-BR")}</strong></p>
                     <p className="col-span-2 text-sm text-[#5d7184] dark:text-[#a9bdd0]">Equivalente: <strong className="text-[#102033] dark:text-[#edf6ff]">{formatCurrencyBR(item.amountCents)}</strong></p>
                   </div>
                 </div>
