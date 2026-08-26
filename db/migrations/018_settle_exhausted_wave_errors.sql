@@ -1,11 +1,12 @@
 -- Registros que ja atingiram o limite de tentativas nao podem ficar fora do
--- fechamento matematico da onda. Quando o job termina, qualquer item ainda
--- pendente e sem possibilidade de novo claim vira erro terminal da onda e
--- passa a compor processed_items/error_items.
+-- fechamento matematico da onda. Assim que o worker assume o job, qualquer
+-- item ainda pendente e sem possibilidade de novo claim vira erro terminal da
+-- onda e passa a compor processed_items/error_items imediatamente.
 --
--- A proxima onda automatica continua reabrindo os nao pagos e zerando as
--- tentativas pelo fluxo scheduled_recheck da aplicacao. Portanto este erro e
--- terminal apenas para a onda atual, nunca um bloqueio permanente.
+-- A checagem tambem ocorre no fechamento do job como rede de seguranca para
+-- estados legados. A proxima onda automatica continua reabrindo os nao pagos
+-- e zerando as tentativas pelo fluxo scheduled_recheck da aplicacao. Portanto
+-- este erro e terminal apenas para a onda atual, nunca um bloqueio permanente.
 
 create or replace function settle_exhausted_wave_errors_v1()
 returns trigger
@@ -14,8 +15,8 @@ as $$
 declare
   exhausted_count integer := 0;
 begin
-  if new.status = 'completed'
-     and old.status is distinct from 'completed'
+  if new.status in ('running', 'completed')
+     and old.status is distinct from new.status
      and new.batch_id is not null then
     with exhausted as (
       update campaign_batch_members
