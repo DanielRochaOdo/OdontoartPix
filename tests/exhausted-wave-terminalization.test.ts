@@ -105,7 +105,7 @@ async function createScenario(client: PoolClient) {
      ) values (
        $1::uuid,
        $2::uuid,
-       'running',
+       'queued',
        1,
        0,
        0,
@@ -125,26 +125,26 @@ async function createScenario(client: PoolClient) {
 }
 
 describeDatabase("terminalizacao de limite por onda", () => {
-  it("converte item esgotado em erro e fecha o job em 100%", async () => {
+  it("converte item esgotado em erro assim que o job inicia", async () => {
     await withRollback(async (client) => {
       const { linkId, jobId } = await createScenario(client);
 
-      const finished = await client.query<{
+      const started = await client.query<{
         total_items: number;
         processed_items: number;
         success_items: number;
         error_items: number;
       }>(
         `update processing_jobs
-            set status = 'completed',
-                finished_at = now(),
+            set status = 'running',
+                started_at = now(),
                 updated_at = now()
           where id = $1::uuid
           returning total_items, processed_items, success_items, error_items`,
         [jobId]
       );
 
-      expect(finished.rows[0]).toMatchObject({
+      expect(started.rows[0]).toMatchObject({
         total_items: 1,
         processed_items: 1,
         success_items: 0,
@@ -170,29 +170,29 @@ describeDatabase("terminalizacao de limite por onda", () => {
     });
   });
 
-  it("nao contabiliza o mesmo erro novamente em atualizacoes posteriores", async () => {
+  it("nao contabiliza o mesmo erro novamente no fechamento do job", async () => {
     await withRollback(async (client) => {
       const { jobId } = await createScenario(client);
 
       await client.query(
         `update processing_jobs
-            set status = 'completed', updated_at = now()
+            set status = 'running', started_at = now(), updated_at = now()
           where id = $1::uuid`,
         [jobId]
       );
 
-      const second = await client.query<{
+      const finished = await client.query<{
         processed_items: number;
         error_items: number;
       }>(
         `update processing_jobs
-            set updated_at = now()
+            set status = 'completed', finished_at = now(), updated_at = now()
           where id = $1::uuid
           returning processed_items, error_items`,
         [jobId]
       );
 
-      expect(second.rows[0]).toMatchObject({
+      expect(finished.rows[0]).toMatchObject({
         processed_items: 1,
         error_items: 1
       });
