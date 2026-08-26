@@ -169,13 +169,6 @@ export async function setAutomaticSyncSettings(
       [enabled]
     );
 
-    if (enabled) {
-      await clientQuery(
-        client,
-        `select recalculate_local_processing_next_run_v1(now())`
-      );
-    }
-
     return {
       automaticSyncEnabled: scheduler.rows[0]?.enabled === true,
       scheduledIntervalMinutes: interval
