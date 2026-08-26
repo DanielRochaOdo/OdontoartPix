@@ -3,6 +3,7 @@ import { getMemberDetail } from "@/lib/data";
 import { DataAccessError } from "@/lib/errors/data-access-error";
 import { formatCurrencyBR } from "@/lib/money";
 import { formatDateTime } from "@/lib/date-time";
+import { sortInstallmentsNewestFirst } from "@/lib/installment-history";
 import { PageSurface } from "@/components/page-surface";
 import { PageHeader } from "@/components/page-header";
 
@@ -85,6 +86,7 @@ export default async function MemberDetailPage({
     : null;
   const hasPendingAmount = Number(link?.total_pending_amount_cents ?? 0) > 0;
   const paidWithPending = Boolean(link && isPaid(link.payment_status) && hasPendingAmount);
+  const installments = detail ? sortInstallmentsNewestFirst(detail.installments) : [];
 
   return (
     <PageSurface>
@@ -171,7 +173,18 @@ export default async function MemberDetailPage({
 
           <section className="mt-8 grid gap-6 xl:grid-cols-3">
             <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm xl:col-span-2">
-              <h2 className="text-lg font-semibold">Parcelas financeiras</h2>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold">Parcelas financeiras</h2>
+                  <p className="mt-1 text-xs text-slate-500">Ordenadas do vencimento mais novo para o mais antigo.</p>
+                </div>
+                <a
+                  href={`/api/associados/${id}/parcelas/exportar`}
+                  className="inline-flex items-center justify-center rounded-xl border border-brand bg-brand-soft px-4 py-2 text-sm font-semibold text-brand transition hover:bg-surface-hover"
+                >
+                  Exportar XLSX
+                </a>
+              </div>
               <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200">
                 <table className="min-w-full text-sm">
                   <thead className="bg-slate-50 text-slate-600">
@@ -188,7 +201,7 @@ export default async function MemberDetailPage({
                     </tr>
                   </thead>
                   <tbody>
-                    {detail.installments.map((installment) => (
+                    {installments.map((installment) => (
                       <tr key={installment.id} className="border-t">
                         <td className="px-4 py-3">{installment.cod_parcela}</td>
                         <td className="px-4 py-3">{installment.due_date_text ?? "-"}</td>
@@ -213,7 +226,7 @@ export default async function MemberDetailPage({
                         </td>
                       </tr>
                     ))}
-                    {detail.installments.length === 0 ? (
+                    {installments.length === 0 ? (
                       <tr>
                         <td colSpan={10} className="px-4 py-8 text-center text-slate-500">
                           Nenhuma parcela financeira cadastrada para este associado.
