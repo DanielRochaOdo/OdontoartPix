@@ -705,19 +705,16 @@ export function MembersTable({
             ) : null}
           </div>
           <div className="hidden flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm"><span className="whitespace-nowrap text-slate-500">Vencimento:</span><input type="date" value={dueDateFrom} max={dueDateTo || undefined} onChange={(event) => { setDueDateFrom(event.target.value); setPage(1); }} aria-label="Vencimento inicial" className="min-w-0 bg-transparent text-sm outline-none" /><span className="text-slate-400">até</span><input type="date" value={dueDateTo} min={dueDateFrom || undefined} onChange={(event) => { setDueDateTo(event.target.value); setPage(1); }} aria-label="Vencimento final" className="min-w-0 bg-transparent text-sm outline-none" /></div>
-          <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">
-            <span className="whitespace-nowrap text-slate-500">Pago com pendência?</span>
-            <select
-              value={filters.paidPending}
-              onChange={(event) => updateSelectFilter("paidPending", event.target.value)}
-              className="min-w-0 flex-1 bg-transparent text-sm text-slate-700 outline-none"
-              aria-label="Filtrar pago com pendência"
-            >
-              <option value="all">Selecione</option>
-              <option value="yes">Sim</option>
-              <option value="no">Não</option>
-            </select>
-          </label>
+          <select
+            value={filters.paidPending}
+            onChange={(event) => updateSelectFilter("paidPending", event.target.value)}
+            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+            aria-label="Filtrar pago com pendência"
+          >
+            <option value="all">Pago com pendência?: Selecione</option>
+            <option value="yes">Sim</option>
+            <option value="no">Não</option>
+          </select>
           {(["status", "payment", "receipt", "campaign", "batch"] as const).map((key) => (
             <select key={key} value={filters[key]} onChange={(event) => updateSelectFilter(key, event.target.value)} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">
               <option value="all">Todos: {key === "payment" ? "Pagamento" : key === "receipt" ? "Tipo de Pagto" : key === "campaign" ? "Campanha" : key === "batch" ? "Lote" : "Status"}</option>
