@@ -178,7 +178,7 @@ describe("mensalidades-api helpers", () => {
     expect((caught as Error).message).toContain("parcela alvo 55 nao foi localizada");
   });
 
-  it("rejeita pagamento parcial mesmo com DescricaoRecebimento diferente de ABERTO", async () => {
+  it("classifica pagamento parcial como pago com pendencia", async () => {
     process.env.MENSALIDADES_API_BASE_URL = "https://erp.exemplo.com";
     process.env.MENSALIDADES_API_TOKEN = "token-123";
 
@@ -201,11 +201,18 @@ describe("mensalidades-api helpers", () => {
 
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(
-      consultMonthlyByAssociatedCode("ASSOC-77", "55")
-    ).rejects.toMatchObject({
-      code: "ERP_INVALID_RESPONSE",
-      retryable: false
+    const result = await consultMonthlyByAssociatedCode("ASSOC-77", "55");
+
+    expect(result.httpStatus).toBe(200);
+    expect(result.analysis.paymentStatus).toBe("paid");
+    expect(result.analysis.paymentStatusSource).toBe("erp_explicit");
+    expect(result.analysis.totalPaidAmountCents).toBe(9000);
+    expect(result.analysis.totalPendingAmountCents).toBe(1000);
+    expect(result.analysis.installments[0]).toMatchObject({
+      installmentCode: "55",
+      baseAmountCents: 10000,
+      paidAmountCents: 9000,
+      paymentDescription: "PIX"
     });
   });
 
