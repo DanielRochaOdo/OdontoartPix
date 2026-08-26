@@ -1,8 +1,8 @@
-import { MembersTable } from "@/components/members-table";
-import { canAdmin, getCurrentProfile } from "@/lib/auth";
-import { getMembers } from "@/lib/data";
-import { PageSurface } from "@/components/page-surface";
+import { AssociadosCardList } from "@/components/associados-card-list";
 import { PageHeader } from "@/components/page-header";
+import { PageSurface } from "@/components/page-surface";
+import { getAssociadosCardList } from "@/lib/associados-card-read";
+import { canAdmin, getCurrentProfile } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -46,7 +46,7 @@ export default async function MembersPage({
   };
 
   const [members, profile] = await Promise.all([
-    getMembers({
+    getAssociadosCardList({
       campaignIds: initialFilters.campaign,
       batchIds: initialFilters.batch,
       status: initialFilters.status
@@ -55,14 +55,14 @@ export default async function MembersPage({
   ]);
 
   return (
-    <PageSurface>
+    <PageSurface className="lg:px-5 xl:px-6">
       <PageHeader
         eyebrow="Cadastros"
         title="Associados"
-        description="Consulte CodigoAssociadoEmpresa, parcela, CPF, campanha, lote, status e pendencias. Use os filtros ou clique nos cabecalhos para ordenar."
+        description="Consulte CodigoAssociadoEmpresa, parcela, CPF, campanha, lote, status e pendencias. Use os filtros para localizar os registros e ordenar a listagem."
       />
       <div className="mt-6">
-        <MembersTable
+        <AssociadosCardList
           members={members}
           initialFilters={initialFilters}
           canReprocessErrors={canAdmin(profile?.role)}
