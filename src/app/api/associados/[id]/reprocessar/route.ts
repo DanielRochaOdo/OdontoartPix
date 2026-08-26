@@ -130,7 +130,7 @@ export async function POST(
 
     if (!TERMINAL_MEMBER_STATUSES.has(outcome.processing_status)) {
       return fail(
-        "PROCESSING_ERROR",
+        "PROCESSING_CONFLICT",
         "O job individual terminou sem um estado final válido para o associado. O registro foi mantido na tela para conferência.",
         500
       );
@@ -170,7 +170,7 @@ export async function POST(
 
     if (message === "MEMBER_REPROCESS_WAIT_TIMEOUT") {
       return fail(
-        "PROCESSING_TIMEOUT",
+        "PROCESSING_CONFLICT",
         "O reprocessamento continua em andamento além do tempo de acompanhamento da tela. O registro foi mantido para evitar uma indicação falsa de sucesso.",
         504
       );
