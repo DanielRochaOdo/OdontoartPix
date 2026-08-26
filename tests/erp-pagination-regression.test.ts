@@ -135,19 +135,27 @@ describe("ERP pagination regression", () => {
     );
   });
 
-  it("mantem a regra financeira estrita da parcela alvo", () => {
-    const invalidPaid = {
+  it("classifica pagamento parcial da parcela alvo como pago com pendencia", () => {
+    const partialPaid = {
       ...paidItem(6582934),
       Valor: 33.26,
       ValorPago: 33.16
     };
 
-    expect(() => analyzeMonthlyResponses(
-      [page({ currentPage: 1, totalPages: 1, totalCount: 1, pageSize: 1, data: [invalidPaid] })],
+    const result = analyzeMonthlyResponses(
+      [page({ currentPage: 1, totalPages: 1, totalCount: 1, pageSize: 1, data: [partialPaid] })],
       "6582934"
-    )).toThrowError(
-      "A parcela 6582934 possui DescricaoRecebimento diferente de ABERTO, mas ValorPago e menor que Valor."
     );
+
+    expect(result.paymentStatus).toBe("paid");
+    expect(result.paymentStatusSource).toBe("erp_explicit");
+    expect(result.totalPaidAmountCents).toBe(3316);
+    expect(result.totalPendingAmountCents).toBe(10);
+    expect(result.installments.find((item) => item.installmentCode === "6582934")).toMatchObject({
+      baseAmountCents: 3326,
+      paidAmountCents: 3316,
+      paymentDescription: "PIX ODONTOART - P4X"
+    });
   });
 
   it("expoe erro tipado para respostas invalidas", () => {
