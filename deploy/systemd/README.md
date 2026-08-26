@@ -54,7 +54,7 @@ sudo systemctl enable odontoartpix-app.service
 
 O worker roda no ambiente que acessa o PostgreSQL próprio e o ERP.
 
-O perfil abaixo foi validado em produção em 25/08/2026 com throughput de aproximadamente `5,35 associados/s` em um lote real de 732 itens:
+O perfil **Agressivo** abaixo foi validado em produção em 25/08/2026 com throughput de aproximadamente `5,35 associados/s` em um lote real de 732 itens:
 
 ```text
 WORKER_LIMIT=60
@@ -67,6 +67,8 @@ PROCESSING_ERP_CONCURRENCY=50
 PROCESSING_MAX_BUFFERED_RESULTS=60
 PROCESSING_PRODUCTIVE_DELAY_MS=0
 ```
+
+Os argumentos da unit são limites máximos. O worker também respeita os valores do preset salvo no banco, portanto perfis mais conservadores continuam reduzindo bloco e concorrência sem reinstalar a unit.
 
 Instalação sem ativar o timer:
 
@@ -100,28 +102,43 @@ sudo journalctl -u odontoart-pix-worker.service -n 100 --no-pager
 Valide no banco/UI os resultados da parcela-alvo:
 
 - `DescricaoRecebimento == "ABERTO"` => `unpaid`;
-- `DescricaoRecebimento != "ABERTO"` e `ValorPago >= Valor` => `paid`;
+- `DescricaoRecebimento != "ABERTO"` com `ValorPago` válido => `paid`;
+- se `ValorPago < Valor`, o registro permanece `paid` com `total_pending_amount_cents = Valor - ValorPago`;
 - parcela-alvo ausente após a paginação necessária => erro;
 - ausência da parcela nunca infere pagamento.
 
-## 3. Ativação do consumo contínuo da fila
+## 3. Consumo contínuo e sincronização automática
 
-Somente depois da validação manual:
+Somente depois da validação manual do worker:
 
 ```bash
 sudo systemctl enable --now odontoart-pix-worker.timer
 ```
 
-O timer apenas acorda o worker local. A criação automática de novas ondas gerais possui uma dupla trava independente:
+O timer acorda o worker para consumir a fila e deve permanecer ativo inclusive quando a sincronização automática estiver desativada, pois também atende solicitações manuais.
 
-1. `PROCESSING_ALLOW_SCHEDULED_SYNC=true` no arquivo de ambiente do worker;
-2. `select set_local_processing_scheduler_enabled_v1(true);` no PostgreSQL.
+A criação automática de novas sincronizações gerais é controlada em **Configurações > Frequência automática**. A fonte única de verdade é:
 
-Enquanto qualquer uma das duas estiver desabilitada, o automático não cria novas ondas. Ações manuais já enfileiradas continuam podendo ser consumidas pelo worker.
+```text
+processing_scheduler_state.scheduler_enabled
+```
+
+- `false`: não cria novas sincronizações gerais automaticamente; o Dashboard continua permitindo sincronização manual;
+- `true`: cria sincronizações automáticas conforme `processing_settings.scheduled_interval_minutes`;
+- ao ativar, o próximo ciclo passa a contar a partir do momento da ativação.
+
+Equivalente administrativo no PostgreSQL:
+
+```sql
+select set_local_processing_scheduler_enabled_v1(true);
+select set_local_processing_scheduler_enabled_v1(false);
+```
+
+Não é necessário alterar arquivo de ambiente para ligar ou desligar o automático.
 
 ## 4. Desativação imediata
 
-Parar o consumo da fila:
+Parar todo o consumo da fila:
 
 ```bash
 sudo systemctl disable --now odontoart-pix-worker.timer
@@ -133,7 +150,10 @@ Parar a aplicação web local:
 sudo systemctl disable --now odontoartpix-app.service
 ```
 
-Para desligar somente a criação automática de ondas, sem parar o consumo das solicitações manuais:
+Para desligar **somente** a criação automática de novas sincronizações, sem interromper jobs manuais:
+
+- use o botão **Desativar** em `Configurações > Frequência automática`; ou
+- execute:
 
 ```sql
 select set_local_processing_scheduler_enabled_v1(false);
@@ -147,8 +167,9 @@ select set_local_processing_scheduler_enabled_v1(false);
 4. iniciar `odontoartpix-app.service` manualmente;
 5. validar `/api/health/db`, login, Dashboard e importação pequena;
 6. processar uma fila pequena com o worker;
-7. conferir a regra financeira e o reprocessamento de erros;
+7. conferir regra financeira, pago com pendência e reprocessamento de erros;
 8. configurar/validar reverse proxy HTTPS e SSE;
 9. trocar o tráfego público somente após os testes;
 10. habilitar `odontoart-pix-worker.timer`;
-11. manter o scheduler de ondas automáticas desligado até uma validação posterior, se desejado.
+11. validar sincronização manual pelo Dashboard com automático desativado;
+12. se desejado, ativar Frequência automática pela interface e validar a temporização antes de definir o intervalo definitivo.
