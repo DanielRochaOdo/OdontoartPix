@@ -50,7 +50,6 @@ function validateEnvironment() {
   }
 
   envBoolean("DATABASE_SSL", false);
-  envBoolean("PROCESSING_ALLOW_SCHEDULED_SYNC", false);
 
   const port = Number(process.env.DATABASE_PORT);
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
@@ -112,27 +111,11 @@ async function validateDatabase() {
       throw new Error("Identidade tecnica do processamento esta invalida ou permite login.");
     }
 
-    const requireSchedulerOff = envBoolean(
-      "PRODUCTION_PREFLIGHT_REQUIRE_SCHEDULER_OFF",
-      true
-    );
-    const envSchedulerEnabled = envBoolean("PROCESSING_ALLOW_SCHEDULED_SYNC", false);
-
-    if (
-      requireSchedulerOff &&
-      (schedulerRow.scheduler_enabled || envSchedulerEnabled)
-    ) {
-      throw new Error(
-        "O primeiro corte exige scheduler automatico desligado no ambiente e no banco."
-      );
-    }
-
     console.info("[PRODUCTION_PREFLIGHT_OK]", {
       database: "reachable",
       migrations: expected.length,
       schedulerEnabledInDatabase: schedulerRow.scheduler_enabled,
-      schedulerEnabledInEnvironment: envSchedulerEnabled,
-      schedulerOffRequired: requireSchedulerOff,
+      schedulerControl: "database-ui",
       processingIdentity: "valid"
     });
   } finally {
