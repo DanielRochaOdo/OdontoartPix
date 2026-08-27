@@ -4,6 +4,7 @@ import { toCents } from "@/lib/money";
 const StringOrNumberSchema = z.union([z.string(), z.number()]);
 const NullableStringOrNumberSchema = StringOrNumberSchema.nullish();
 const OPEN_RECEIPT_DESCRIPTION = "ABERTO";
+const AGREED_RECEIPT_DESCRIPTION = "ACORDADO";
 
 const MonthlyApiDataItemSchema = z
   .object({
@@ -83,8 +84,8 @@ export type MonthlyInstallment = {
 };
 
 export type MonthlyAnalysis = {
-  paymentStatus: "paid" | "unpaid";
-  paymentStatusSource: "erp_open_invoice" | "erp_explicit";
+  paymentStatus: "paid" | "unpaid" | "agreed";
+  paymentStatusSource: "erp_open_invoice" | "erp_explicit" | "erp_agreed";
   message: string;
   installmentsCount: number;
   totalPendingAmountCents: number;
@@ -113,7 +114,7 @@ type NormalizedPaginatedPayload = {
 };
 
 type ItemFinancialState = {
-  status: "paid" | "unpaid" | "invalid";
+  status: "paid" | "unpaid" | "agreed" | "invalid";
   baseAmountCents: number;
   paidAmountCents: number | null;
   description?: string;
@@ -246,6 +247,15 @@ function classifyFinancialState(
     };
   }
 
+  if (description === AGREED_RECEIPT_DESCRIPTION) {
+    return {
+      status: "agreed",
+      baseAmountCents,
+      paidAmountCents: null,
+      description
+    };
+  }
+
   if (!description) {
     return {
       status: "invalid",
@@ -283,6 +293,16 @@ function classifyFinancialState(
       paidAmountCents: paidValue.cents,
       description,
       reason: `A parcela ${installmentCode} possui Valor invalido.`
+    };
+  }
+
+  if (paidValue.cents < baseAmountCents) {
+    return {
+      status: "invalid",
+      baseAmountCents,
+      paidAmountCents: paidValue.cents,
+      description,
+      reason: `A parcela ${installmentCode} possui ValorPago inferior ao Valor informado pelo ERP.`
     };
   }
 
@@ -427,6 +447,7 @@ function analyzeNormalizedPayload(
   }
 
   const targetPaid = targetState.status === "paid";
+  const targetAgreed = targetState.status === "agreed";
   const targetInstallment = installments.find(
     (installment) => installment.installmentCode === targetId
   );
@@ -435,15 +456,21 @@ function analyzeNormalizedPayload(
     : 0;
 
   return {
-    paymentStatus: targetPaid ? "paid" : "unpaid",
-    paymentStatusSource: targetPaid ? "erp_explicit" : "erp_open_invoice",
+    paymentStatus: targetAgreed ? "agreed" : targetPaid ? "paid" : "unpaid",
+    paymentStatusSource: targetAgreed
+      ? "erp_agreed"
+      : targetPaid
+        ? "erp_explicit"
+        : "erp_open_invoice",
     message:
       payload.message ||
-      (targetPaid
-        ? targetPendingAmountCents > 0
-          ? "Parcela paga com pendencia conforme DescricaoRecebimento e ValorPago do ERP."
-          : "Parcela paga conforme DescricaoRecebimento e ValorPago do ERP."
-        : "Parcela em aberto conforme DescricaoRecebimento do ERP."),
+      (targetAgreed
+        ? "Parcela acordada conforme DescricaoRecebimento do ERP."
+        : targetPaid
+          ? targetPendingAmountCents > 0
+            ? "Parcela paga com pendencia conforme DescricaoRecebimento e ValorPago do ERP."
+            : "Parcela paga conforme DescricaoRecebimento e ValorPago do ERP."
+          : "Parcela em aberto conforme DescricaoRecebimento do ERP."),
     installmentsCount: installments.length,
     totalPendingAmountCents: pendingInstallments.reduce(
       (sum, item) => sum + item.pendingAmountCents,
