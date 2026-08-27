@@ -116,8 +116,8 @@ describe("analyzeMonthlyResponse - contrato atual do ERP", () => {
     expect(result.paymentStatus).toBe("paid");
   });
 
-  it("classifica pagamento parcial como paid e preserva a pendencia residual", () => {
-    const result = analyzeMonthlyResponse(
+  it("rejeita pagamento parcial quando ValorPago e inferior ao Valor", () => {
+    expect(() => analyzeMonthlyResponse(
       page({
         data: [{
           Id: "55",
@@ -127,14 +127,7 @@ describe("analyzeMonthlyResponse - contrato atual do ERP", () => {
         }]
       }),
       "55"
-    );
-
-    expect(result.paymentStatus).toBe("paid");
-    expect(result.paymentStatusSource).toBe("erp_explicit");
-    expect(result.totalPaidAmountCents).toBe(9999);
-    expect(result.totalPendingAmountCents).toBe(1);
-    expect(result.installments[0]?.paidAmountCents).toBe(9999);
-    expect(result.message).toContain("paga com pendencia");
+    )).toThrow("ValorPago inferior ao Valor");
   });
 
   it("rejeita DescricaoRecebimento diferente de ABERTO sem ValorPago", () => {
@@ -338,8 +331,8 @@ describe("analyzeMonthlyResponses - paginacao", () => {
     expect(result.totalPendingAmountCents).toBe(4500);
   });
 
-  it("soma pendencia aberta e saldo residual de pagamento parcial", () => {
-    const result = analyzeMonthlyResponses([
+  it("rejeita pagamento parcial da parcela alvo mesmo com outras parcelas abertas", () => {
+    expect(() => analyzeMonthlyResponses([
       page({
         currentPage: 1,
         totalPages: 2,
@@ -360,14 +353,7 @@ describe("analyzeMonthlyResponses - paginacao", () => {
           Tipo_plano: "Plano A"
         }]
       })
-    ], "55");
-
-    expect(result.paymentStatus).toBe("paid");
-    expect(result.totalPaidAmountCents).toBe(5000);
-    expect(result.totalPendingAmountCents).toBe(5500);
-    expect(result.totalsByPlan).toEqual([
-      { planType: "Plano A", installmentsCount: 2, totalAmountCents: 5500 }
-    ]);
+    ], "55")).toThrow("ValorPago inferior ao Valor");
   });
 
   it("nao exige paginas restantes quando a parcela alvo ja foi encontrada", () => {
