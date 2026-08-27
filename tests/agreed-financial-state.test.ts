@@ -22,12 +22,14 @@ describe("agreed financial state", () => {
   it("mantem acordados fora das sincronizacoes gerais e jobs de lote", () => {
     const preview = source("src/lib/general-sync-preview.ts");
     const scheduled = source("src/lib/general-sync-scheduled-start.ts");
-    const batchJobs = source("src/lib/local-batch-job-service.ts");
+    const batchJobs = source("src/lib/batch-job-service.ts");
+    const localBatchJobs = source("src/lib/local-batch-job-service.ts");
     const migration = source("db/migrations/019_agreed_financial_truth.sql");
 
     expect(preview).toContain('GENERAL_SYNC_TERMINAL_PAYMENT_STATUSES = ["paid", "agreed"]');
     expect(scheduled).toContain('GENERAL_SYNC_TERMINAL_PAYMENT_STATUSES = ["paid", "agreed"]');
     expect(batchJobs).toContain("payment_status not in ('paid', 'agreed')");
+    expect(localBatchJobs).toContain("payment_status not in ('paid', 'agreed')");
     expect(migration).toContain("old.payment_status = 'agreed'");
     expect(migration).toContain("new.next_check_at is null");
   });
