@@ -55,6 +55,7 @@ export type LocalScheduledGeneralSyncStartResult =
 
 const ACTIVE_RUN_STATUSES = ["queued", "running", "paused", "cancelling"];
 const ACTIVE_JOB_STATUSES = ["queued", "running", "paused", "deferred"];
+const GENERAL_SYNC_TERMINAL_PAYMENT_STATUSES = ["paid", "agreed"];
 const GENERAL_SYNC_LOCK_NAMESPACE = "odontoartpix";
 const GENERAL_SYNC_LOCK_KEY = "general-sync-single-active";
 
@@ -148,7 +149,7 @@ async function listEligibleScheduledBatches(client: PoolClient) {
      join campaign_batch_members cbm
        on cbm.batch_id = cb.id
       and cbm.deleted_at is null
-      and cbm.payment_status is distinct from 'paid'
+      and (cbm.payment_status is null or cbm.payment_status <> all($2::text[]))
     where cb.deleted_at is null
       and c.deleted_at is null
       and not exists (
@@ -160,7 +161,7 @@ async function listEligibleScheduledBatches(client: PoolClient) {
     group by cb.id, cb.campaign_id, cb.name, c.name
    having count(*) filter (where cbm.processing_status <> 'processing') > 0
     order by cb.id`,
-    [ACTIVE_JOB_STATUSES]
+    [ACTIVE_JOB_STATUSES, GENERAL_SYNC_TERMINAL_PAYMENT_STATUSES]
   );
 
   return result.rows.map((row) => ({

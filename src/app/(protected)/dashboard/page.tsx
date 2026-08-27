@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { DashboardAgreedMetricCard } from "@/components/dashboard-agreed-metric-card";
 import { DashboardDonutCharts } from "@/components/dashboard-donut-charts";
 import { DashboardFilters } from "@/components/dashboard-filters";
 import { DashboardMetricCard } from "@/components/dashboard-metric-card";
@@ -47,7 +48,7 @@ function MetricIcon({ label }: { label: string }) {
     Erros: "errors",
     "Valor total dos lotes": "totalValue",
     "Valor pago": "paidValue",
-    Aproveitamento: "utilization",
+    Acordado: "totalValue",
     "Valor pendente": "pendingValue"
   };
   return <ManualDashboardIcon name={names[label] ?? "pendingValue"} className="h-9 w-9" />;
@@ -55,7 +56,7 @@ function MetricIcon({ label }: { label: string }) {
 
 function metricIconClass(label: string) {
   if (label === "Associados") return "border-info bg-info-soft text-info";
-  if (label === "Pagos" || label === "Valor pago via Pix" || label === "Valor pago" || label === "Aproveitamento") {
+  if (label === "Pagos" || label === "Valor pago via Pix" || label === "Valor pago") {
     return "border-success bg-success-soft text-success";
   }
   if (label === "Erros" || label === "Valor pendente") return "border-danger bg-danger-soft text-danger";
@@ -192,10 +193,8 @@ export default async function DashboardPage({
           value: formatCurrencyBR(metrics.totalPaidAmountCents)
         },
         {
-          label: "Aproveitamento",
-          value: `${metrics.utilizationPercentage.toLocaleString("pt-BR", {
-            maximumFractionDigits: 2
-          })}%`
+          label: "Acordado",
+          value: formatCurrencyBR(metrics.totalAgreedAmountCents)
         },
         {
           label: "Valor pendente",
@@ -253,17 +252,25 @@ export default async function DashboardPage({
                   installmentCount={pixPaidInstallmentCount}
                   scopeKey={dashboardScopeKey}
                 />
-              ) : ["Pagos", "Valor pago", "Aproveitamento"].includes(card.label) ? (
+              ) : card.label === "Acordado" ? (
+                <DashboardAgreedMetricCard
+                  key={card.label}
+                  amountCents={metrics?.totalAgreedAmountCents ?? 0}
+                  installmentCount={metrics?.agreed ?? 0}
+                  memberCount={metrics?.agreedAssociateCount ?? 0}
+                  scopeKey={dashboardScopeKey}
+                />
+              ) : ["Pagos", "Valor pago"].includes(card.label) ? (
                 <DashboardMetricCard
                   key={card.label}
                   label={card.label}
                   value={card.value}
-                  numericValue={card.label === "Pagos" ? metrics?.paid ?? 0 : card.label === "Valor pago" ? metrics?.totalPaidAmountCents ?? 0 : metrics?.utilizationPercentage ?? 0}
-                  kind={card.label === "Pagos" ? "count" : card.label === "Valor pago" ? "currency" : "percentage"}
-                  icon={card.label === "Pagos" ? "paid" : card.label === "Valor pago" ? "paidValue" : "utilization"}
+                  numericValue={card.label === "Pagos" ? metrics?.paid ?? 0 : metrics?.totalPaidAmountCents ?? 0}
+                  kind={card.label === "Pagos" ? "count" : "currency"}
+                  icon={card.label === "Pagos" ? "paid" : "paidValue"}
                   detailEndpoint={card.label === "Pagos" ? `/api/dashboard/paid-details?campaignIds=${encodeURIComponent(selectedCampaignIds.join(","))}&batchIds=${encodeURIComponent(selectedBatchIds.join(","))}` : undefined}
                   scopeKey={dashboardScopeKey}
-                  valueClassName={card.label === "Valor pago" || card.label === "Aproveitamento" ? "text-[#00a98f] dark:text-[#18d8b6]" : undefined}
+                  valueClassName={card.label === "Valor pago" ? "text-[#00a98f] dark:text-[#18d8b6]" : undefined}
                 />
               ) : card.label === "Erros" ? (
                 <Link
@@ -280,7 +287,7 @@ export default async function DashboardPage({
                   className="group flex min-h-[112px] items-center gap-4 rounded-2xl border border-[#d6e3ef] bg-white p-4 shadow-sm transition hover:border-[#00a98f]/70 hover:bg-[#f4fffc] dark:border-[#284665] dark:bg-[#071b34]/90 dark:shadow-[0_8px_24px_rgba(0,0,0,0.16)] dark:hover:border-[#00E5C3]/70 dark:hover:bg-[#0b2440]"
                 >
                   <span className={`inline-flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border transition group-hover:shadow-[0_0_18px_rgba(0,229,195,0.2)] ${metricIconClass(card.label)}`}><MetricIcon label={card.label} /></span>
-                  <div className="min-w-0"><p className="text-[13px] leading-4 text-[#5d7184] dark:text-[#c1d0e0]">{card.label}</p><div className={`mt-1 text-2xl font-semibold leading-tight tracking-tight ${card.label === "Valor pago" || card.label === "Aproveitamento" ? "text-[#00a98f] dark:text-[#18d8b6]" : card.label === "Valor pendente" ? "text-[#d94352] dark:text-rose-400" : "text-[#102033] dark:text-[#f4f8ff]"}`}>{card.value}</div></div>
+                  <div className="min-w-0"><p className="text-[13px] leading-4 text-[#5d7184] dark:text-[#c1d0e0]">{card.label}</p><div className={`mt-1 text-2xl font-semibold leading-tight tracking-tight ${card.label === "Valor pago" ? "text-[#00a98f] dark:text-[#18d8b6]" : card.label === "Valor pendente" ? "text-[#d94352] dark:text-rose-400" : "text-[#102033] dark:text-[#f4f8ff]"}`}>{card.value}</div></div>
                 </article>
               )
             ))}

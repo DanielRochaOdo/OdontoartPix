@@ -64,10 +64,13 @@ export const DashboardMetricsSchema = z.object({
   totalCpfs: NumberSchema,
   paid: NumberSchema,
   unpaid: NumberSchema,
+  agreed: NumberSchema,
+  agreedAssociateCount: NumberSchema,
   errored: NumberSchema,
   utilizationPercentage: NumberSchema,
   totalPendingAmountCents: NumberSchema,
   totalPaidAmountCents: NumberSchema,
+  totalAgreedAmountCents: NumberSchema,
   totalBatchAmountCents: NumberSchema
 });
 
@@ -188,12 +191,7 @@ export async function getDashboardMetrics(filters: DashboardMetricsFilters = {})
            cbm.payment_status as stored_payment_status,
            coalesce(target.base_amount_cents, cbm.installment_amount_cents, 0)::bigint as target_amount_cents,
            target.paid_amount_cents as target_paid_amount_cents,
-           nullif(trim(target.payment_description), '') as payment_description,
-           (
-             target.paid_amount_cents is not null
-             and nullif(trim(target.payment_description), '') is not null
-             and upper(trim(target.payment_description)) <> 'ABERTO'
-           ) as is_explicit_paid
+           nullif(trim(target.payment_description), '') as payment_description
          from campaign_batch_members cbm
          left join lateral (
            select mi.base_amount_cents,
@@ -211,8 +209,7 @@ export async function getDashboardMetrics(filters: DashboardMetricsFilters = {})
        ), financial_rows as (
          select *,
                 case
-                  when is_explicit_paid then 'paid'
-                  when stored_payment_status = 'unpaid' then 'unpaid'
+                  when stored_payment_status in ('paid', 'unpaid', 'agreed') then stored_payment_status
                   else null
                 end as financial_status
            from target_rows
@@ -222,9 +219,12 @@ export async function getDashboardMetrics(filters: DashboardMetricsFilters = {})
            count(distinct member_id)::int as unique_cpfs,
            count(*) filter (where financial_status = 'paid')::int as paid,
            count(*) filter (where financial_status = 'unpaid')::int as unpaid,
+           count(*) filter (where financial_status = 'agreed')::int as agreed,
+           count(distinct member_id) filter (where financial_status = 'agreed')::int as agreed_associates,
            count(*) filter (where processing_status = 'error')::int as errored,
            coalesce(sum(target_amount_cents) filter (where financial_status = 'unpaid'), 0)::float8 as pending_amount,
            coalesce(sum(target_paid_amount_cents) filter (where financial_status = 'paid'), 0)::float8 as paid_amount,
+           coalesce(sum(target_amount_cents) filter (where financial_status = 'agreed'), 0)::float8 as agreed_amount,
            coalesce(sum(target_amount_cents), 0)::float8 as total_amount
          from financial_rows
        ), campaign_metrics as (
@@ -243,13 +243,16 @@ export async function getDashboardMetrics(filters: DashboardMetricsFilters = {})
          m.total_cpfs as "totalCpfs",
          m.paid,
          m.unpaid,
+         m.agreed,
+         m.agreed_associates as "agreedAssociateCount",
          m.errored,
          case
-           when m.paid + m.unpaid = 0 then 0::float8
-           else round((m.paid::numeric / (m.paid + m.unpaid)) * 100, 2)::float8
+           when m.paid + m.unpaid + m.agreed = 0 then 0::float8
+           else round((m.paid::numeric / (m.paid + m.unpaid + m.agreed)) * 100, 2)::float8
          end as "utilizationPercentage",
          m.pending_amount as "totalPendingAmountCents",
          m.paid_amount as "totalPaidAmountCents",
+         m.agreed_amount as "totalAgreedAmountCents",
          m.total_amount as "totalBatchAmountCents"
        from campaign_metrics c
        cross join member_metrics m
@@ -314,6 +317,7 @@ export async function getDashboardReceiptStatusMetrics(filters: DashboardMetrics
        where paid_amount_cents is not null
          and payment_description is not null
          and upper(payment_description) <> 'ABERTO'
+         and upper(payment_description) <> 'ACORDADO'
        group by payment_description
        order by "amountCents" desc, label asc`,
       [campaignIds, batchIds]
@@ -370,6 +374,7 @@ export async function getDashboardPixPaidMetrics(filters: DashboardMetricsFilter
         where paid_amount_cents is not null
           and payment_description is not null
           and upper(payment_description) <> 'ABERTO'
+          and upper(payment_description) <> 'ACORDADO'
           and upper(payment_description) like '%PIX%'`,
       [campaignIds, batchIds]
     );

@@ -154,7 +154,7 @@ async function getClaimableSummary(
     client,
     `select
        count(*) filter (
-         where payment_status is distinct from 'paid'
+         where (payment_status is null or payment_status not in ('paid', 'agreed'))
            and (
              processing_status in ('pending', 'queued')
              or (
@@ -165,7 +165,7 @@ async function getClaimableSummary(
            )
        )::int as claimable_count,
        count(*) filter (
-         where payment_status is distinct from 'paid'
+         where (payment_status is null or payment_status not in ('paid', 'agreed'))
            and processing_status = 'retrying'
        )::int as technical_retry_count,
        count(*) filter (
@@ -204,7 +204,7 @@ async function normalizeExhaustedMembers(
             updated_at = now()
       where batch_id = $1
         and deleted_at is null
-        and payment_status is distinct from 'paid'
+        and (payment_status is null or payment_status not in ('paid', 'agreed'))
         and processing_status in ('pending', 'queued', 'retrying', 'aguardando')
         and processing_attempts >= $2`,
     [batchId, maxAttempts]
@@ -255,7 +255,7 @@ async function requestErroredMembers(client: PoolClient, batchId: string) {
       where batch_id = $1
         and deleted_at is null
         and processing_status = 'error'
-        and payment_status is distinct from 'paid'`,
+        and (payment_status is null or payment_status not in ('paid', 'agreed'))`,
     [batchId]
   );
 }

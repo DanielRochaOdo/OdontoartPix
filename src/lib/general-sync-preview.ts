@@ -49,6 +49,7 @@ export type GeneralSyncPreview = Omit<GeneralSyncScopeResolution, "filters" | "b
 };
 
 const ACTIVE_BATCH_JOB_STATUSES = ["queued", "running", "paused"];
+const GENERAL_SYNC_TERMINAL_PAYMENT_STATUSES = ["paid", "agreed"];
 
 function uniqueIds(values?: string[]) {
   return [...new Set((values ?? []).map((value) => value.trim()).filter(Boolean))];
@@ -152,10 +153,10 @@ async function loadScopedBatches(filters: { campaignIds: string[]; batchIds: str
       `select batch_id, count(*)::int as record_count
          from campaign_batch_members
         where deleted_at is null
-          and payment_status is distinct from $2
+          and (payment_status is null or payment_status <> all($2::text[]))
           and batch_id = any($1::uuid[])
         group by batch_id`,
-      [batchIds, "paid"]
+      [batchIds, GENERAL_SYNC_TERMINAL_PAYMENT_STATUSES]
     );
 
     const recordCountByBatchId = new Map(
