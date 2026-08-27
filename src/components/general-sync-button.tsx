@@ -424,7 +424,12 @@ export function GeneralSyncButton({
   }
 
   async function cancel() {
-    if (!run || cancelling || run.status !== "paused" || !run.canCancel) return;
+    if (
+      !run ||
+      cancelling ||
+      !run.canCancel ||
+      (run.status !== "queued" && run.status !== "running" && run.status !== "paused")
+    ) return;
     setCancelling(true);
     setError(null);
     setActionMessage(null);

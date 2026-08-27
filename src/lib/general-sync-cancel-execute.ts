@@ -199,6 +199,18 @@ export async function executeClaimedLocalGeneralSyncCancellation(input: {
         if (job?.status === "running") {
           await clientQuery(
             client,
+            `update processing_jobs
+                set stop_requested_at = coalesce(stop_requested_at, now()),
+                    stop_requested_by = coalesce(stop_requested_by, $2::uuid),
+                    stop_reason = coalesce(nullif(stop_reason, ''), $3),
+                    updated_at = now()
+              where id = $1::uuid
+                and status = 'running'`,
+            [job.id, run.requested_by, run.cancel_reason]
+          );
+
+          await clientQuery(
+            client,
             `update general_sync_run_batches
                 set processed_count = $3,
                     success_count = $4,
@@ -213,7 +225,7 @@ export async function executeClaimedLocalGeneralSyncCancellation(input: {
               batch.processed_count,
               batch.success_count,
               batch.error_count,
-              "Cancelamento solicitado. Aguardando o processamento em execucao terminar com seguranca."
+              "Cancelamento solicitado. Aguardando o processamento em execucao atingir um ponto seguro."
             ]
           );
 
