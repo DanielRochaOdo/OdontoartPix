@@ -1,0 +1,72 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { describe, expect, it } from "vitest";
+
+function source(path: string) {
+  return readFileSync(resolve(process.cwd(), path), "utf8");
+}
+
+describe("agreed financial state", () => {
+  it("persiste ACORDADO como terceira verdade financeira sem pendencia", () => {
+    const migration = source("db/migrations/019_agreed_financial_truth.sql");
+
+    expect(migration).toContain("payment_status := 'agreed'");
+    expect(migration).toContain("payment_status_source := 'erp_agreed'");
+    expect(migration).toContain("total_pending_amount_cents := 0");
+    expect(migration).toContain("upper(coalesce(target_description, '')) = 'ACORDADO'");
+    expect(migration).toContain("upper(trim(coalesce(mi.payment_description, ''))) = 'ACORDADO'");
+    expect(migration).toContain("set payment_status = 'agreed'");
+    expect(migration).toContain("next_check_at = null");
+  });
+
+  it("mantem acordados fora das sincronizacoes gerais e jobs de lote", () => {
+    const preview = source("src/lib/general-sync-preview.ts");
+    const scheduled = source("src/lib/general-sync-scheduled-start.ts");
+    const batchJobs = source("src/lib/local-batch-job-service.ts");
+    const migration = source("db/migrations/019_agreed_financial_truth.sql");
+
+    expect(preview).toContain('GENERAL_SYNC_TERMINAL_PAYMENT_STATUSES = ["paid", "agreed"]');
+    expect(scheduled).toContain('GENERAL_SYNC_TERMINAL_PAYMENT_STATUSES = ["paid", "agreed"]');
+    expect(batchJobs).toContain("payment_status not in ('paid', 'agreed')");
+    expect(migration).toContain("old.payment_status = 'agreed'");
+    expect(migration).toContain("new.next_check_at is null");
+  });
+
+  it("preserva a sincronizacao manual isolada de uma parcela acordada", () => {
+    const route = source("src/app/api/associados/[id]/reprocessar/route.ts");
+    const queue = source("src/lib/member-reprocess-queue.ts");
+    const migration = source("db/migrations/019_agreed_financial_truth.sql");
+
+    expect(route).toContain('if (member.payment_status === "paid")');
+    expect(route).not.toContain('member.payment_status === "agreed"');
+    expect(queue).toContain('if (member.payment_status === "paid")');
+    expect(queue).not.toContain('member.payment_status === "agreed"');
+    expect(queue).toContain("next_check_at = now()");
+    expect(migration).toContain("new.next_check_at is null");
+  });
+
+  it("separa agreed de pago, pendente e recebimentos do dashboard", () => {
+    const metrics = source("src/lib/metrics.ts");
+
+    expect(metrics).toContain("stored_payment_status in ('paid', 'unpaid', 'agreed')");
+    expect(metrics).toContain("where financial_status = 'agreed'");
+    expect(metrics).toContain('as "totalAgreedAmountCents"');
+    expect(metrics).toContain("sum(target_amount_cents) filter (where financial_status = 'unpaid')");
+    expect(metrics).toContain("sum(target_paid_amount_cents) filter (where financial_status = 'paid')");
+    expect(metrics).toContain("upper(payment_description) <> 'ACORDADO'");
+  });
+
+  it("substitui o card Aproveitamento por Acordado mantendo aproveitamento no grafico", () => {
+    const page = source("src/app/(protected)/dashboard/page.tsx");
+    const card = source("src/components/dashboard-agreed-metric-card.tsx");
+
+    expect(page).toContain('label: "Acordado"');
+    expect(page).not.toContain('label: "Aproveitamento"');
+    expect(page).toContain("utilizationPercentage={metrics.utilizationPercentage}");
+    expect(page).toContain("<DashboardAgreedMetricCard");
+    expect(card).toContain("Valor acordado");
+    expect(card).toContain("Quantidade de parcelas");
+    expect(card).toContain("Associados únicos");
+    expect(card).toContain("Ultima leitura geral");
+  });
+});
