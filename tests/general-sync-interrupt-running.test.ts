@@ -20,7 +20,7 @@ describe("general sync interruption while running", () => {
       "utf8"
     );
     const worker = readFileSync(
-      resolve(process.cwd(), "src/lib/local-worker.ts"),
+      resolve(process.cwd(), "src/lib/local-processing-worker.ts"),
       "utf8"
     );
 
