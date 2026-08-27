@@ -83,6 +83,7 @@ const STATUS_LABELS: Record<string, string> = {
 const PAYMENT_LABELS: Record<string, string> = {
   paid: "Pago",
   unpaid: "Nao pago",
+  agreed: "Acordado",
   pending: "Pendente"
 };
 
@@ -97,6 +98,7 @@ function normalizePayment(value: string) {
 
   if (normalized === "paid" || normalized === "pago") return "paid";
   if (["unpaid", "nao pago", "nao pagos", "not paid"].includes(normalized)) return "unpaid";
+  if (normalized === "agreed" || normalized === "acordado") return "agreed";
   if (normalized === "pending" || normalized === "pendente") return "pending";
   return normalized || "-";
 }
@@ -378,7 +380,10 @@ export function AssociadosCardList({
           batch: item.batch?.name ?? "-",
           status: normalizeStatus(item.processing_status),
           payment,
-          receiptDescription: String(item.payment_description ?? "").trim() || "-",
+          receiptDescription:
+            payment === "agreed"
+              ? "-"
+              : String(item.payment_description ?? "").trim() || "-",
           paymentDate: formatDate(item.payment_date_text ?? "") || "-",
           amount: Number(item.installment_amount_cents ?? 0),
           paidAmount: item.payment_amount_cents == null ? null : Number(item.payment_amount_cents),
