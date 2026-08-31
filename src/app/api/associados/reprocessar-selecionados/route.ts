@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { requireApiUser } from "@/lib/auth/require-api-user";
+import { createAssociadosProcessingRequest } from "@/lib/associados-processing-request";
 import { clientQuery, withTransaction } from "@/lib/db/transaction";
 import { fail, ok } from "@/lib/http/api-response";
 import {
@@ -40,6 +41,13 @@ export async function POST(request: Request) {
       const found = memberResult.rows;
       const missingTargetIds: string[] = [];
       const queuedIds: string[] = [];
+      const trackedItems: Array<{
+        memberId: string;
+        campaignId: string;
+        batchId: string;
+        previousPaymentStatus: string | null;
+        jobId: string;
+      }> = [];
 
       for (const member of found) {
         if (!String(member.target_installment_id ?? "").trim()) {
@@ -47,11 +55,23 @@ export async function POST(request: Request) {
           continue;
         }
 
-        await queueMemberReprocess(client, member, auth.profile.id);
+        const job = await queueMemberReprocess(client, member, auth.profile.id);
         queuedIds.push(member.id);
+        trackedItems.push({
+          memberId: member.id,
+          campaignId: member.campaign_id,
+          batchId: member.batch_id,
+          previousPaymentStatus: member.payment_status,
+          jobId: job.id
+        });
       }
 
+      const processingRequestId = trackedItems.length > 0
+        ? await createAssociadosProcessingRequest(client, auth.profile.id, trackedItems)
+        : null;
+
       return {
+        processingRequestId,
         requestedCount: memberIds.length,
         foundCount: found.length,
         queuedCount: queuedIds.length,
@@ -62,7 +82,7 @@ export async function POST(request: Request) {
       };
     });
 
-    if (result.queuedCount === 0) {
+    if (result.queuedCount === 0 || !result.processingRequestId) {
       return fail(
         "CONFLICT",
         "Nenhum dos associados selecionados possui uma parcela alvo válida para reprocessamento.",

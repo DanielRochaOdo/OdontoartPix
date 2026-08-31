@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { requireApiUser } from "@/lib/auth/require-api-user";
+import { createAssociadosProcessingRequest } from "@/lib/associados-processing-request";
 import { dbQuery } from "@/lib/db/pool";
 import { clientQuery, withTransaction } from "@/lib/db/transaction";
 import { fail, ok } from "@/lib/http/api-response";
@@ -96,7 +97,16 @@ export async function POST(
       }
 
       const job = await queueMemberReprocess(client, member, auth.profile.id);
-      return { kind: "queued" as const, member, job };
+      const processingRequestId = await createAssociadosProcessingRequest(client, auth.profile.id, [
+        {
+          memberId: member.id,
+          campaignId: member.campaign_id,
+          batchId: member.batch_id,
+          previousPaymentStatus: member.payment_status,
+          jobId: job.id
+        }
+      ]);
+      return { kind: "queued" as const, member, job, processingRequestId };
     });
 
     if (result.kind === "not_found") return fail("NOT_FOUND", "Associado não encontrado.", 404);
@@ -107,7 +117,8 @@ export async function POST(
     // A resposta fica aberta enquanto o worker processa o job individual. Isso
     // faz o botao permanecer girando e evita que a linha/cartao de erro suma
     // apenas porque o job foi enfileirado. A UI so atualiza depois do resultado
-    // terminal real.
+    // terminal real. O snapshot criado acima permite que o painel de Associados
+    // acompanhe o mesmo job em paralelo.
     const outcome = await waitForMemberReprocessOutcome(result.member.id, result.job.id);
 
     if (!TERMINAL_MEMBER_STATUSES.has(outcome.processing_status)) {
@@ -123,6 +134,7 @@ export async function POST(
     return ok(
       {
         memberId: result.member.id,
+        processingRequestId: result.processingRequestId,
         mode: "member_job",
         jobId: result.job.id,
         batchId: result.member.batch_id,
