@@ -45,8 +45,9 @@ describe("agreed financial state", () => {
     expect(queue).not.toContain('if (member.payment_status === "paid")');
     expect(queue).not.toContain('member.payment_status === "agreed"');
     expect(queue).toContain("next_check_at = now()");
-    expect(worker).toContain("and (payment_status is distinct from 'paid' or $4::uuid is not null)");
-    expect(worker).toContain("where (payment_status is distinct from 'paid' or $3::uuid is not null)");
+    expect(worker).toContain("$4::uuid is not null");
+    expect(worker).toContain("payment_status not in ('paid', 'agreed')");
+    expect(worker).toContain("where ($3::uuid is not null or payment_status is null or payment_status not in ('paid','agreed'))");
     expect(migration).toContain("new.next_check_at is null");
   });
 

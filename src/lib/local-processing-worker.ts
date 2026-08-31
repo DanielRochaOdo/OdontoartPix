@@ -18,6 +18,7 @@ type LocalJob = {
   processing_priority: number;
   processing_scope: string;
   target_member_link_id: string | null;
+  filtered_error_request_id: string | null;
   stop_requested_at: string | null;
 };
 
@@ -109,11 +110,11 @@ async function recoverStaleLocalWork(staleHeartbeatMs: number) {
     await clientQuery(
       client,
       `update processing_jobs
-          set status = 'queued',
+          set status = case when stop_requested_at is null then 'queued' else 'paused' end,
               locked_by = null,
               locked_at = null,
               lease_expires_at = null,
-              next_run_at = now(),
+              next_run_at = case when stop_requested_at is null then now() else null end,
               last_error = coalesce(last_error, 'Job recuperado apos expiracao do lease local.'),
               updated_at = now()
         where status = 'running'
@@ -172,12 +173,17 @@ async function claimNextJob(workerId: string, leaseSeconds: number) {
               processing_priority,
               processing_scope,
               target_member_link_id,
+              filtered_error_request_id,
               stop_requested_at::text
          from processing_jobs
         where status in ('queued', 'deferred')
           and stop_requested_at is null
           and (next_run_at is null or next_run_at <= now())
-        order by processing_priority desc, coalesce(next_run_at, created_at), created_at, id
+        order by processing_priority desc,
+                 case when processing_scope = 'member' then 0 else 1 end,
+                 coalesce(next_run_at, created_at),
+                 created_at,
+                 id
         for update skip locked
         limit 1`
     );
@@ -208,6 +214,7 @@ async function claimNextJob(workerId: string, leaseSeconds: number) {
                   processing_priority,
                   processing_scope,
                   target_member_link_id,
+                  filtered_error_request_id,
                   stop_requested_at::text`,
       [job.id, workerId, Math.max(leaseSeconds, 30)]
     );
@@ -218,6 +225,7 @@ async function claimNextJob(workerId: string, leaseSeconds: number) {
 
 async function claimMembers(job: LocalJob, workerId: string, limit: number) {
   const targetMemberLinkId = String(job.target_member_link_id ?? "").trim() || null;
+  const filteredErrorRequestId = String(job.filtered_error_request_id ?? "").trim() || null;
   if (job.processing_scope === "member" && !targetMemberLinkId) {
     throw new Error("MEMBER_SCOPED_JOB_WITHOUT_TARGET");
   }
@@ -226,12 +234,26 @@ async function claimMembers(job: LocalJob, workerId: string, limit: number) {
   return withTransaction(async (client) => {
     const candidates = await clientQuery<{ id: string }>(
       client,
-      `select id
+      `select campaign_batch_members.id
          from campaign_batch_members
         where batch_id = $1
-          and ($4::uuid is null or id = $4::uuid)
+          and ($4::uuid is null or campaign_batch_members.id = $4::uuid)
           and deleted_at is null
-          and (payment_status is distinct from 'paid' or $4::uuid is not null)
+          and (
+            $4::uuid is not null
+            or payment_status is null
+            or payment_status not in ('paid', 'agreed')
+          )
+          and (
+            $5::uuid is null
+            or exists (
+              select 1
+                from filtered_error_reprocess_items replay_item
+               where replay_item.request_id = $5::uuid
+                 and replay_item.member_link_id = campaign_batch_members.id
+                 and replay_item.status = 'queued'
+            )
+          )
           and processing_attempts < max_attempts
           and (
             (
@@ -248,10 +270,10 @@ async function claimMembers(job: LocalJob, workerId: string, limit: number) {
               and error_reprocess_requested_at is not null
             )
           )
-        order by coalesce(next_retry_at, next_check_at, updated_at, created_at), created_at, id
+        order by coalesce(next_retry_at, next_check_at, updated_at, created_at), created_at, campaign_batch_members.id
         for update skip locked
         limit $3`,
-      [job.batch_id, job.include_errors, effectiveLimit, targetMemberLinkId]
+      [job.batch_id, job.include_errors, effectiveLimit, targetMemberLinkId, filteredErrorRequestId]
     );
 
     const ids = candidates.rows.map((row) => row.id);
@@ -580,7 +602,10 @@ async function recalculateBatch(batchId: string) {
          count(*) filter (where processing_status = 'error')::int as error_records,
          coalesce(sum(total_pending_amount_cents), 0)::bigint as total_pending_amount_cents,
          count(*) filter (where processing_status = 'processing')::int as processing_records,
-         count(*) filter (where processing_status in ('pending','queued','retrying','aguardando'))::int as waiting_records
+         count(*) filter (
+           where processing_status in ('pending','queued','retrying','aguardando')
+             and (payment_status is null or payment_status not in ('paid','agreed'))
+         )::int as waiting_records
        from campaign_batch_members
       where batch_id = $1 and deleted_at is null
      )
@@ -641,6 +666,7 @@ async function releaseAndFinalizeJob(job: LocalJob, workerId: string) {
     }
 
     const targetMemberLinkId = String(job.target_member_link_id ?? "").trim() || null;
+    const filteredErrorRequestId = String(job.filtered_error_request_id ?? "").trim() || null;
     const queue = await clientQuery<{
       immediate_count: number;
       processing_count: number;
@@ -649,7 +675,17 @@ async function releaseAndFinalizeJob(job: LocalJob, workerId: string) {
       client,
       `select
          count(*) filter (
-           where (payment_status is distinct from 'paid' or $3::uuid is not null)
+           where ($3::uuid is not null or payment_status is null or payment_status not in ('paid','agreed'))
+             and (
+               $4::uuid is null
+               or exists (
+                 select 1
+                   from filtered_error_reprocess_items replay_item
+                  where replay_item.request_id = $4::uuid
+                    and replay_item.member_link_id = campaign_batch_members.id
+                    and replay_item.status in ('queued','processing')
+               )
+             )
              and processing_attempts < max_attempts
              and (
                (processing_status in ('pending','queued','aguardando') and (next_check_at is null or next_check_at <= now()))
@@ -657,13 +693,39 @@ async function releaseAndFinalizeJob(job: LocalJob, workerId: string) {
                or ($2::boolean and processing_status = 'error' and error_reprocess_requested_at is not null)
              )
          )::int as immediate_count,
-         count(*) filter (where processing_status = 'processing')::int as processing_count,
-         min(next_retry_at) filter (where processing_status = 'retrying')::text as next_retry_at
+         count(*) filter (
+           where processing_status = 'processing'
+             and ($3::uuid is not null or payment_status is null or payment_status not in ('paid','agreed'))
+             and (
+               $4::uuid is null
+               or exists (
+                 select 1
+                   from filtered_error_reprocess_items replay_item
+                  where replay_item.request_id = $4::uuid
+                    and replay_item.member_link_id = campaign_batch_members.id
+                    and replay_item.status in ('queued','processing')
+               )
+             )
+         )::int as processing_count,
+         min(next_retry_at) filter (
+           where processing_status = 'retrying'
+             and ($3::uuid is not null or payment_status is null or payment_status not in ('paid','agreed'))
+             and (
+               $4::uuid is null
+               or exists (
+                 select 1
+                   from filtered_error_reprocess_items replay_item
+                  where replay_item.request_id = $4::uuid
+                    and replay_item.member_link_id = campaign_batch_members.id
+                    and replay_item.status in ('queued','processing')
+               )
+             )
+         )::text as next_retry_at
        from campaign_batch_members
       where batch_id = $1
-        and ($3::uuid is null or id = $3::uuid)
+        and ($3::uuid is null or campaign_batch_members.id = $3::uuid)
         and deleted_at is null`,
-      [job.batch_id, job.include_errors, targetMemberLinkId]
+      [job.batch_id, job.include_errors, targetMemberLinkId, filteredErrorRequestId]
     );
 
     const row = queue.rows[0];

@@ -103,8 +103,8 @@ async function recoverInterruptedLocalWork() {
 
     await client.query(
       `update processing_jobs
-          set status = 'queued',
-              next_run_at = now(),
+          set status = case when stop_requested_at is null then 'queued' else 'paused' end,
+              next_run_at = case when stop_requested_at is null then now() else null end,
               locked_by = null,
               locked_at = null,
               lease_expires_at = null,
@@ -189,6 +189,21 @@ async function main() {
       }
 
       if (!drain || result.jobStatus === "idle") return;
+
+      // Um job ainda pode permanecer queued/deferred quando so existem itens
+      // inelegiveis ou retries agendados para o futuro. Sem este checkpoint o
+      // --drain fica preso no mesmo job e impede que o oneshot termine; com o
+      // timer sem novo ciclo, sincronizacoes gerais (inclusive cancelamentos)
+      // ficam famintas indefinidamente. Zero claims significa zero progresso:
+      // devolvemos o controle ao systemd e o proximo tick reavalia tudo.
+      if (result.claimed === 0) {
+        console.warn("[LOCAL_WORKER_NO_PROGRESS_BREAK]", {
+          jobId: result.jobId,
+          batchId: result.batchId,
+          jobStatus: result.jobStatus
+        });
+        return;
+      }
 
       productiveCycles += 1;
       if (productiveCycles >= maxDrainCycles) {
