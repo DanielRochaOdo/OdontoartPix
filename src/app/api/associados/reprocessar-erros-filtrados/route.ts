@@ -29,7 +29,7 @@ export async function POST(request: Request) {
           where id = any($1::uuid[])
             and deleted_at is null
             and processing_status = 'error'
-            and payment_status is distinct from 'paid'
+            and (payment_status is null or payment_status not in ('paid', 'agreed'))
           order by id
           for update`,
         [memberIds]

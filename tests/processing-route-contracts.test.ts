@@ -6,12 +6,15 @@ function source(path: string) {
 }
 
 describe("processing route contracts", () => {
-  it("associado usa fila individual fechada", () => {
+  it("associado usa fila individual fechada e resposta assincrona", () => {
     const route = source("src/app/api/associados/[id]/reprocessar/route.ts");
     const queue = source("src/lib/member-reprocess-queue.ts");
 
     expect(route).toContain("queueMemberReprocess");
     expect(route).toContain('scope: "member"');
+    expect(route).toContain('queued: true');
+    expect(route).toContain("202");
+    expect(route).not.toContain("setTimeout");
     expect(queue).toContain("target_member_link_id");
     expect(queue).toContain("total_items = 1");
     expect(queue).toContain("'manual', 'member'");
@@ -45,12 +48,12 @@ describe("processing route contracts", () => {
     expect(route).toContain('processingScope: "campaign"');
   });
 
-  it("reprocessamento filtrado fecha snapshot e aceita ate dez mil associados", () => {
+  it("reprocessamento filtrado fecha snapshot, aceita ate dez mil e exclui estados terminais", () => {
     const route = source("src/app/api/associados/reprocessar-erros-filtrados/route.ts");
     expect(route).toContain("max(10000)");
     expect(route).toContain("filtered_error_reprocess_requests");
     expect(route).toContain("filtered_error_reprocess_items");
     expect(route).toContain("processing_status = 'error'");
-    expect(route).toContain("payment_status is distinct from 'paid'");
+    expect(route).toContain("payment_status is null or payment_status not in ('paid', 'agreed')");
   });
 });

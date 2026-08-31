@@ -178,7 +178,7 @@ describe("mensalidades-api helpers", () => {
     expect((caught as Error).message).toContain("parcela alvo 55 nao foi localizada");
   });
 
-  it("rejeita pagamento parcial quando ValorPago e inferior ao Valor", async () => {
+  it("aceita pagamento parcial quando o ERP informa recebimento explicito", async () => {
     process.env.MENSALIDADES_API_BASE_URL = "https://erp.exemplo.com";
     process.env.MENSALIDADES_API_TOKEN = "token-123";
 
@@ -201,21 +201,18 @@ describe("mensalidades-api helpers", () => {
 
     vi.stubGlobal("fetch", fetchMock);
 
-    let caught: unknown;
-    try {
-      await consultMonthlyByAssociatedCode("ASSOC-77", "55");
-    } catch (error) {
-      caught = error;
-    }
+    const result = await consultMonthlyByAssociatedCode("ASSOC-77", "55");
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(caught).toBeInstanceOf(ErpError);
-    expect(caught).toMatchObject({
-      code: "ERP_INVALID_RESPONSE",
-      retryable: false,
-      httpStatus: 200
+    expect(result.httpStatus).toBe(200);
+    expect(result.analysis.paymentStatus).toBe("paid");
+    expect(result.analysis.paymentStatusSource).toBe("erp_explicit");
+    expect(result.analysis.targetFinancialState).toMatchObject({
+      installmentCode: "55",
+      installmentAmountCents: 10000,
+      paymentAmountCents: 9000,
+      pendingAmountCents: 1000
     });
-    expect((caught as Error).message).toContain("ValorPago inferior ao Valor");
   });
 
   it("interpreta Retry-After em segundos", () => {

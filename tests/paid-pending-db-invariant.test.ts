@@ -144,6 +144,94 @@ describeDatabase("paid pending database invariant", () => {
     });
   });
 
+  it("permite reconciliacao explicita, mas impede paid de terminar em error", async () => {
+    await withIsolatedTransaction(async (client) => {
+      const { campaignId, batchId, memberId } = await createScenario(
+        client,
+        "Paid terminal"
+      );
+
+      const inserted = await client.query<{ id: string }>(
+        `insert into campaign_batch_members(
+           campaign_id,
+           batch_id,
+           member_id,
+           target_installment_id,
+           processing_status,
+           payment_status,
+           payment_status_source,
+           installment_amount_cents,
+           payment_amount_cents,
+           total_pending_amount_cents
+         ) values (
+           $1::uuid,
+           $2::uuid,
+           $3::uuid,
+           '6591351',
+           'completed',
+           'paid',
+           'erp_explicit',
+           10000,
+           6000,
+           4000
+         )
+         returning id`,
+        [campaignId, batchId, memberId]
+      );
+      const linkId = inserted.rows[0]!.id;
+
+      const pending = await client.query<{ processing_status: string }>(
+        `update campaign_batch_members
+            set processing_status = 'pending',
+                next_check_at = now(),
+                updated_at = now()
+          where id = $1::uuid
+          returning processing_status`,
+        [linkId]
+      );
+      expect(pending.rows[0]!.processing_status).toBe("pending");
+
+      const processing = await client.query<{ processing_status: string }>(
+        `update campaign_batch_members
+            set processing_status = 'processing',
+                updated_at = now()
+          where id = $1::uuid
+          returning processing_status`,
+        [linkId]
+      );
+      expect(processing.rows[0]!.processing_status).toBe("processing");
+
+      const terminalFailure = await client.query<{
+        processing_status: string;
+        payment_status: string;
+        total_pending_amount_cents: string;
+        processing_error_code: string | null;
+        last_error: string | null;
+      }>(
+        `update campaign_batch_members
+            set processing_status = 'error',
+                processing_error_code = 'ERP_INVALID_RESPONSE',
+                last_error = 'falha tecnica simulada',
+                updated_at = now()
+          where id = $1::uuid
+          returning processing_status,
+                    payment_status,
+                    total_pending_amount_cents::text,
+                    processing_error_code,
+                    last_error`,
+        [linkId]
+      );
+
+      expect(terminalFailure.rows[0]).toEqual({
+        processing_status: "completed",
+        payment_status: "paid",
+        total_pending_amount_cents: "4000",
+        processing_error_code: null,
+        last_error: null
+      });
+    });
+  });
+
   it("nao reinterpreta pagamentos que nao vieram da verdade explicita do ERP", async () => {
     await withIsolatedTransaction(async (client) => {
       const { campaignId, batchId, memberId } = await createScenario(

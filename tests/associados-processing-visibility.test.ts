@@ -20,14 +20,17 @@ describe("associados processing visibility", () => {
     expect(helper).toContain("previous_payment_amount_cents");
   });
 
-  it("tambem acompanha reprocessamento individual", () => {
+  it("tambem acompanha reprocessamento individual sem polling HTTP", () => {
     const route = source("src/app/api/associados/[id]/reprocessar/route.ts");
 
     expect(route).toContain("createAssociadosProcessingRequest");
     expect(route).toContain("processingRequestId");
-    expect(route).toContain("waitForMemberReprocessOutcome");
-    expect(route).toContain('outcome.job_status === "cancelled"');
-    expect(route).toContain("O reprocessamento foi interrompido manualmente.");
+    expect(route).toContain('queued: true');
+    expect(route).toContain('finished: false');
+    expect(route).toContain("202");
+    expect(route).not.toContain("waitForMemberReprocessOutcome");
+    expect(route).not.toContain("setTimeout");
+    expect(route).not.toContain("REPROCESS_WAIT_TIMEOUT_MS");
   });
 
   it("expoe progresso, alteracoes e descoberta de jobs ativos", () => {

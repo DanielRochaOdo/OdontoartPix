@@ -116,8 +116,8 @@ describe("analyzeMonthlyResponse - contrato atual do ERP", () => {
     expect(result.paymentStatus).toBe("paid");
   });
 
-  it("rejeita pagamento parcial quando ValorPago e inferior ao Valor", () => {
-    expect(() => analyzeMonthlyResponse(
+  it("classifica pagamento parcial como paid e preserva o saldo residual", () => {
+    const result = analyzeMonthlyResponse(
       page({
         data: [{
           Id: "55",
@@ -127,7 +127,18 @@ describe("analyzeMonthlyResponse - contrato atual do ERP", () => {
         }]
       }),
       "55"
-    )).toThrow("ValorPago inferior ao Valor");
+    );
+
+    expect(result.paymentStatus).toBe("paid");
+    expect(result.paymentStatusSource).toBe("erp_explicit");
+    expect(result.targetFinancialState).toMatchObject({
+      installmentCode: "55",
+      paymentStatus: "paid",
+      installmentAmountCents: 10000,
+      paymentAmountCents: 9999,
+      pendingAmountCents: 1
+    });
+    expect(result.totalPendingAmountCents).toBe(1);
   });
 
   it("rejeita DescricaoRecebimento diferente de ABERTO sem ValorPago", () => {
@@ -140,7 +151,7 @@ describe("analyzeMonthlyResponse - contrato atual do ERP", () => {
         }]
       }),
       "55"
-    )).toThrow("sem ValorPago informado");
+    )).toThrow("nao possui ValorPago informado");
   });
 
   it("rejeita parcela alvo sem DescricaoRecebimento", () => {
@@ -331,8 +342,8 @@ describe("analyzeMonthlyResponses - paginacao", () => {
     expect(result.totalPendingAmountCents).toBe(4500);
   });
 
-  it("rejeita pagamento parcial da parcela alvo mesmo com outras parcelas abertas", () => {
-    expect(() => analyzeMonthlyResponses([
+  it("preserva pagamento parcial da parcela alvo junto com outras parcelas abertas", () => {
+    const result = analyzeMonthlyResponses([
       page({
         currentPage: 1,
         totalPages: 2,
@@ -353,7 +364,17 @@ describe("analyzeMonthlyResponses - paginacao", () => {
           Tipo_plano: "Plano A"
         }]
       })
-    ], "55")).toThrow("ValorPago inferior ao Valor");
+    ], "55");
+
+    expect(result.paymentStatus).toBe("paid");
+    expect(result.targetFinancialState.pendingAmountCents).toBe(1000);
+    expect(result.totalPaidAmountCents).toBe(5000);
+    expect(result.totalPendingAmountCents).toBe(5500);
+    expect(result.totalsByPlan).toContainEqual({
+      planType: "Plano A",
+      installmentsCount: 2,
+      totalAmountCents: 5500
+    });
   });
 
   it("nao exige paginas restantes quando a parcela alvo ja foi encontrada", () => {

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { MonthlyAnalysis, MonthlyInstallment } from "@/lib/analysis";
+import type { MonthlyAnalysis } from "@/lib/analysis";
 import { dbQuery } from "@/lib/db/pool";
 import { clientQuery, withTransaction } from "@/lib/db/transaction";
 import { consultMonthlyByAssociatedCode, ErpError } from "@/lib/mensalidades-api";
@@ -62,26 +62,19 @@ function retryDelayMs(attempt: number, error?: ErpError | null) {
   return Math.min(60_000, 1200 * 2 ** Math.max(0, attempt - 1));
 }
 
-function targetInstallment(claimed: ClaimedMember, analysis: MonthlyAnalysis): MonthlyInstallment {
+function targetFinancialState(claimed: ClaimedMember, analysis: MonthlyAnalysis) {
   const targetId = String(claimed.target_installment_id ?? "").trim();
-  const target = analysis.installments.find(
-    (installment) => String(installment.installmentCode).trim() === targetId
-  );
+  const financial = analysis.targetFinancialState;
 
-  if (!target) {
+  if (!targetId || String(financial.installmentCode).trim() !== targetId) {
     throw new ErpError(
       "ERP_INVALID_RESPONSE",
-      `A parcela alvo ${targetId || "nao informada"} nao foi localizada no historico completo do ERP.`,
+      `A parcela alvo ${targetId || "nao informada"} nao corresponde ao estado financeiro analisado.`,
       false
     );
   }
 
-  return target;
-}
-
-function explicitPayment(target: MonthlyInstallment) {
-  const description = String(target.paymentDescription ?? "").trim();
-  return target.paidAmountCents !== null && description !== "" && description.toUpperCase() !== "ABERTO";
+  return financial;
 }
 
 async function runWithConcurrency<T>(
@@ -332,15 +325,7 @@ async function persistSuccess(input: {
   analysis: MonthlyAnalysis;
 }) {
   const { job, claimed, workerId, analysis } = input;
-  const target = targetInstallment(claimed, analysis);
-  const isPaid = explicitPayment(target);
-  const targetAmountCents = Math.max(Math.round(target.baseAmountCents), 0);
-  const paidAmountCents = isPaid ? Math.max(Math.round(target.paidAmountCents ?? 0), 0) : 0;
-  const pendingAmountCents = isPaid
-    ? Math.max(targetAmountCents - paidAmountCents, 0)
-    : targetAmountCents;
-  const paymentStatus = isPaid ? "paid" : "unpaid";
-  const paymentStatusSource = isPaid ? "erp_explicit" : "erp_open_invoice";
+  const financial = targetFinancialState(claimed, analysis);
 
   return withTransaction(async (client) => {
     const owned = await clientQuery<{ id: string }>(
@@ -465,11 +450,11 @@ async function persistSuccess(input: {
         claimed.id,
         workerId,
         claimed.claim_token,
-        paymentStatus,
-        paymentStatusSource,
-        targetAmountCents,
-        paidAmountCents,
-        pendingAmountCents,
+        financial.paymentStatus,
+        financial.paymentStatusSource,
+        financial.installmentAmountCents,
+        financial.paymentAmountCents,
+        financial.pendingAmountCents,
         analysis.installmentsCount
       ]
     );
@@ -599,7 +584,10 @@ async function recalculateBatch(batchId: string) {
          count(*) filter (where processing_status = 'completed')::int as processed_records,
          count(*) filter (where payment_status = 'paid')::int as paid_records,
          count(*) filter (where payment_status = 'unpaid')::int as unpaid_records,
-         count(*) filter (where processing_status = 'error')::int as error_records,
+         count(*) filter (
+           where processing_status = 'error'
+             and (payment_status is null or payment_status not in ('paid','agreed'))
+         )::int as error_records,
          coalesce(sum(total_pending_amount_cents), 0)::bigint as total_pending_amount_cents,
          count(*) filter (where processing_status = 'processing')::int as processing_records,
          count(*) filter (
