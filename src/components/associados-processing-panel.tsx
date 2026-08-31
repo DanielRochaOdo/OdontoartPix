@@ -141,7 +141,8 @@ export function AssociadosProcessingPanel() {
   }, [requestId]);
 
   useEffect(() => {
-    if (!requestId) return;
+    const observedRequestId = requestId;
+    if (!observedRequestId) return;
     let cancelled = false;
     let loading = false;
 
@@ -150,7 +151,7 @@ export function AssociadosProcessingPanel() {
       loading = true;
       try {
         const next = await fetchJson<ProcessingSnapshot>(
-          `/api/associados/processamento-manual/${encodeURIComponent(requestId)}`
+          `/api/associados/processamento-manual/${encodeURIComponent(observedRequestId)}`
         );
         if (cancelled || !next) return;
         setSnapshot(next);
