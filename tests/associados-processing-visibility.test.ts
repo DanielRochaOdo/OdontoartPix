@@ -47,6 +47,26 @@ describe("associados processing visibility", () => {
     expect(changes).toContain("Valor pago");
   });
 
+  it("le descricao e data de recebimento na parcela alvo", () => {
+    const selected = source("src/app/api/associados/reprocessar-selecionados/route.ts");
+    const individual = source("src/app/api/associados/[id]/reprocessar/route.ts");
+    const status = source("src/app/api/associados/processamento-manual/[requestId]/route.ts");
+    const changes = source("src/app/api/associados/processamento-manual/[requestId]/alteracoes/route.ts");
+
+    for (const route of [selected, individual, status, changes]) {
+      expect(route).toContain("member_installments");
+      expect(route).toContain("mi.payment_description");
+      expect(route).toContain("mi.payment_date_text");
+      expect(route).not.toContain("cbm.payment_description");
+      expect(route).not.toContain("cbm.payment_date_text");
+    }
+
+    expect(selected).toContain("mi.cod_parcela = cbm.target_installment_id");
+    expect(individual).toContain("mi.cod_parcela = cbm.target_installment_id");
+    expect(status).toContain("mi.cod_parcela = cbm.target_installment_id");
+    expect(changes).toContain("mi.cod_parcela = cbm.target_installment_id");
+  });
+
   it("permite parar definitivamente os jobs do snapshot", () => {
     const stop = source("src/app/api/associados/processamento-manual/[requestId]/parar/route.ts");
 
