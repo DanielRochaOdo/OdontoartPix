@@ -71,7 +71,6 @@ export async function GET(
            )::int as cancelled_count,
            count(*) filter (
              where i.financial_snapshot_complete
-               and pj.status = 'completed'
                and pj.success_items > 0
                and (
                  cbm.payment_status is distinct from i.previous_payment_status
