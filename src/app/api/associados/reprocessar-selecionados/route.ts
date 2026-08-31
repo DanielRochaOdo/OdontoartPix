@@ -41,22 +41,25 @@ export async function POST(request: Request) {
     const result = await withTransaction(async (client) => {
       const memberResult = await clientQuery<ProcessingSnapshotTarget>(
         client,
-        `select id,
-                campaign_id,
-                batch_id,
-                target_installment_id,
-                processing_status,
-                payment_status,
-                installment_amount_cents,
-                payment_amount_cents,
-                total_pending_amount_cents,
-                payment_description,
-                payment_date_text
-           from campaign_batch_members
-          where id = any($1::uuid[])
-            and deleted_at is null
-          order by id
-          for update`,
+        `select cbm.id,
+                cbm.campaign_id,
+                cbm.batch_id,
+                cbm.target_installment_id,
+                cbm.processing_status,
+                cbm.payment_status,
+                cbm.installment_amount_cents,
+                cbm.payment_amount_cents,
+                cbm.total_pending_amount_cents,
+                mi.payment_description,
+                mi.payment_date_text
+           from campaign_batch_members cbm
+           left join member_installments mi
+             on mi.campaign_batch_member_id = cbm.id
+            and mi.cod_parcela = cbm.target_installment_id
+          where cbm.id = any($1::uuid[])
+            and cbm.deleted_at is null
+          order by cbm.id
+          for update of cbm`,
         [memberIds]
       );
 
