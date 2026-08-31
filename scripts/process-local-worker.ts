@@ -48,6 +48,21 @@ async function recoverInterruptedLocalWork() {
   try {
     await client.query("begin");
 
+    // Esta recuperacao so e chamada depois que este processo adquiriu o
+    // advisory lock global do worker. Portanto, qualquer claim persistido em
+    // uma onda nao-finalizada pertence a um processo anterior que ja morreu.
+    // Limpar o claim aqui evita esperar o lease (normalmente 15 minutos) apos
+    // deploy, SIGTERM ou reinicio do servico.
+    const orphanedGeneralSyncRuns = await client.query<{ id: string }>(
+      `update general_sync_runs
+          set locked_by = null,
+              lease_expires_at = null,
+              updated_at = now()
+        where status in ('queued', 'running', 'paused', 'cancelling')
+          and locked_by is not null
+        returning id`
+    );
+
     const interruptedJobs = await client.query<{ id: string; batch_id: string }>(
       `select id, batch_id
          from processing_jobs
@@ -57,7 +72,11 @@ async function recoverInterruptedLocalWork() {
 
     if (interruptedJobs.rows.length === 0) {
       await client.query("commit");
-      return { jobs: 0, members: 0 };
+      return {
+        generalSyncRuns: orphanedGeneralSyncRuns.rowCount ?? 0,
+        jobs: 0,
+        members: 0
+      };
     }
 
     const jobIds = interruptedJobs.rows.map((row) => row.id);
@@ -98,6 +117,7 @@ async function recoverInterruptedLocalWork() {
 
     await client.query("commit");
     return {
+      generalSyncRuns: orphanedGeneralSyncRuns.rowCount ?? 0,
       jobs: interruptedJobs.rows.length,
       members: reclaimedMembers.rowCount ?? 0
     };
@@ -127,7 +147,7 @@ async function main() {
     }
 
     const recovered = await recoverInterruptedLocalWork();
-    if (recovered.jobs > 0 || recovered.members > 0) {
+    if (recovered.generalSyncRuns > 0 || recovered.jobs > 0 || recovered.members > 0) {
       console.warn("[LOCAL_WORKER_RECOVERY]", recovered);
     }
 
