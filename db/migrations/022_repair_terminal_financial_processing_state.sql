@@ -1,11 +1,48 @@
--- Repara estados produzidos antes da correcao do contrato de pagamento parcial.
+-- Repara estados produzidos antes da correcao do contrato de pagamento parcial
+-- e transforma a regra em invariante permanente do banco.
 --
 -- Regra de dominio:
 -- - payment_status = paid/agreed representa verdade financeira terminal;
--- - erro tecnico de uma reconciliacao posterior nao transforma essa verdade em
---   erro financeiro do associado;
--- - jobs individuais ativos continuam sendo preservados para que uma
---   reconciliacao explicitamente solicitada pelo operador possa terminar.
+-- - uma reconciliacao manual pode transitar por pending/processing/retrying;
+-- - se essa reconciliacao termina com falha tecnica, a falha pertence ao job
+--   de processamento e nao reclassifica a verdade financeira do associado;
+-- - a ultima verdade financeira confirmada permanece completed e fora do
+--   universo de reprocessamento de erros.
+
+create or replace function enforce_terminal_financial_processing_state_v1()
+returns trigger
+language plpgsql
+as $$
+begin
+  if new.deleted_at is null
+     and new.payment_status in ('paid', 'agreed')
+     and new.processing_status in ('error', 'failed') then
+    new.processing_status := 'completed';
+    new.processing_attempts := 0;
+    new.stale_reclaim_count := 0;
+    new.next_check_at := null;
+    new.next_retry_at := null;
+    new.processing_owner := null;
+    new.processing_started_at := null;
+    new.processing_heartbeat_at := null;
+    new.claim_token := null;
+    new.claimed_at := null;
+    new.processing_error_code := null;
+    new.last_error := null;
+    new.error_reprocess_requested_at := null;
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_enforce_terminal_financial_processing_state_v1
+  on campaign_batch_members;
+
+create trigger trg_enforce_terminal_financial_processing_state_v1
+before insert or update on campaign_batch_members
+for each row
+execute function enforce_terminal_financial_processing_state_v1();
 
 with repaired as (
   update campaign_batch_members cbm
