@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { requireApiUser } from "@/lib/auth/require-api-user";
-import { createAssociadosProcessingRequest } from "@/lib/associados-processing-request";
+import {
+  createAssociadosProcessingRequest,
+  type AssociadosProcessingTrackedItem
+} from "@/lib/associados-processing-request";
 import { clientQuery, withTransaction } from "@/lib/db/transaction";
 import { fail, ok } from "@/lib/http/api-response";
 import {
@@ -13,6 +16,15 @@ export const runtime = "nodejs";
 const BodySchema = z.object({
   memberIds: z.array(z.string().uuid()).min(1).max(10000)
 });
+
+type ProcessingSnapshotTarget = MemberReprocessTarget & {
+  processing_status: string | null;
+  installment_amount_cents: number | string | null;
+  payment_amount_cents: number | string | null;
+  total_pending_amount_cents: number | string | null;
+  payment_description: string | null;
+  payment_date_text: string | null;
+};
 
 export async function POST(request: Request) {
   const auth = await requireApiUser(["administrador", "operador"]);
@@ -27,9 +39,19 @@ export async function POST(request: Request) {
 
   try {
     const result = await withTransaction(async (client) => {
-      const memberResult = await clientQuery<MemberReprocessTarget>(
+      const memberResult = await clientQuery<ProcessingSnapshotTarget>(
         client,
-        `select id, campaign_id, batch_id, target_installment_id, payment_status
+        `select id,
+                campaign_id,
+                batch_id,
+                target_installment_id,
+                processing_status,
+                payment_status,
+                installment_amount_cents,
+                payment_amount_cents,
+                total_pending_amount_cents,
+                payment_description,
+                payment_date_text
            from campaign_batch_members
           where id = any($1::uuid[])
             and deleted_at is null
@@ -41,13 +63,7 @@ export async function POST(request: Request) {
       const found = memberResult.rows;
       const missingTargetIds: string[] = [];
       const queuedIds: string[] = [];
-      const trackedItems: Array<{
-        memberId: string;
-        campaignId: string;
-        batchId: string;
-        previousPaymentStatus: string | null;
-        jobId: string;
-      }> = [];
+      const trackedItems: AssociadosProcessingTrackedItem[] = [];
 
       for (const member of found) {
         if (!String(member.target_installment_id ?? "").trim()) {
@@ -61,7 +77,13 @@ export async function POST(request: Request) {
           memberId: member.id,
           campaignId: member.campaign_id,
           batchId: member.batch_id,
+          previousProcessingStatus: member.processing_status,
           previousPaymentStatus: member.payment_status,
+          previousInstallmentAmountCents: member.installment_amount_cents,
+          previousPaymentAmountCents: member.payment_amount_cents,
+          previousTotalPendingAmountCents: member.total_pending_amount_cents,
+          previousPaymentDescription: member.payment_description,
+          previousPaymentDateText: member.payment_date_text,
           jobId: job.id
         });
       }
