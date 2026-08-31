@@ -143,6 +143,7 @@ export function AssociadosProcessingPanel() {
   useEffect(() => {
     const observedRequestId = requestId;
     if (!observedRequestId) return;
+    const requestStatusUrl = `/api/associados/processamento-manual/${encodeURIComponent(observedRequestId)}`;
     let cancelled = false;
     let loading = false;
 
@@ -150,9 +151,7 @@ export function AssociadosProcessingPanel() {
       if (loading || document.visibilityState !== "visible") return;
       loading = true;
       try {
-        const next = await fetchJson<ProcessingSnapshot>(
-          `/api/associados/processamento-manual/${encodeURIComponent(observedRequestId)}`
-        );
+        const next = await fetchJson<ProcessingSnapshot>(requestStatusUrl);
         if (cancelled || !next) return;
         setSnapshot(next);
       } finally {
