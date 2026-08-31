@@ -31,7 +31,7 @@ function payload(input: {
   };
 }
 
-describe("ACORDADO na analise financeira do ERP", () => {
+describe("contrato financeiro da analise do ERP", () => {
   it("classifica ACORDADO como agreed sem valor pendente nem valor pago", () => {
     const result = analyzeMonthlyResponse(
       payload({ description: "ACORDADO", amount: "100,00", paidAmount: "25,00" }),
@@ -40,6 +40,14 @@ describe("ACORDADO na analise financeira do ERP", () => {
 
     expect(result.paymentStatus).toBe("agreed");
     expect(result.paymentStatusSource).toBe("erp_agreed");
+    expect(result.targetFinancialState).toEqual({
+      installmentCode: "1001",
+      paymentStatus: "agreed",
+      paymentStatusSource: "erp_agreed",
+      installmentAmountCents: 10000,
+      paymentAmountCents: 0,
+      pendingAmountCents: 0
+    });
     expect(result.totalPendingAmountCents).toBe(0);
     expect(result.totalPaidAmountCents).toBe(0);
     expect(result.installments[0]?.paymentDescription).toBe("ACORDADO");
@@ -54,32 +62,56 @@ describe("ACORDADO na analise financeira do ERP", () => {
     );
 
     expect(result.paymentStatus).toBe("unpaid");
+    expect(result.paymentStatusSource).toBe("erp_open_invoice");
+    expect(result.targetFinancialState.pendingAmountCents).toBe(10000);
     expect(result.totalPendingAmountCents).toBe(10000);
   });
 
-  it("mantem recebimento comum como paid somente quando ValorPago cobre Valor", () => {
+  it("classifica recebimento integral como paid", () => {
     const result = analyzeMonthlyResponse(
       payload({ description: "PIX", amount: "100,00", paidAmount: "100,00" }),
       "1001"
     );
 
     expect(result.paymentStatus).toBe("paid");
+    expect(result.paymentStatusSource).toBe("erp_explicit");
+    expect(result.targetFinancialState.pendingAmountCents).toBe(0);
     expect(result.totalPaidAmountCents).toBe(10000);
   });
 
-  it("trata recebimento comum com ValorPago inferior ao Valor como erro", () => {
+  it("classifica recebimento parcial como paid e preserva o saldo residual", () => {
+    const result = analyzeMonthlyResponse(
+      payload({ description: "PIX", amount: "100,00", paidAmount: "99,99" }),
+      "1001"
+    );
+
+    expect(result.paymentStatus).toBe("paid");
+    expect(result.paymentStatusSource).toBe("erp_explicit");
+    expect(result.targetFinancialState).toEqual({
+      installmentCode: "1001",
+      paymentStatus: "paid",
+      paymentStatusSource: "erp_explicit",
+      installmentAmountCents: 10000,
+      paymentAmountCents: 9999,
+      pendingAmountCents: 1
+    });
+    expect(result.totalPendingAmountCents).toBe(1);
+    expect(result.totalPaidAmountCents).toBe(9999);
+  });
+
+  it("rejeita recebimento nao aberto com ValorPago zero por contradicao de contrato", () => {
     expect(() =>
       analyzeMonthlyResponse(
-        payload({ description: "PIX", amount: "100,00", paidAmount: "99,99" }),
+        payload({ description: "PIX", amount: "100,00", paidAmount: "0,00" }),
         "1001"
       )
     ).toThrowError(MonthlyResponseError);
 
     expect(() =>
       analyzeMonthlyResponse(
-        payload({ description: "PIX", amount: "100,00", paidAmount: "99,99" }),
+        payload({ description: "PIX", amount: "100,00", paidAmount: "0,00" }),
         "1001"
       )
-    ).toThrow(/ValorPago inferior ao Valor/);
+    ).toThrow(/ValorPago e zero/);
   });
 });
