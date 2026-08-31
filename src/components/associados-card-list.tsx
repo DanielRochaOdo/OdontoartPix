@@ -17,6 +17,7 @@ import {
 } from "@/lib/processing-errors";
 import {
   getFilteredErrorReplaySnapshot,
+  getProcessingActiveSnapshot,
   subscribeProcessingRealtime
 } from "@/lib/processing-realtime";
 
@@ -66,6 +67,11 @@ type BulkErrorReprocessProgress = {
   completedCount: number;
   resolvedCount: number;
   failedCount: number;
+};
+
+type MultiSelectOption = {
+  value: string;
+  label: string;
 };
 
 const PAGE_SIZE = 50;
@@ -182,6 +188,10 @@ function paymentBadgeClass(payment: string, paidWithPending: boolean) {
   return "border-default bg-surface-tertiary text-secondary";
 }
 
+function uniqueValues(values: string[]) {
+  return [...new Set(values.filter((value) => value && value !== "all"))];
+}
+
 function UserIcon() {
   return (
     <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
@@ -206,6 +216,72 @@ function Field({ label, children, className = "" }: { label: string; children: R
       <div className="text-[11px] font-medium uppercase tracking-wide text-muted">{label}</div>
       <div className="mt-1 min-w-0 break-words text-sm font-medium text-primary">{children}</div>
     </div>
+  );
+}
+
+function MultiSelectFilter({
+  label,
+  values,
+  options,
+  onChange,
+  className = ""
+}: {
+  label: string;
+  values: string[];
+  options: MultiSelectOption[];
+  onChange: (values: string[]) => void;
+  className?: string;
+}) {
+  const selectedLabels = options
+    .filter((option) => values.includes(option.value))
+    .map((option) => option.label);
+  const summary =
+    selectedLabels.length === 0
+      ? `Todos: ${label}`
+      : selectedLabels.length <= 2
+        ? `${label}: ${selectedLabels.join(", ")}`
+        : `${label}: ${selectedLabels.length} selecionados`;
+
+  function toggle(value: string) {
+    onChange(values.includes(value) ? values.filter((item) => item !== value) : [...values, value]);
+  }
+
+  return (
+    <details className={`group relative ${className}`}>
+      <summary className="flex min-h-[42px] cursor-pointer list-none items-center justify-between gap-2 rounded-lg border border-default bg-surface-secondary px-3 py-2.5 text-sm text-primary outline-none transition hover:bg-surface-hover focus:border-focus focus:ring-2 focus:ring-brand">
+        <span className="truncate">{summary}</span>
+        <span className="shrink-0 text-muted transition group-open:rotate-180">▾</span>
+      </summary>
+      <div className="absolute left-0 top-full z-50 mt-2 max-h-72 w-full min-w-[230px] overflow-auto rounded-xl border border-default bg-surface-elevated p-2 shadow-xl">
+        {values.length > 0 ? (
+          <button
+            type="button"
+            onClick={() => onChange([])}
+            className="mb-1 w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-brand hover:bg-surface-hover"
+          >
+            Limpar seleção
+          </button>
+        ) : null}
+        {options.length === 0 ? (
+          <div className="px-3 py-2 text-xs text-muted">Nenhuma opção disponível.</div>
+        ) : (
+          options.map((option) => (
+            <label
+              key={option.value}
+              className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm text-secondary hover:bg-surface-hover hover:text-primary"
+            >
+              <input
+                type="checkbox"
+                checked={values.includes(option.value)}
+                onChange={() => toggle(option.value)}
+                className="h-4 w-4 rounded border-default"
+              />
+              <span className="min-w-0 break-words">{option.label}</span>
+            </label>
+          ))
+        )}
+      </div>
+    </details>
   );
 }
 
@@ -315,10 +391,10 @@ export function AssociadosCardList({
     installment?: string;
     dueDateFrom?: string;
     dueDateTo?: string;
-    status?: string;
-    payment?: string;
+    status?: string[];
+    payment?: string[];
     paidPending?: string;
-    receipt?: string;
+    receipt?: string[];
     campaign?: string[];
     batch?: string[];
   };
@@ -330,29 +406,32 @@ export function AssociadosCardList({
   const [dueDateFrom, setDueDateFrom] = useState(initialFilters?.dueDateFrom ?? "");
   const [dueDateTo, setDueDateTo] = useState(initialFilters?.dueDateTo ?? "");
   const [datePopoverOpen, setDatePopoverOpen] = useState(false);
-  const [seededCampaignIds, setSeededCampaignIds] = useState<string[]>(
-    initialFilters?.campaign && initialFilters.campaign.length > 1 ? initialFilters.campaign : []
+  const [statusFilters, setStatusFilters] = useState<string[]>(() =>
+    uniqueValues((initialFilters?.status ?? []).map(normalizeStatus))
   );
-  const [seededBatchIds, setSeededBatchIds] = useState<string[]>(
-    initialFilters?.batch && initialFilters.batch.length > 1 ? initialFilters.batch : []
+  const [paymentFilters, setPaymentFilters] = useState<string[]>(() =>
+    uniqueValues((initialFilters?.payment ?? []).map(normalizePayment))
   );
-  const [filters, setFilters] = useState({
-    status: initialFilters?.status ? normalizeStatus(initialFilters.status) : "all",
-    payment: normalizePayment(initialFilters?.payment ?? "all"),
-    paidPending: normalizePaidPendingFilter(initialFilters?.paidPending),
-    receipt: initialFilters?.receipt?.trim() || "all",
-    campaign:
-      initialFilters?.campaign && initialFilters.campaign.length === 1
-        ? initialFilters.campaign[0]
-        : "all",
-    batch:
-      initialFilters?.batch && initialFilters.batch.length === 1
-        ? initialFilters.batch[0]
-        : "all"
-  });
+  const [paidPendingFilter, setPaidPendingFilter] = useState(
+    normalizePaidPendingFilter(initialFilters?.paidPending)
+  );
+  const [receiptFilters, setReceiptFilters] = useState<string[]>(() =>
+    uniqueValues((initialFilters?.receipt ?? []).map((value) => value.trim()))
+  );
+  const [campaignFilters, setCampaignFilters] = useState<string[]>(() =>
+    uniqueValues(initialFilters?.campaign ?? [])
+  );
+  const [batchFilters, setBatchFilters] = useState<string[]>(() =>
+    uniqueValues(initialFilters?.batch ?? [])
+  );
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [ascending, setAscending] = useState(true);
   const [page, setPage] = useState(1);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [reprocessingSelected, setReprocessingSelected] = useState(false);
+  const [selectionNotice, setSelectionNotice] = useState<string | null>(null);
+  const [selectionError, setSelectionError] = useState<string | null>(null);
+  const [selectionWatchActive, setSelectionWatchActive] = useState(false);
   const [reprocessingErrors, setReprocessingErrors] = useState(false);
   const [bulkProgress, setBulkProgress] = useState<BulkErrorReprocessProgress | null>(null);
   const [bulkError, setBulkError] = useState<string | null>(null);
@@ -440,16 +519,12 @@ export function AssociadosCardList({
             (!codeFilter.trim() || row.associatedCode === codeFilter.trim()) &&
             (!installmentFilter.trim() || row.installment === installmentFilter.trim()) &&
             matchesDate &&
-            (filters.status === "all" || row.status === filters.status) &&
-            (filters.payment === "all" || row.payment === filters.payment) &&
-            matchesPaidPendingFilter(row.payment, row.pending, filters.paidPending) &&
-            (filters.receipt === "all" || row.receiptDescription === filters.receipt) &&
-            (seededCampaignIds.length > 0
-              ? seededCampaignIds.includes(row.campaignId)
-              : filters.campaign === "all" || row.campaignId === filters.campaign) &&
-            (seededBatchIds.length > 0
-              ? seededBatchIds.includes(row.batchId)
-              : filters.batch === "all" || row.batchId === filters.batch)
+            (statusFilters.length === 0 || statusFilters.includes(row.status)) &&
+            (paymentFilters.length === 0 || paymentFilters.includes(row.payment)) &&
+            matchesPaidPendingFilter(row.payment, row.pending, paidPendingFilter) &&
+            (receiptFilters.length === 0 || receiptFilters.includes(row.receiptDescription)) &&
+            (campaignFilters.length === 0 || campaignFilters.includes(row.campaignId)) &&
+            (batchFilters.length === 0 || batchFilters.includes(row.batchId))
           );
         })
         .sort((a, b) => {
@@ -464,7 +539,22 @@ export function AssociadosCardList({
                 });
           return ascending ? result : -result;
         }),
-    [ascending, codeFilter, dueDateFrom, dueDateTo, filters, installmentFilter, query, rows, seededBatchIds, seededCampaignIds, sortKey]
+    [
+      ascending,
+      batchFilters,
+      campaignFilters,
+      codeFilter,
+      dueDateFrom,
+      dueDateTo,
+      installmentFilter,
+      paidPendingFilter,
+      paymentFilters,
+      query,
+      receiptFilters,
+      rows,
+      sortKey,
+      statusFilters
+    ]
   );
 
   const pageCount = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE));
@@ -473,9 +563,14 @@ export function AssociadosCardList({
     () => filteredRows.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE),
     [currentPage, filteredRows]
   );
-
+  const allFilteredSelected =
+    filteredRows.length > 0 && filteredRows.every((row) => selectedIds.has(row.id));
+  const selectedCount = selectedIds.size;
   const canShowErrorReprocess =
-    canReprocessErrors && filters.status === "error" && filteredRows.length > 0;
+    canReprocessErrors &&
+    statusFilters.length === 1 &&
+    statusFilters[0] === "error" &&
+    filteredRows.length > 0;
 
   const completionPercentage = bulkProgress
     ? bulkProgress.requestedCount === 0
@@ -522,23 +617,50 @@ export function AssociadosCardList({
     };
   }, [bulkProgress?.active, bulkProgress?.requestId, router]);
 
-  function updateSelectFilter(
-    key: "status" | "payment" | "paidPending" | "receipt" | "campaign" | "batch",
-    value: string
+  useEffect(() => {
+    if (!selectionWatchActive) return;
+
+    let cancelled = false;
+    let loading = false;
+
+    async function refreshSelectedProcessing() {
+      if (loading || document.visibilityState !== "visible") return;
+      loading = true;
+      try {
+        const active = await getProcessingActiveSnapshot();
+        if (cancelled) return;
+        emitMetricsSync();
+        router.refresh();
+        if (!active?.active || Number(active.scopes?.member ?? 0) === 0) {
+          setSelectionWatchActive(false);
+          setSelectionNotice((current) => current ?? "Reconciliação dos selecionados concluída.");
+        }
+      } catch {
+        // O realtime e complementar; a fila continua processando mesmo sem observabilidade.
+      } finally {
+        loading = false;
+      }
+    }
+
+    const stopRealtime = subscribeProcessingRealtime(() => void refreshSelectedProcessing());
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") void refreshSelectedProcessing();
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    void refreshSelectedProcessing();
+
+    return () => {
+      cancelled = true;
+      stopRealtime();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [router, selectionWatchActive]);
+
+  function updateMultiFilter(
+    setter: React.Dispatch<React.SetStateAction<string[]>>,
+    values: string[]
   ) {
-    if (key === "campaign") setSeededCampaignIds([]);
-    if (key === "batch") setSeededBatchIds([]);
-
-    const normalizedValue =
-      key === "status"
-        ? normalizeStatus(value)
-        : key === "payment"
-          ? normalizePayment(value)
-          : key === "paidPending"
-            ? normalizePaidPendingFilter(value)
-            : value;
-
-    setFilters((current) => ({ ...current, [key]: normalizedValue }));
+    setter(uniqueValues(values));
     setPage(1);
   }
 
@@ -549,20 +671,40 @@ export function AssociadosCardList({
     setDueDateFrom("");
     setDueDateTo("");
     setDatePopoverOpen(false);
-    setSeededCampaignIds([]);
-    setSeededBatchIds([]);
-    setFilters({
-      status: "all",
-      payment: "all",
-      paidPending: "all",
-      receipt: "all",
-      campaign: "all",
-      batch: "all"
-    });
+    setStatusFilters([]);
+    setPaymentFilters([]);
+    setPaidPendingFilter("all");
+    setReceiptFilters([]);
+    setCampaignFilters([]);
+    setBatchFilters([]);
+    setSelectedIds(new Set());
+    setSelectionNotice(null);
+    setSelectionError(null);
     setSortKey("name");
     setAscending(true);
     setPage(1);
     router.replace("/associados");
+  }
+
+  function toggleSelected(id: string) {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAllFiltered() {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (allFilteredSelected) {
+        for (const row of filteredRows) next.delete(row.id);
+      } else {
+        for (const row of filteredRows) next.add(row.id);
+      }
+      return next;
+    });
   }
 
   function exportFilteredRows() {
@@ -598,6 +740,46 @@ export function AssociadosCardList({
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "Associados");
     XLSX.writeFile(workbook, `associados-filtrados-${new Date().toISOString().slice(0, 10)}.xlsx`);
+  }
+
+  async function reprocessSelected() {
+    const memberIds = [...selectedIds];
+    if (memberIds.length === 0 || reprocessingSelected) return;
+
+    setReprocessingSelected(true);
+    setSelectionError(null);
+    setSelectionNotice(null);
+
+    try {
+      const response = await fetch("/api/associados/reprocessar-selecionados", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ memberIds })
+      });
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok || !payload?.success) {
+        throw new Error(payload?.error?.message ?? payload?.message ?? "Nao foi possivel iniciar a reconciliacao selecionada.");
+      }
+
+      const queuedCount = Number(payload.data?.queuedCount ?? memberIds.length);
+      const missingTargetCount = Number(payload.data?.missingTargetCount ?? 0);
+      setSelectionNotice(
+        missingTargetCount > 0
+          ? `${queuedCount} associado(s) enviados para reconciliação; ${missingTargetCount} sem parcela alvo foram ignorados.`
+          : `${queuedCount} associado(s) enviados para reconciliação manual.`
+      );
+      setSelectedIds(new Set());
+      setSelectionWatchActive(true);
+      emitMetricsSync();
+      router.refresh();
+    } catch (error) {
+      setSelectionError(
+        error instanceof Error ? error.message : "Nao foi possivel iniciar a reconciliacao selecionada."
+      );
+    } finally {
+      setReprocessingSelected(false);
+    }
   }
 
   async function reprocessFilteredErrors() {
@@ -658,6 +840,17 @@ export function AssociadosCardList({
 
   return (
     <>
+      {selectionError ? (
+        <div className="mb-4 rounded-xl border border-danger bg-danger-soft px-4 py-3 text-sm text-danger">
+          {selectionError}
+        </div>
+      ) : null}
+      {selectionNotice ? (
+        <div className="mb-4 rounded-xl border border-info bg-info-soft px-4 py-3 text-sm text-info">
+          {selectionNotice}
+          {selectionWatchActive ? " A tela será atualizada conforme o worker concluir os jobs." : ""}
+        </div>
+      ) : null}
       {bulkError ? (
         <div className="mb-4 rounded-xl border border-danger bg-danger-soft px-4 py-3 text-sm text-danger">
           {bulkError}
@@ -687,11 +880,19 @@ export function AssociadosCardList({
       <section className="rounded-2xl border border-default bg-surface-primary p-4 shadow-sm">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <p className="text-sm text-secondary">
-            {seededCampaignIds.length > 0 || seededBatchIds.length > 0
-              ? "Filtros aplicados via atalho. Use Limpar para voltar a visualizar todos os registros."
-              : "Use os filtros para localizar associados, campanhas, lotes e erros."}
+            {campaignFilters.length > 0 || batchFilters.length > 0
+              ? "Filtros aplicados. Dentro de cada filtro, várias opções podem ser combinadas."
+              : "Use os filtros para localizar associados e selecione os registros que deseja reconciliar."}
           </p>
           <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={reprocessSelected}
+              disabled={selectedCount === 0 || reprocessingSelected}
+              className="rounded-lg border border-brand bg-brand-soft px-3 py-2 text-sm font-semibold text-brand transition hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {reprocessingSelected ? "Enviando..." : `Reprocessar selecionados (${selectedCount})`}
+            </button>
             {canShowErrorReprocess || bulkProgress?.active ? (
               <button
                 type="button"
@@ -777,8 +978,8 @@ export function AssociadosCardList({
             ) : null}
           </div>
           <select
-            value={filters.paidPending}
-            onChange={(event) => updateSelectFilter("paidPending", event.target.value)}
+            value={paidPendingFilter}
+            onChange={(event) => { setPaidPendingFilter(normalizePaidPendingFilter(event.target.value)); setPage(1); }}
             className={`${controlClass} xl:col-span-2`}
             aria-label="Filtrar pago com pendência"
           >
@@ -787,55 +988,83 @@ export function AssociadosCardList({
             <option value="no">Pago com pendência?: Não</option>
           </select>
 
-          <select value={filters.status} onChange={(event) => updateSelectFilter("status", event.target.value)} className={`${controlClass} xl:col-span-2`}>
-            <option value="all">Todos: Status</option>
-            {options.status.map((option) => <option key={option} value={option}>{statusLabel(option)}</option>)}
-          </select>
-          <select value={filters.payment} onChange={(event) => updateSelectFilter("payment", event.target.value)} className={`${controlClass} xl:col-span-2`}>
-            <option value="all">Todos: Pagamento</option>
-            {options.payment.map((option) => <option key={option} value={option}>{paymentLabel(option)}</option>)}
-          </select>
-          <select value={filters.receipt} onChange={(event) => updateSelectFilter("receipt", event.target.value)} className={`${controlClass} xl:col-span-2`}>
-            <option value="all">Todos: Tipo de Pagto</option>
-            {options.receipt.map((option) => <option key={option} value={option}>{option}</option>)}
-          </select>
-          <select value={filters.campaign} onChange={(event) => updateSelectFilter("campaign", event.target.value)} className={`${controlClass} xl:col-span-2`}>
-            <option value="all">Todos: Campanha</option>
-            {options.campaign.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
-          </select>
-          <select value={filters.batch} onChange={(event) => updateSelectFilter("batch", event.target.value)} className={`${controlClass} xl:col-span-2`}>
-            <option value="all">Todos: Lote</option>
-            {options.batch.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
-          </select>
+          <MultiSelectFilter
+            label="Status"
+            values={statusFilters}
+            onChange={(values) => updateMultiFilter(setStatusFilters, values.map(normalizeStatus))}
+            options={options.status.map((value) => ({ value, label: statusLabel(value) }))}
+            className="xl:col-span-2"
+          />
+          <MultiSelectFilter
+            label="Pagamento"
+            values={paymentFilters}
+            onChange={(values) => updateMultiFilter(setPaymentFilters, values.map(normalizePayment))}
+            options={options.payment.map((value) => ({ value, label: paymentLabel(value) }))}
+            className="xl:col-span-2"
+          />
+          <MultiSelectFilter
+            label="Tipo de Pagto"
+            values={receiptFilters}
+            onChange={(values) => updateMultiFilter(setReceiptFilters, values)}
+            options={options.receipt.map((value) => ({ value, label: value }))}
+            className="xl:col-span-2"
+          />
+          <MultiSelectFilter
+            label="Campanha"
+            values={campaignFilters}
+            onChange={(values) => updateMultiFilter(setCampaignFilters, values)}
+            options={options.campaign.map(([value, label]) => ({ value, label }))}
+            className="xl:col-span-2"
+          />
+          <MultiSelectFilter
+            label="Lote"
+            values={batchFilters}
+            onChange={(values) => updateMultiFilter(setBatchFilters, values)}
+            options={options.batch.map(([value, label]) => ({ value, label }))}
+            className="xl:col-span-2"
+          />
         </div>
       </section>
 
-      <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+      <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div className="text-sm text-secondary">
           <div>Exibindo {filteredRows.length} de {rows.length} associados.</div>
           <div className="mt-1 text-xs text-muted">Pagina {currentPage} de {pageCount} · Ate {PAGE_SIZE} registros por pagina.</div>
+          {selectedCount > 0 ? <div className="mt-1 text-xs font-medium text-brand">{selectedCount} registro(s) selecionado(s).</div> : null}
         </div>
-        <label className="flex items-center gap-2 text-sm text-secondary">
-          <span>Ordenar por</span>
-          <select
-            value={`${sortKey}:${ascending ? "asc" : "desc"}`}
-            onChange={(event) => {
-              const [nextKey, direction] = event.target.value.split(":") as [SortKey, "asc" | "desc"];
-              setSortKey(nextKey);
-              setAscending(direction === "asc");
-              setPage(1);
-            }}
-            className="rounded-lg border border-default bg-surface-secondary px-3 py-2 text-sm text-primary"
-          >
-            <option value="name:asc">Nome (A - Z)</option>
-            <option value="name:desc">Nome (Z - A)</option>
-            <option value="associatedCode:asc">Codigo</option>
-            <option value="installment:asc">Parcela</option>
-            <option value="dueDate:asc">Vencimento</option>
-            <option value="pending:desc">Maior pendencia</option>
-            <option value="pending:asc">Menor pendencia</option>
-          </select>
-        </label>
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="flex cursor-pointer items-center gap-2 text-sm text-secondary">
+            <input
+              type="checkbox"
+              checked={allFilteredSelected}
+              onChange={toggleAllFiltered}
+              disabled={filteredRows.length === 0}
+              className="h-4 w-4 rounded border-default"
+            />
+            <span>Selecionar todos filtrados ({filteredRows.length})</span>
+          </label>
+          <label className="flex items-center gap-2 text-sm text-secondary">
+            <span>Ordenar por</span>
+            <select
+              value={`${sortKey}:${ascending ? "asc" : "desc"}`}
+              onChange={(event) => {
+                const [nextKey, direction] = event.target.value.split(":") as [SortKey, "asc" | "desc"];
+                setSortKey(nextKey);
+                setAscending(direction === "asc");
+                setPage(1);
+              }}
+              className="rounded-lg border border-default bg-surface-secondary px-3 py-2 text-sm text-primary"
+            >
+              <option value="name:asc">Nome (A - Z)</option>
+              <option value="name:desc">Nome (Z - A)</option>
+              <option value="associatedCode:asc">Codigo</option>
+              <option value="installment:asc">Parcela</option>
+              <option value="dueDate:asc">Vencimento</option>
+              <option value="pending:desc">Maior pendencia</option>
+              <option value="pending:asc">Menor pendencia</option>
+            </select>
+          </label>
+        </div>
       </div>
 
       {filteredRows.length === 0 ? (
@@ -846,9 +1075,16 @@ export function AssociadosCardList({
 
       <div className="mt-3 space-y-2">
         {paginatedRows.map((row) => (
-          <article key={row.id} className="rounded-xl border border-default bg-surface-primary shadow-sm transition hover:border-strong">
-            <div className="grid gap-4 p-4 lg:grid-cols-[minmax(210px,1.15fr)_minmax(0,4.8fr)_minmax(150px,0.85fr)] lg:items-stretch">
+          <article key={row.id} className={`rounded-xl border bg-surface-primary shadow-sm transition ${selectedIds.has(row.id) ? "border-brand" : "border-default hover:border-strong"}`}>
+            <div className="grid gap-4 p-4 lg:grid-cols-[minmax(230px,1.2fr)_minmax(0,4.8fr)_minmax(150px,0.85fr)] lg:items-stretch">
               <div className="flex min-w-0 items-start gap-3 lg:border-r lg:border-subtle lg:pr-4">
+                <input
+                  type="checkbox"
+                  checked={selectedIds.has(row.id)}
+                  onChange={() => toggleSelected(row.id)}
+                  aria-label={`Selecionar ${row.name}`}
+                  className="mt-3 h-4 w-4 shrink-0 rounded border-default"
+                />
                 <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-brand bg-brand-soft text-brand">
                   <UserIcon />
                 </div>
