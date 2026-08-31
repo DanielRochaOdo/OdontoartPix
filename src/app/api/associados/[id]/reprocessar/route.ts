@@ -94,32 +94,14 @@ export async function POST(
       if (!String(member.target_installment_id ?? "").trim()) {
         return { kind: "missing_target" as const };
       }
-      if (member.payment_status === "paid") {
-        return { kind: "paid" as const, member };
-      }
 
       const job = await queueMemberReprocess(client, member, auth.profile.id);
-      if (!job) return { kind: "paid" as const, member };
-
       return { kind: "queued" as const, member, job };
     });
 
     if (result.kind === "not_found") return fail("NOT_FOUND", "Associado não encontrado.", 404);
     if (result.kind === "missing_target") {
       return fail("VALIDATION_ERROR", "O associado não possui parcela de destino configurada.", 422);
-    }
-    if (result.kind === "paid") {
-      return ok(
-        {
-          memberId: result.member.id,
-          mode: "already_paid",
-          targetInstallmentId: result.member.target_installment_id,
-          queued: false,
-          finished: true,
-          success: true
-        },
-        "A parcela alvo já está confirmada como paga; nenhum reprocessamento foi necessário."
-      );
     }
 
     // A resposta fica aberta enquanto o worker processa o job individual. Isso
