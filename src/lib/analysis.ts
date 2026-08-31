@@ -61,6 +61,9 @@ export class MonthlyResponseError extends Error {
   }
 }
 
+export type MonthlyPaymentStatus = "paid" | "unpaid" | "agreed";
+export type MonthlyPaymentStatusSource = "erp_open_invoice" | "erp_explicit" | "erp_agreed";
+
 export type MonthlyInstallment = {
   userCode?: string;
   installmentCode: string;
@@ -83,9 +86,19 @@ export type MonthlyInstallment = {
   observation?: string;
 };
 
+export type MonthlyTargetFinancialState = {
+  installmentCode: string;
+  paymentStatus: MonthlyPaymentStatus;
+  paymentStatusSource: MonthlyPaymentStatusSource;
+  installmentAmountCents: number;
+  paymentAmountCents: number;
+  pendingAmountCents: number;
+};
+
 export type MonthlyAnalysis = {
-  paymentStatus: "paid" | "unpaid" | "agreed";
-  paymentStatusSource: "erp_open_invoice" | "erp_explicit" | "erp_agreed";
+  paymentStatus: MonthlyPaymentStatus;
+  paymentStatusSource: MonthlyPaymentStatusSource;
+  targetFinancialState: MonthlyTargetFinancialState;
   message: string;
   installmentsCount: number;
   totalPendingAmountCents: number;
@@ -114,7 +127,7 @@ type NormalizedPaginatedPayload = {
 };
 
 type ItemFinancialState = {
-  status: "paid" | "unpaid" | "agreed" | "invalid";
+  status: MonthlyPaymentStatus | "invalid";
   baseAmountCents: number;
   paidAmountCents: number | null;
   description?: string;
@@ -201,40 +214,46 @@ function monetaryValue(value: unknown, field: string, warnings: string[]) {
   return result.warning ? 0 : result.cents;
 }
 
-function requiredMoneyCents(value: unknown, field: string, installmentCode: string) {
-  if (!hasValue(value)) {
-    throw new MonthlyResponseError(
-      `A parcela ${installmentCode} nao possui ${field} informado pelo ERP.`
-    );
-  }
-
+function moneyState(value: unknown) {
+  if (!hasValue(value)) return { kind: "missing" as const, cents: 0 };
   const parsed = toCents(value);
-  if (parsed.warning) {
-    throw new MonthlyResponseError(
-      `A parcela ${installmentCode} possui ${field} invalido.`
-    );
+  if (parsed.warning || !Number.isSafeInteger(parsed.cents)) {
+    return { kind: "invalid" as const, cents: 0 };
   }
-  return parsed.cents;
+  if (parsed.cents < 0) return { kind: "negative" as const, cents: parsed.cents };
+  return { kind: "valid" as const, cents: parsed.cents };
+}
+
+function moneyStateReason(
+  state: ReturnType<typeof moneyState>,
+  field: string,
+  installmentCode: string
+) {
+  if (state.kind === "missing") {
+    return `A parcela ${installmentCode} nao possui ${field} informado pelo ERP.`;
+  }
+  if (state.kind === "negative") {
+    return `A parcela ${installmentCode} possui ${field} negativo, fora do contrato financeiro esperado.`;
+  }
+  return `A parcela ${installmentCode} possui ${field} invalido.`;
 }
 
 function classifyFinancialState(
   item: z.infer<typeof MonthlyApiDataItemSchema>,
   installmentCode: string,
-  strict: boolean
+  _strict: boolean
 ): ItemFinancialState {
   const description = normalizedReceiptDescription(item.DescricaoRecebimento);
-  const baseValue = toCents(item.Valor);
-  const baseAmountCents = baseValue.warning ? 0 : baseValue.cents;
+  const base = moneyState(item.Valor);
+  const baseAmountCents = base.kind === "valid" ? base.cents : 0;
 
-  if (strict && (!hasValue(item.Valor) || baseValue.warning)) {
+  if (base.kind !== "valid") {
     return {
       status: "invalid",
       baseAmountCents,
       paidAmountCents: null,
       description,
-      reason: !hasValue(item.Valor)
-        ? `A parcela ${installmentCode} nao possui Valor informado pelo ERP.`
-        : `A parcela ${installmentCode} possui Valor invalido.`
+      reason: moneyStateReason(base, "Valor", installmentCode)
     };
   }
 
@@ -265,51 +284,34 @@ function classifyFinancialState(
     };
   }
 
-  if (!hasValue(item.ValorPago)) {
+  const paid = moneyState(item.ValorPago);
+  if (paid.kind !== "valid") {
     return {
       status: "invalid",
       baseAmountCents,
       paidAmountCents: null,
       description,
-      reason: `A parcela ${installmentCode} possui DescricaoRecebimento diferente de ABERTO sem ValorPago informado.`
+      reason: moneyStateReason(paid, "ValorPago", installmentCode)
     };
   }
 
-  const paidValue = toCents(item.ValorPago);
-  if (paidValue.warning) {
+  if (paid.cents === 0) {
     return {
       status: "invalid",
       baseAmountCents,
-      paidAmountCents: null,
+      paidAmountCents: 0,
       description,
-      reason: `A parcela ${installmentCode} possui ValorPago invalido.`
+      reason: `A parcela ${installmentCode} informa recebimento ${description}, mas ValorPago e zero.`
     };
   }
 
-  if (baseValue.warning) {
-    return {
-      status: "invalid",
-      baseAmountCents,
-      paidAmountCents: paidValue.cents,
-      description,
-      reason: `A parcela ${installmentCode} possui Valor invalido.`
-    };
-  }
-
-  if (paidValue.cents < baseAmountCents) {
-    return {
-      status: "invalid",
-      baseAmountCents,
-      paidAmountCents: paidValue.cents,
-      description,
-      reason: `A parcela ${installmentCode} possui ValorPago inferior ao Valor informado pelo ERP.`
-    };
-  }
-
+  // DescricaoRecebimento diferente de ABERTO/ACORDADO representa recebimento
+  // confirmado pelo ERP. ValorPago inferior ao Valor e um pagamento parcial,
+  // nao uma falha tecnica. O saldo residual e calculado separadamente.
   return {
     status: "paid",
     baseAmountCents,
-    paidAmountCents: paidValue.cents,
+    paidAmountCents: paid.cents,
     description
   };
 }
@@ -361,6 +363,12 @@ function pendingAmountForInstallment(installment: MonthlyInstallment) {
 
   if (installment.paidAmountCents == null) return 0;
   return Math.max(0, installment.baseAmountCents - installment.paidAmountCents);
+}
+
+function paymentStatusSource(status: MonthlyPaymentStatus): MonthlyPaymentStatusSource {
+  if (status === "paid") return "erp_explicit";
+  if (status === "agreed") return "erp_agreed";
+  return "erp_open_invoice";
 }
 
 function analyzeNormalizedPayload(
@@ -446,27 +454,44 @@ function analyzeNormalizedPayload(
     grouped.set(installment.planType, current);
   }
 
-  const targetPaid = targetState.status === "paid";
-  const targetAgreed = targetState.status === "agreed";
   const targetInstallment = installments.find(
     (installment) => installment.installmentCode === targetId
   );
-  const targetPendingAmountCents = targetInstallment
-    ? pendingAmountForInstallment(targetInstallment)
+  if (!targetInstallment) {
+    throw new MonthlyResponseError(
+      `A parcela alvo ${targetId} foi classificada, mas nao foi materializada na analise.`
+    );
+  }
+
+  const targetPendingAmountCents = pendingAmountForInstallment(targetInstallment);
+  const targetPaymentStatus = targetState.status;
+  const targetPaymentStatusSource = paymentStatusSource(targetPaymentStatus);
+  const targetPaymentAmountCents = targetPaymentStatus === "paid"
+    ? targetInstallment.paidAmountCents
     : 0;
 
+  if (targetPaymentStatus === "paid" && targetPaymentAmountCents == null) {
+    throw new MonthlyResponseError(
+      `A parcela paga ${targetId} nao possui ValorPago materializado na analise.`
+    );
+  }
+
   return {
-    paymentStatus: targetAgreed ? "agreed" : targetPaid ? "paid" : "unpaid",
-    paymentStatusSource: targetAgreed
-      ? "erp_agreed"
-      : targetPaid
-        ? "erp_explicit"
-        : "erp_open_invoice",
+    paymentStatus: targetPaymentStatus,
+    paymentStatusSource: targetPaymentStatusSource,
+    targetFinancialState: {
+      installmentCode: targetId,
+      paymentStatus: targetPaymentStatus,
+      paymentStatusSource: targetPaymentStatusSource,
+      installmentAmountCents: targetInstallment.baseAmountCents,
+      paymentAmountCents: targetPaymentAmountCents ?? 0,
+      pendingAmountCents: targetPaymentStatus === "agreed" ? 0 : targetPendingAmountCents
+    },
     message:
       payload.message ||
-      (targetAgreed
+      (targetPaymentStatus === "agreed"
         ? "Parcela acordada conforme DescricaoRecebimento do ERP."
-        : targetPaid
+        : targetPaymentStatus === "paid"
           ? targetPendingAmountCents > 0
             ? "Parcela paga com pendencia conforme DescricaoRecebimento e ValorPago do ERP."
             : "Parcela paga conforme DescricaoRecebimento e ValorPago do ERP."
