@@ -231,7 +231,7 @@ async function claimMembers(job: LocalJob, workerId: string, limit: number) {
         where batch_id = $1
           and ($4::uuid is null or id = $4::uuid)
           and deleted_at is null
-          and payment_status is distinct from 'paid'
+          and (payment_status is distinct from 'paid' or $4::uuid is not null)
           and processing_attempts < max_attempts
           and (
             (
@@ -649,7 +649,7 @@ async function releaseAndFinalizeJob(job: LocalJob, workerId: string) {
       client,
       `select
          count(*) filter (
-           where payment_status is distinct from 'paid'
+           where (payment_status is distinct from 'paid' or $3::uuid is not null)
              and processing_attempts < max_attempts
              and (
                (processing_status in ('pending','queued','aguardando') and (next_check_at is null or next_check_at <= now()))
