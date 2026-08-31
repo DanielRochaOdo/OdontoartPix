@@ -122,13 +122,16 @@ export async function GET(
          i.previous_total_pending_amount_cents,
          cbm.total_pending_amount_cents,
          i.previous_payment_description,
-         cbm.payment_description,
+         mi.payment_description,
          i.previous_payment_date_text,
-         cbm.payment_date_text,
+         mi.payment_date_text,
          count(*) over()::int as total_count
        from associados_processing_items i
        join processing_jobs pj on pj.id = i.processing_job_id
        join campaign_batch_members cbm on cbm.id = i.member_link_id
+       left join member_installments mi
+         on mi.campaign_batch_member_id = cbm.id
+        and mi.cod_parcela = cbm.target_installment_id
        join members m on m.id = cbm.member_id
        join campaigns c on c.id = i.campaign_id
        join campaign_batches b on b.id = i.batch_id
@@ -140,8 +143,8 @@ export async function GET(
           or cbm.installment_amount_cents is distinct from i.previous_installment_amount_cents
           or cbm.payment_amount_cents is distinct from i.previous_payment_amount_cents
           or cbm.total_pending_amount_cents is distinct from i.previous_total_pending_amount_cents
-          or cbm.payment_description is distinct from i.previous_payment_description
-          or cbm.payment_date_text is distinct from i.previous_payment_date_text
+          or mi.payment_description is distinct from i.previous_payment_description
+          or mi.payment_date_text is distinct from i.previous_payment_date_text
         )
       order by m.name, m.external_user_code, i.member_link_id
       limit $2 offset $3`,
