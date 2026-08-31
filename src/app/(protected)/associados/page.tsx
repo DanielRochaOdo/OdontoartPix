@@ -32,15 +32,13 @@ export default async function MembersPage({
       typeof resolvedSearchParams.dueDateTo === "string"
         ? resolvedSearchParams.dueDateTo
         : "",
-    status: typeof resolvedSearchParams.status === "string" ? resolvedSearchParams.status : "all",
-    payment:
-      typeof resolvedSearchParams.payment === "string" ? resolvedSearchParams.payment : "all",
+    status: readSearchParamArray(resolvedSearchParams.status),
+    payment: readSearchParamArray(resolvedSearchParams.payment),
     paidPending:
       typeof resolvedSearchParams.paidPending === "string"
         ? resolvedSearchParams.paidPending
         : "all",
-    receipt:
-      typeof resolvedSearchParams.receipt === "string" ? resolvedSearchParams.receipt : "all",
+    receipt: readSearchParamArray(resolvedSearchParams.receipt),
     campaign: readSearchParamArray(resolvedSearchParams.campaign),
     batch: readSearchParamArray(resolvedSearchParams.batch)
   };
@@ -49,7 +47,7 @@ export default async function MembersPage({
     getAssociadosCardList({
       campaignIds: initialFilters.campaign,
       batchIds: initialFilters.batch,
-      status: initialFilters.status
+      status: initialFilters.status.length === 1 ? initialFilters.status[0] : "all"
     }),
     getCurrentProfile()
   ]);
