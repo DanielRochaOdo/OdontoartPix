@@ -1,4 +1,5 @@
 import { AssociadosCardList } from "@/components/associados-card-list";
+import { AssociadosProcessingPanel } from "@/components/associados-processing-panel";
 import { PageHeader } from "@/components/page-header";
 import { PageSurface } from "@/components/page-surface";
 import { getAssociadosCardList } from "@/lib/associados-card-read";
@@ -59,6 +60,7 @@ export default async function MembersPage({
         title="Associados"
         description="Consulte CodigoAssociadoEmpresa, parcela, CPF, campanha, lote, status e pendencias. Use os filtros para localizar os registros e ordenar a listagem."
       />
+      <AssociadosProcessingPanel />
       <div className="mt-6">
         <AssociadosCardList
           members={members}
