@@ -26,7 +26,8 @@ describe("associados processing visibility", () => {
     expect(route).toContain("createAssociadosProcessingRequest");
     expect(route).toContain("processingRequestId");
     expect(route).toContain("waitForMemberReprocessOutcome");
-    expect(route).toContain("PROCESSING_CANCELLED");
+    expect(route).toContain('outcome.job_status === "cancelled"');
+    expect(route).toContain("O reprocessamento foi interrompido manualmente.");
   });
 
   it("expoe progresso, alteracoes e descoberta de jobs ativos", () => {
