@@ -139,16 +139,11 @@ export async function POST(
       return fail("VALIDATION_ERROR", "O associado não possui parcela de destino configurada.", 422);
     }
 
-    // A resposta fica aberta enquanto o worker processa o job individual. Isso
-    // faz o botao permanecer girando e evita que a linha/cartao de erro suma
-    // apenas porque o job foi enfileirado. A UI so atualiza depois do resultado
-    // terminal real. O snapshot criado acima permite que o painel de Associados
-    // acompanhe o mesmo job em paralelo.
     const outcome = await waitForMemberReprocessOutcome(result.member.id, result.job.id);
 
     if (outcome.job_status === "cancelled") {
       return fail(
-        "PROCESSING_CANCELLED",
+        "PROCESSING_CONFLICT",
         "O reprocessamento foi interrompido manualmente.",
         409
       );
