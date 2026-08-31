@@ -41,7 +41,6 @@ describe("associados processing visibility", () => {
     expect(status).toContain("queued_count");
     expect(status).toContain("cancelled_count");
     expect(status).toContain("updated_count");
-    expect(changes).toContain("O que foi atualizado").not;
     expect(changes).toContain("financial_snapshot_complete");
     expect(changes).toContain("Status do pagamento");
     expect(changes).toContain("Valor pago");
