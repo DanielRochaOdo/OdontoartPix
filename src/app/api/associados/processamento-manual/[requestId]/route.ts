@@ -77,8 +77,8 @@ export async function GET(
                  or cbm.installment_amount_cents is distinct from i.previous_installment_amount_cents
                  or cbm.payment_amount_cents is distinct from i.previous_payment_amount_cents
                  or cbm.total_pending_amount_cents is distinct from i.previous_total_pending_amount_cents
-                 or cbm.payment_description is distinct from i.previous_payment_description
-                 or cbm.payment_date_text is distinct from i.previous_payment_date_text
+                 or mi.payment_description is distinct from i.previous_payment_description
+                 or mi.payment_date_text is distinct from i.previous_payment_date_text
                )
            )::int as updated_count,
            min(pj.started_at)::text as started_at,
@@ -91,6 +91,9 @@ export async function GET(
          from associados_processing_items i
          join processing_jobs pj on pj.id = i.processing_job_id
          join campaign_batch_members cbm on cbm.id = i.member_link_id
+         left join member_installments mi
+           on mi.campaign_batch_member_id = cbm.id
+          and mi.cod_parcela = cbm.target_installment_id
         where i.request_id = $1::uuid`,
         [parsed.data.requestId]
       )
