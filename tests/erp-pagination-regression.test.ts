@@ -135,17 +135,26 @@ describe("ERP pagination regression", () => {
     );
   });
 
-  it("rejeita pagamento parcial da parcela alvo como inconsistencia financeira", () => {
+  it("mantem pagamento parcial da parcela alvo como paid com pendencia", () => {
     const partialPaid = {
       ...paidItem(6582934),
       Valor: 33.26,
       ValorPago: 33.16
     };
 
-    expect(() => analyzeMonthlyResponses(
+    const result = analyzeMonthlyResponses(
       [page({ currentPage: 1, totalPages: 1, totalCount: 1, pageSize: 1, data: [partialPaid] })],
       "6582934"
-    )).toThrowError("A parcela 6582934 possui ValorPago inferior ao Valor informado pelo ERP.");
+    );
+
+    expect(result.paymentStatus).toBe("paid");
+    expect(result.paymentStatusSource).toBe("erp_explicit");
+    expect(result.targetFinancialState).toMatchObject({
+      installmentCode: "6582934",
+      installmentAmountCents: 3326,
+      paymentAmountCents: 3316,
+      pendingAmountCents: 10
+    });
   });
 
   it("expoe erro tipado para respostas invalidas", () => {
