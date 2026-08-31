@@ -38,6 +38,8 @@ type FieldChange = {
   after: string;
 };
 
+type Formatter = (value: unknown) => string;
+
 function normalizeNullable(value: unknown) {
   if (value == null) return null;
   const text = String(value).trim();
@@ -48,7 +50,7 @@ function displayText(value: unknown) {
   return normalizeNullable(value) ?? "—";
 }
 
-function displayMoney(value: string | number | null) {
+function displayMoney(value: unknown) {
   if (value == null || value === "") return "—";
   const cents = Number(value);
   if (!Number.isFinite(cents)) return "—";
@@ -73,13 +75,13 @@ function pushChange(
   label: string,
   before: unknown,
   after: unknown,
-  formatter: (value: never) => string = displayText as (value: never) => string
+  formatter: Formatter = displayText
 ) {
   if (normalizeNullable(before) === normalizeNullable(after)) return;
   changes.push({
     label,
-    before: formatter(before as never),
-    after: formatter(after as never)
+    before: formatter(before),
+    after: formatter(after)
   });
 }
 
@@ -132,7 +134,6 @@ export async function GET(
        join campaign_batches b on b.id = i.batch_id
       where i.request_id = $1::uuid
         and i.financial_snapshot_complete
-        and pj.status = 'completed'
         and pj.success_items > 0
         and (
           cbm.payment_status is distinct from i.previous_payment_status
@@ -158,10 +159,10 @@ export async function GET(
       pageCount,
       items: result.rows.map((row) => {
         const fields: FieldChange[] = [];
-        pushChange(fields, "Status do pagamento", row.previous_payment_status, row.payment_status, displayPaymentStatus as (value: never) => string);
-        pushChange(fields, "Valor da parcela", row.previous_installment_amount_cents, row.installment_amount_cents, displayMoney as (value: never) => string);
-        pushChange(fields, "Valor pago", row.previous_payment_amount_cents, row.payment_amount_cents, displayMoney as (value: never) => string);
-        pushChange(fields, "Pendência", row.previous_total_pending_amount_cents, row.total_pending_amount_cents, displayMoney as (value: never) => string);
+        pushChange(fields, "Status do pagamento", row.previous_payment_status, row.payment_status, displayPaymentStatus);
+        pushChange(fields, "Valor da parcela", row.previous_installment_amount_cents, row.installment_amount_cents, displayMoney);
+        pushChange(fields, "Valor pago", row.previous_payment_amount_cents, row.payment_amount_cents, displayMoney);
+        pushChange(fields, "Pendência", row.previous_total_pending_amount_cents, row.total_pending_amount_cents, displayMoney);
         pushChange(fields, "Tipo de pagamento", row.previous_payment_description, row.payment_description);
         pushChange(fields, "Data de pagamento", row.previous_payment_date_text, row.payment_date_text);
 
