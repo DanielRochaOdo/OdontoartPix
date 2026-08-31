@@ -19,6 +19,15 @@ const REPROCESS_POLL_INTERVAL_MS = 750;
 const TERMINAL_JOB_STATUSES = new Set(["completed", "failed", "cancelled"]);
 const TERMINAL_MEMBER_STATUSES = new Set(["completed", "error", "failed"]);
 
+type ProcessingSnapshotTarget = MemberReprocessTarget & {
+  processing_status: string | null;
+  installment_amount_cents: number | string | null;
+  payment_amount_cents: number | string | null;
+  total_pending_amount_cents: number | string | null;
+  payment_description: string | null;
+  payment_date_text: string | null;
+};
+
 type ReprocessOutcomeRow = {
   job_status: string;
   processing_status: string;
@@ -81,9 +90,19 @@ export async function POST(
 
   try {
     const result = await withTransaction(async (client) => {
-      const memberResult = await clientQuery<MemberReprocessTarget>(
+      const memberResult = await clientQuery<ProcessingSnapshotTarget>(
         client,
-        `select id, campaign_id, batch_id, target_installment_id, payment_status
+        `select id,
+                campaign_id,
+                batch_id,
+                target_installment_id,
+                processing_status,
+                payment_status,
+                installment_amount_cents,
+                payment_amount_cents,
+                total_pending_amount_cents,
+                payment_description,
+                payment_date_text
            from campaign_batch_members
           where id = $1::uuid
             and deleted_at is null
@@ -102,7 +121,13 @@ export async function POST(
           memberId: member.id,
           campaignId: member.campaign_id,
           batchId: member.batch_id,
+          previousProcessingStatus: member.processing_status,
           previousPaymentStatus: member.payment_status,
+          previousInstallmentAmountCents: member.installment_amount_cents,
+          previousPaymentAmountCents: member.payment_amount_cents,
+          previousTotalPendingAmountCents: member.total_pending_amount_cents,
+          previousPaymentDescription: member.payment_description,
+          previousPaymentDateText: member.payment_date_text,
           jobId: job.id
         }
       ]);
@@ -114,12 +139,15 @@ export async function POST(
       return fail("VALIDATION_ERROR", "O associado não possui parcela de destino configurada.", 422);
     }
 
-    // A resposta fica aberta enquanto o worker processa o job individual. Isso
-    // faz o botao permanecer girando e evita que a linha/cartao de erro suma
-    // apenas porque o job foi enfileirado. A UI so atualiza depois do resultado
-    // terminal real. O snapshot criado acima permite que o painel de Associados
-    // acompanhe o mesmo job em paralelo.
     const outcome = await waitForMemberReprocessOutcome(result.member.id, result.job.id);
+
+    if (outcome.job_status === "cancelled") {
+      return fail(
+        "PROCESSING_CONFLICT",
+        "O reprocessamento foi interrompido manualmente.",
+        409
+      );
+    }
 
     if (!TERMINAL_MEMBER_STATUSES.has(outcome.processing_status)) {
       return fail(

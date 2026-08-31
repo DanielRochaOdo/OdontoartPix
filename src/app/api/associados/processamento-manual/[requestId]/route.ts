@@ -20,6 +20,8 @@ type ProgressRow = {
   processing_count: number;
   success_count: number;
   failed_count: number;
+  cancelled_count: number;
+  updated_count: number;
   started_at: string | null;
   finished_at: string | null;
   last_update_at: string | null;
@@ -60,10 +62,25 @@ export async function GET(
              where pj.status = 'completed' and pj.success_items > 0
            )::int as success_count,
            count(*) filter (
-             where pj.status in ('failed', 'cancelled')
+             where pj.status = 'failed'
                 or (pj.status = 'completed' and pj.success_items = 0)
-                or pj.error_items > 0
+                or (pj.status <> 'cancelled' and pj.error_items > 0)
            )::int as failed_count,
+           count(*) filter (
+             where pj.status = 'cancelled'
+           )::int as cancelled_count,
+           count(*) filter (
+             where i.financial_snapshot_complete
+               and pj.success_items > 0
+               and (
+                 cbm.payment_status is distinct from i.previous_payment_status
+                 or cbm.installment_amount_cents is distinct from i.previous_installment_amount_cents
+                 or cbm.payment_amount_cents is distinct from i.previous_payment_amount_cents
+                 or cbm.total_pending_amount_cents is distinct from i.previous_total_pending_amount_cents
+                 or cbm.payment_description is distinct from i.previous_payment_description
+                 or cbm.payment_date_text is distinct from i.previous_payment_date_text
+               )
+           )::int as updated_count,
            min(pj.started_at)::text as started_at,
            case
              when bool_and(pj.status in ('completed', 'failed', 'cancelled'))
@@ -73,6 +90,7 @@ export async function GET(
            max(coalesce(pj.last_heartbeat_at, pj.updated_at, pj.created_at))::text as last_update_at
          from associados_processing_items i
          join processing_jobs pj on pj.id = i.processing_job_id
+         join campaign_batch_members cbm on cbm.id = i.member_link_id
         where i.request_id = $1::uuid`,
         [parsed.data.requestId]
       )
@@ -86,15 +104,19 @@ export async function GET(
     const processingCount = Number(progress?.processing_count ?? 0);
     const successCount = Number(progress?.success_count ?? 0);
     const failedCount = Number(progress?.failed_count ?? 0);
-    const completedCount = successCount + failedCount;
+    const cancelledCount = Number(progress?.cancelled_count ?? 0);
+    const updatedCount = Number(progress?.updated_count ?? 0);
+    const completedCount = successCount + failedCount + cancelledCount;
     const active = queuedCount > 0 || processingCount > 0;
     const status = active
       ? processingCount > 0
         ? "running"
         : "queued"
-      : failedCount > 0
-        ? "completed_with_errors"
-        : "completed";
+      : cancelledCount > 0
+        ? "cancelled"
+        : failedCount > 0
+          ? "completed_with_errors"
+          : "completed";
 
     return ok({
       requestId: requestData.id,
@@ -108,6 +130,8 @@ export async function GET(
       completedCount,
       successCount,
       failedCount,
+      cancelledCount,
+      updatedCount,
       createdAt: requestData.created_at,
       startedAt: progress?.started_at ?? null,
       finishedAt: progress?.finished_at ?? null,
