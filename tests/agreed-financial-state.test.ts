@@ -34,16 +34,19 @@ describe("agreed financial state", () => {
     expect(migration).toContain("new.next_check_at is null");
   });
 
-  it("preserva a sincronizacao manual isolada de uma parcela acordada", () => {
+  it("permite reconciliacao manual isolada sem reabrir sincronizacoes gerais", () => {
     const route = source("src/app/api/associados/[id]/reprocessar/route.ts");
     const queue = source("src/lib/member-reprocess-queue.ts");
+    const worker = source("src/lib/local-processing-worker.ts");
     const migration = source("db/migrations/019_agreed_financial_truth.sql");
 
-    expect(route).toContain('if (member.payment_status === "paid")');
+    expect(route).not.toContain('if (member.payment_status === "paid")');
     expect(route).not.toContain('member.payment_status === "agreed"');
-    expect(queue).toContain('if (member.payment_status === "paid")');
+    expect(queue).not.toContain('if (member.payment_status === "paid")');
     expect(queue).not.toContain('member.payment_status === "agreed"');
     expect(queue).toContain("next_check_at = now()");
+    expect(worker).toContain("and (payment_status is distinct from 'paid' or $4::uuid is not null)");
+    expect(worker).toContain("where (payment_status is distinct from 'paid' or $3::uuid is not null)");
     expect(migration).toContain("new.next_check_at is null");
   });
 
