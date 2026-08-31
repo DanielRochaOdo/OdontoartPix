@@ -289,18 +289,19 @@ export function AssociadosProcessingPanel() {
 
   if (!snapshot || dismissedRequestId === snapshot.requestId) return null;
 
-  const title = snapshot.active
-    ? snapshot.status === "running"
+  const visibleSnapshot = snapshot;
+  const title = visibleSnapshot.active
+    ? visibleSnapshot.status === "running"
       ? "Processamento de associados em andamento"
       : "Processamento de associados na fila"
-    : snapshot.status === "cancelled"
+    : visibleSnapshot.status === "cancelled"
       ? "Processamento de associados interrompido"
-      : snapshot.failedCount > 0
+      : visibleSnapshot.failedCount > 0
         ? "Processamento de associados concluído com ocorrências"
         : "Processamento de associados concluído";
 
   async function stopProcessing() {
-    if (!snapshot.active || stopping) return;
+    if (!visibleSnapshot.active || stopping) return;
     const confirmed = window.confirm(
       "Parar definitivamente esta sincronização? Os jobs ainda não iniciados serão cancelados e não poderão ser retomados. Consultas ao ERP que já estiverem em voo podem terminar antes do encerramento do worker."
     );
@@ -309,7 +310,7 @@ export function AssociadosProcessingPanel() {
     setStopping(true);
     setStopError(null);
     try {
-      await postJson(`/api/associados/processamento-manual/${encodeURIComponent(snapshot.requestId)}/parar`, {
+      await postJson(`/api/associados/processamento-manual/${encodeURIComponent(visibleSnapshot.requestId)}/parar`, {
         reason: "Processamento de associados interrompido pelo usuário na tela de Associados."
       });
     } catch (error) {
@@ -323,12 +324,12 @@ export function AssociadosProcessingPanel() {
     <section className="processing-active-card mt-5 w-full rounded-2xl border border-slate-200 bg-white p-5 shadow-sm ring-1 ring-emerald-100 transition dark:border-[#22324a] dark:bg-[#0d1728] dark:ring-emerald-950">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <div className={`flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.16em] ${snapshot.active ? "text-emerald-700 dark:text-emerald-400" : snapshot.status === "cancelled" ? "text-red-700 dark:text-red-300" : "text-slate-700 dark:text-slate-200"}`}>
-            <span className={`h-2.5 w-2.5 rounded-full ${snapshot.active ? "animate-pulse bg-emerald-500" : snapshot.status === "cancelled" ? "bg-red-500" : snapshot.failedCount > 0 ? "bg-amber-500" : "bg-emerald-500"}`} aria-hidden="true" />
+          <div className={`flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.16em] ${visibleSnapshot.active ? "text-emerald-700 dark:text-emerald-400" : visibleSnapshot.status === "cancelled" ? "text-red-700 dark:text-red-300" : "text-slate-700 dark:text-slate-200"}`}>
+            <span className={`h-2.5 w-2.5 rounded-full ${visibleSnapshot.active ? "animate-pulse bg-emerald-500" : visibleSnapshot.status === "cancelled" ? "bg-red-500" : visibleSnapshot.failedCount > 0 ? "bg-amber-500" : "bg-emerald-500"}`} aria-hidden="true" />
             {title}
           </div>
           <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
-            Escopo fechado no momento do clique: {formatInteger(snapshot.requestedCount)} registro(s), {formatInteger(snapshot.campaignCount)} campanha(s) e {formatInteger(snapshot.batchCount)} lote(s).
+            Escopo fechado no momento do clique: {formatInteger(visibleSnapshot.requestedCount)} registro(s), {formatInteger(visibleSnapshot.campaignCount)} campanha(s) e {formatInteger(visibleSnapshot.batchCount)} lote(s).
           </p>
           {activeRequestCount > 1 ? (
             <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
@@ -340,11 +341,11 @@ export function AssociadosProcessingPanel() {
 
         <div className="text-left text-sm text-slate-500 lg:text-right dark:text-slate-400">
           <p>
-            Tempo decorrido: <strong className="text-slate-800 dark:text-slate-100">{elapsedSince(snapshot.startedAt ?? snapshot.createdAt)}</strong>
+            Tempo decorrido: <strong className="text-slate-800 dark:text-slate-100">{elapsedSince(visibleSnapshot.startedAt ?? visibleSnapshot.createdAt)}</strong>
           </p>
-          <p className="mt-1">Última atualização: {relativeTime(snapshot.lastUpdateAt)}</p>
+          <p className="mt-1">Última atualização: {relativeTime(visibleSnapshot.lastUpdateAt)}</p>
           <div className="mt-3 flex flex-wrap gap-2 lg:justify-end">
-            {snapshot.active ? (
+            {visibleSnapshot.active ? (
               <button
                 type="button"
                 onClick={() => void stopProcessing()}
@@ -356,7 +357,7 @@ export function AssociadosProcessingPanel() {
             ) : (
               <button
                 type="button"
-                onClick={() => setDismissedRequestId(snapshot.requestId)}
+                onClick={() => setDismissedRequestId(visibleSnapshot.requestId)}
                 className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-[#34506d] dark:text-slate-200 dark:hover:bg-[#14263a]"
               >
                 Ocultar resultado
@@ -367,17 +368,17 @@ export function AssociadosProcessingPanel() {
       </div>
 
       <div className="mt-5 grid gap-3 md:grid-cols-3">
-        <Metric label="Campanhas" value={formatInteger(snapshot.campaignCount)} icon="campaigns" tone="emerald" />
-        <Metric label="Lotes" value={formatInteger(snapshot.batchCount)} icon="parcels" tone="sky" />
-        <Metric label="Registros" value={`${formatInteger(snapshot.completedCount)} / ${formatInteger(snapshot.requestedCount)}`} icon="totalValue" tone="sky" />
+        <Metric label="Campanhas" value={formatInteger(visibleSnapshot.campaignCount)} icon="campaigns" tone="emerald" />
+        <Metric label="Lotes" value={formatInteger(visibleSnapshot.batchCount)} icon="parcels" tone="sky" />
+        <Metric label="Registros" value={`${formatInteger(visibleSnapshot.completedCount)} / ${formatInteger(visibleSnapshot.requestedCount)}`} icon="totalValue" tone="sky" />
       </div>
 
       <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <Metric label="Sucesso" value={formatInteger(snapshot.successCount)} icon="active" tone="emerald" />
-        <Metric label="Erros" value={formatInteger(snapshot.failedCount)} icon="errors" tone="red" />
-        <Metric label="Em processamento" value={formatInteger(snapshot.processingCount + snapshot.queuedCount)} icon="running" tone="sky" />
+        <Metric label="Sucesso" value={formatInteger(visibleSnapshot.successCount)} icon="active" tone="emerald" />
+        <Metric label="Erros" value={formatInteger(visibleSnapshot.failedCount)} icon="errors" tone="red" />
+        <Metric label="Em processamento" value={formatInteger(visibleSnapshot.processingCount + visibleSnapshot.queuedCount)} icon="running" tone="sky" />
         <ChangesMetric
-          count={snapshot.updatedCount}
+          count={visibleSnapshot.updatedCount}
           open={changesOpen}
           onClick={() => {
             setChangesPage(1);
@@ -461,15 +462,15 @@ export function AssociadosProcessingPanel() {
         </div>
         <div className="mt-2 h-2.5 overflow-hidden rounded-full bg-slate-200 dark:bg-[#22324a]">
           <div
-            className={`h-full rounded-full transition-[width] duration-500 ${snapshot.status === "cancelled" ? "bg-red-500" : "bg-emerald-500"}`}
+            className={`h-full rounded-full transition-[width] duration-500 ${visibleSnapshot.status === "cancelled" ? "bg-red-500" : "bg-emerald-500"}`}
             style={{ width: `${progress}%` }}
           />
         </div>
         <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
-          <span>Na fila: <strong>{formatInteger(snapshot.queuedCount)}</strong></span>
-          <span>Executando: <strong>{formatInteger(snapshot.processingCount)}</strong></span>
-          <span>Finalizados: <strong>{formatInteger(snapshot.completedCount)}</strong></span>
-          {snapshot.cancelledCount > 0 ? <span>Interrompidos: <strong>{formatInteger(snapshot.cancelledCount)}</strong></span> : null}
+          <span>Na fila: <strong>{formatInteger(visibleSnapshot.queuedCount)}</strong></span>
+          <span>Executando: <strong>{formatInteger(visibleSnapshot.processingCount)}</strong></span>
+          <span>Finalizados: <strong>{formatInteger(visibleSnapshot.completedCount)}</strong></span>
+          {visibleSnapshot.cancelledCount > 0 ? <span>Interrompidos: <strong>{formatInteger(visibleSnapshot.cancelledCount)}</strong></span> : null}
         </div>
       </div>
     </section>
