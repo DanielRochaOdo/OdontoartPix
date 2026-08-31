@@ -26,9 +26,6 @@ export async function queueMemberReprocess(
   if (!targetInstallmentId) {
     throw new Error("MEMBER_REPROCESS_TARGET_MISSING");
   }
-  if (member.payment_status === "paid") {
-    return null;
-  }
 
   const existing = await clientQuery<MemberReprocessJob>(
     client,
@@ -64,6 +61,9 @@ export async function queueMemberReprocess(
     return refreshed.rows[0] ?? job;
   }
 
+  // O estado financeiro confirmado anteriormente e preservado enquanto a
+  // reconciliacao manual aguarda o worker. Isso evita que um registro pago
+  // desapareca temporariamente dos totais antes da nova consulta ao ERP.
   await clientQuery(
     client,
     `update campaign_batch_members
