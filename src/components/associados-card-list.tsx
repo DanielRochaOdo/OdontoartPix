@@ -391,6 +391,8 @@ export function AssociadosCardList({
     installment?: string;
     dueDateFrom?: string;
     dueDateTo?: string;
+    paymentDateFrom?: string;
+    paymentDateTo?: string;
     status?: string[];
     payment?: string[];
     paidPending?: string;
@@ -406,6 +408,9 @@ export function AssociadosCardList({
   const [dueDateFrom, setDueDateFrom] = useState(initialFilters?.dueDateFrom ?? "");
   const [dueDateTo, setDueDateTo] = useState(initialFilters?.dueDateTo ?? "");
   const [datePopoverOpen, setDatePopoverOpen] = useState(false);
+  const [paymentDateFrom, setPaymentDateFrom] = useState(initialFilters?.paymentDateFrom ?? "");
+  const [paymentDateTo, setPaymentDateTo] = useState(initialFilters?.paymentDateTo ?? "");
+  const [paymentDatePopoverOpen, setPaymentDatePopoverOpen] = useState(false);
   const [statusFilters, setStatusFilters] = useState<string[]>(() =>
     uniqueValues((initialFilters?.status ?? []).map(normalizeStatus))
   );
@@ -514,11 +519,19 @@ export function AssociadosCardList({
               (!dueDateFrom || rowDate >= dueDateFrom) &&
               (!dueDateTo || rowDate <= dueDateTo));
 
+          const rowPaymentDate = dateKey(row.paymentDate);
+          const matchesPaymentDate =
+            (!paymentDateFrom && !paymentDateTo) ||
+            (Boolean(rowPaymentDate) &&
+              (!paymentDateFrom || rowPaymentDate >= paymentDateFrom) &&
+              (!paymentDateTo || rowPaymentDate <= paymentDateTo));
+
           return (
             (!query.trim() || search.includes(query.trim().toLowerCase())) &&
             (!codeFilter.trim() || row.associatedCode === codeFilter.trim()) &&
             (!installmentFilter.trim() || row.installment === installmentFilter.trim()) &&
             matchesDate &&
+            matchesPaymentDate &&
             (statusFilters.length === 0 || statusFilters.includes(row.status)) &&
             (paymentFilters.length === 0 || paymentFilters.includes(row.payment)) &&
             matchesPaidPendingFilter(row.payment, row.pending, paidPendingFilter) &&
@@ -548,6 +561,8 @@ export function AssociadosCardList({
       dueDateTo,
       installmentFilter,
       paidPendingFilter,
+      paymentDateFrom,
+      paymentDateTo,
       paymentFilters,
       query,
       receiptFilters,
@@ -671,6 +686,9 @@ export function AssociadosCardList({
     setDueDateFrom("");
     setDueDateTo("");
     setDatePopoverOpen(false);
+    setPaymentDateFrom("");
+    setPaymentDateTo("");
+    setPaymentDatePopoverOpen(false);
     setStatusFilters([]);
     setPaymentFilters([]);
     setPaidPendingFilter("all");
@@ -835,6 +853,17 @@ export function AssociadosCardList({
           ? `Ate ${formatDate(dueDateTo)}`
           : "Todos os vencimentos";
 
+  const paymentDateLabel =
+    paymentDateFrom && paymentDateTo
+      ? paymentDateFrom === paymentDateTo
+        ? formatDate(paymentDateFrom)
+        : `${formatDate(paymentDateFrom)} - ${formatDate(paymentDateTo)}`
+      : paymentDateFrom
+        ? `A partir de ${formatDate(paymentDateFrom)}`
+        : paymentDateTo
+          ? `Ate ${formatDate(paymentDateTo)}`
+          : "Todas as datas";
+
   const controlClass =
     "min-w-0 rounded-lg border border-default bg-surface-secondary px-3 py-2.5 text-sm text-primary outline-none transition focus:border-focus focus:ring-2 focus:ring-brand";
 
@@ -922,7 +951,7 @@ export function AssociadosCardList({
             value={query}
             onChange={(event) => { setQuery(event.target.value); setPage(1); }}
             placeholder="Buscar em todas as colunas..."
-            className={`${controlClass} xl:col-span-3`}
+            className={`${controlClass} xl:col-span-2`}
           />
           <input
             value={codeFilter}
@@ -939,7 +968,10 @@ export function AssociadosCardList({
           <div className="relative xl:col-span-3">
             <button
               type="button"
-              onClick={() => setDatePopoverOpen((value) => !value)}
+              onClick={() => {
+                setDatePopoverOpen((value) => !value);
+                setPaymentDatePopoverOpen(false);
+              }}
               className={`${controlClass} flex w-full items-center justify-between gap-2 text-left`}
               aria-expanded={datePopoverOpen}
             >
@@ -977,16 +1009,50 @@ export function AssociadosCardList({
               </div>
             ) : null}
           </div>
-          <select
-            value={paidPendingFilter}
-            onChange={(event) => { setPaidPendingFilter(normalizePaidPendingFilter(event.target.value)); setPage(1); }}
-            className={`${controlClass} xl:col-span-2`}
-            aria-label="Filtrar pago com pendência"
-          >
-            <option value="all">Pago com pendência?: Selecione</option>
-            <option value="yes">Pago com pendência?: Sim</option>
-            <option value="no">Pago com pendência?: Não</option>
-          </select>
+          <div className="relative xl:col-span-3">
+            <button
+              type="button"
+              onClick={() => {
+                setPaymentDatePopoverOpen((value) => !value);
+                setDatePopoverOpen(false);
+              }}
+              className={`${controlClass} flex w-full items-center justify-between gap-2 text-left`}
+              aria-expanded={paymentDatePopoverOpen}
+            >
+              <span className="truncate">Data de pagamento: {paymentDateLabel}</span>
+              <span className="text-muted">▾</span>
+            </button>
+            {paymentDatePopoverOpen ? (
+              <div className="absolute left-0 top-full z-50 mt-2 w-full min-w-[300px] rounded-xl border border-default bg-surface-elevated p-3 shadow-xl">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="text-xs text-secondary">
+                    De
+                    <input
+                      type="date"
+                      value={paymentDateFrom}
+                      max={paymentDateTo || undefined}
+                      onChange={(event) => { setPaymentDateFrom(event.target.value); setPage(1); }}
+                      className={`${controlClass} mt-1 w-full`}
+                    />
+                  </label>
+                  <label className="text-xs text-secondary">
+                    Ate
+                    <input
+                      type="date"
+                      value={paymentDateTo}
+                      min={paymentDateFrom || undefined}
+                      onChange={(event) => { setPaymentDateTo(event.target.value); setPage(1); }}
+                      className={`${controlClass} mt-1 w-full`}
+                    />
+                  </label>
+                </div>
+                <div className="mt-3 flex justify-end gap-2">
+                  <button type="button" onClick={() => { setPaymentDateFrom(""); setPaymentDateTo(""); setPage(1); }} className="rounded-lg px-3 py-2 text-xs font-medium text-secondary hover:bg-surface-hover">Limpar</button>
+                  <button type="button" onClick={() => setPaymentDatePopoverOpen(false)} className="rounded-lg bg-brand px-3 py-2 text-xs font-semibold text-inverse">OK</button>
+                </div>
+              </div>
+            ) : null}
+          </div>
 
           <MultiSelectFilter
             label="Status"
@@ -1023,6 +1089,16 @@ export function AssociadosCardList({
             options={options.batch.map(([value, label]) => ({ value, label }))}
             className="xl:col-span-2"
           />
+          <select
+            value={paidPendingFilter}
+            onChange={(event) => { setPaidPendingFilter(normalizePaidPendingFilter(event.target.value)); setPage(1); }}
+            className={`${controlClass} xl:col-span-2`}
+            aria-label="Filtrar pago com pendência"
+          >
+            <option value="all">Pago com pendência?: Selecione</option>
+            <option value="yes">Pago com pendência?: Sim</option>
+            <option value="no">Pago com pendência?: Não</option>
+          </select>
         </div>
       </section>
 
