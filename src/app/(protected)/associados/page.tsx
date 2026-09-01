@@ -33,6 +33,14 @@ export default async function MembersPage({
       typeof resolvedSearchParams.dueDateTo === "string"
         ? resolvedSearchParams.dueDateTo
         : "",
+    paymentDateFrom:
+      typeof resolvedSearchParams.paymentDateFrom === "string"
+        ? resolvedSearchParams.paymentDateFrom
+        : "",
+    paymentDateTo:
+      typeof resolvedSearchParams.paymentDateTo === "string"
+        ? resolvedSearchParams.paymentDateTo
+        : "",
     status: readSearchParamArray(resolvedSearchParams.status),
     payment: readSearchParamArray(resolvedSearchParams.payment),
     paidPending:
