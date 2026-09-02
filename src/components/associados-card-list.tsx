@@ -144,6 +144,14 @@ function paymentLabel(value: string) {
   return PAYMENT_LABELS[normalizePayment(value)] ?? value;
 }
 
+function normalizeSearchText(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLocaleLowerCase("pt-BR");
+}
+
 function dateKey(value: string) {
   const normalized = value.trim();
   const brazilian = normalized.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
@@ -224,14 +232,21 @@ function MultiSelectFilter({
   values,
   options,
   onChange,
+  searchable = false,
   className = ""
 }: {
   label: string;
   values: string[];
   options: MultiSelectOption[];
   onChange: (values: string[]) => void;
+  searchable?: boolean;
   className?: string;
 }) {
+  const [searchQuery, setSearchQuery] = useState("");
+  const normalizedSearchQuery = normalizeSearchText(searchQuery);
+  const visibleOptions = normalizedSearchQuery
+    ? options.filter((option) => normalizeSearchText(option.label).includes(normalizedSearchQuery))
+    : options;
   const selectedLabels = options
     .filter((option) => values.includes(option.value))
     .map((option) => option.label);
@@ -247,12 +262,40 @@ function MultiSelectFilter({
   }
 
   return (
-    <details className={`group relative ${className}`}>
+    <details
+      className={`group relative ${className}`}
+      onToggle={(event) => {
+        if (!event.currentTarget.open) setSearchQuery("");
+      }}
+    >
       <summary className="flex min-h-[42px] cursor-pointer list-none items-center justify-between gap-2 rounded-lg border border-default bg-surface-secondary px-3 py-2.5 text-sm text-primary outline-none transition hover:bg-surface-hover focus:border-focus focus:ring-2 focus:ring-brand">
         <span className="truncate">{summary}</span>
         <span className="shrink-0 text-muted transition group-open:rotate-180">▾</span>
       </summary>
-      <div className="absolute left-0 top-full z-50 mt-2 max-h-72 w-full min-w-[230px] overflow-auto rounded-xl border border-default bg-surface-elevated p-2 shadow-xl">
+      <div className="absolute left-0 top-full z-50 mt-2 w-full min-w-[230px] rounded-xl border border-default bg-surface-elevated p-2 shadow-xl">
+        {searchable ? (
+          <div className="relative mb-2">
+            <svg
+              viewBox="0 0 24 24"
+              className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              aria-hidden="true"
+            >
+              <circle cx="11" cy="11" r="6" />
+              <path d="m16 16 4 4" strokeLinecap="round" />
+            </svg>
+            <input
+              type="search"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Pesquisar por nome..."
+              aria-label={`Pesquisar ${label}`}
+              className="w-full rounded-lg border border-default bg-surface-secondary py-2 pl-9 pr-3 text-sm text-primary outline-none transition placeholder:text-muted focus:border-focus focus:ring-2 focus:ring-brand"
+            />
+          </div>
+        ) : null}
         {values.length > 0 ? (
           <button
             type="button"
@@ -262,24 +305,28 @@ function MultiSelectFilter({
             Limpar seleção
           </button>
         ) : null}
-        {options.length === 0 ? (
-          <div className="px-3 py-2 text-xs text-muted">Nenhuma opção disponível.</div>
-        ) : (
-          options.map((option) => (
-            <label
-              key={option.value}
-              className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm text-secondary hover:bg-surface-hover hover:text-primary"
-            >
-              <input
-                type="checkbox"
-                checked={values.includes(option.value)}
-                onChange={() => toggle(option.value)}
-                className="h-4 w-4 rounded border-default"
-              />
-              <span className="min-w-0 break-words">{option.label}</span>
-            </label>
-          ))
-        )}
+        <div className="max-h-60 overflow-auto">
+          {options.length === 0 ? (
+            <div className="px-3 py-2 text-xs text-muted">Nenhuma opção disponível.</div>
+          ) : visibleOptions.length === 0 ? (
+            <div className="px-3 py-2 text-xs text-muted">Nenhuma opção encontrada.</div>
+          ) : (
+            visibleOptions.map((option) => (
+              <label
+                key={option.value}
+                className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm text-secondary hover:bg-surface-hover hover:text-primary"
+              >
+                <input
+                  type="checkbox"
+                  checked={values.includes(option.value)}
+                  onChange={() => toggle(option.value)}
+                  className="h-4 w-4 rounded border-default"
+                />
+                <span className="min-w-0 break-words">{option.label}</span>
+              </label>
+            ))
+          )}
+        </div>
       </div>
     </details>
   );
@@ -1073,6 +1120,7 @@ export function AssociadosCardList({
             values={receiptFilters}
             onChange={(values) => updateMultiFilter(setReceiptFilters, values)}
             options={options.receipt.map((value) => ({ value, label: value }))}
+            searchable
             className="xl:col-span-2"
           />
           <MultiSelectFilter
@@ -1080,6 +1128,7 @@ export function AssociadosCardList({
             values={campaignFilters}
             onChange={(values) => updateMultiFilter(setCampaignFilters, values)}
             options={options.campaign.map(([value, label]) => ({ value, label }))}
+            searchable
             className="xl:col-span-2"
           />
           <MultiSelectFilter
@@ -1087,6 +1136,7 @@ export function AssociadosCardList({
             values={batchFilters}
             onChange={(values) => updateMultiFilter(setBatchFilters, values)}
             options={options.batch.map(([value, label]) => ({ value, label }))}
+            searchable
             className="xl:col-span-2"
           />
           <select
