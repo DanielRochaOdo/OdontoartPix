@@ -29,6 +29,7 @@ type Row = {
   cpf: string;
   associatedCode: string;
   installment: string;
+  installmentType: string;
   dueDate: string;
   campaign: string;
   batch: string;
@@ -93,6 +94,11 @@ const PAYMENT_LABELS: Record<string, string> = {
   pending: "Pendente"
 };
 
+const INSTALLMENT_TYPE_LABELS: Record<string, string> = {
+  clinico: "Clínico",
+  orto: "Orto"
+};
+
 function normalizePayment(value: string) {
   const normalized = value
     .normalize("NFD")
@@ -142,6 +148,11 @@ function statusLabel(value: string) {
 
 function paymentLabel(value: string) {
   return PAYMENT_LABELS[normalizePayment(value)] ?? value;
+}
+
+function installmentTypeLabel(value: string | null | undefined) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  return INSTALLMENT_TYPE_LABELS[normalized] ?? "-";
 }
 
 function normalizeSearchText(value: string) {
@@ -506,6 +517,7 @@ export function AssociadosCardList({
           cpf: item.member?.cpf ?? "",
           associatedCode: String(item.member?.external_user_code ?? "").trim(),
           installment: String(item.target_installment_id ?? "").trim(),
+          installmentType: installmentTypeLabel(item.installment_type),
           dueDate: formatDate(item.due_date_text ?? ""),
           campaign: item.campaign?.name ?? "-",
           batch: item.batch?.name ?? "-",
@@ -546,6 +558,7 @@ export function AssociadosCardList({
             row.cpf,
             row.associatedCode,
             row.installment,
+            row.installmentType,
             row.dueDate,
             row.campaign,
             row.batch,
@@ -789,6 +802,7 @@ export function AssociadosCardList({
           : statusLabel(row.status),
         Pagamento: row.paidWithPending ? "Pago com pendência" : paymentLabel(row.payment),
         "Tipo de Pagto": row.receiptDescription,
+        "Tipo Parcela": row.installmentType === "-" ? "" : row.installmentType,
         "Data de Pagamento": row.paymentDate === "-" ? "" : row.paymentDate,
         Valor: formatMoney(row.amount),
         "Valor Pago": formatMoney(row.paidAmount),
@@ -798,8 +812,8 @@ export function AssociadosCardList({
 
     worksheet["!cols"] = [
       { wch: 32 }, { wch: 28 }, { wch: 18 }, { wch: 16 }, { wch: 18 }, { wch: 28 },
-      { wch: 28 }, { wch: 28 }, { wch: 22 }, { wch: 28 }, { wch: 20 }, { wch: 16 },
-      { wch: 16 }, { wch: 16 }
+      { wch: 28 }, { wch: 28 }, { wch: 22 }, { wch: 28 }, { wch: 18 }, { wch: 20 },
+      { wch: 16 }, { wch: 16 }, { wch: 16 }
     ];
 
     const workbook = XLSX.utils.book_new();
@@ -1245,7 +1259,8 @@ export function AssociadosCardList({
                     {row.paidWithPending ? "Pago com pendência" : paymentLabel(row.payment)}
                   </span>
                 </Field>
-                <Field label="Tipo de Pagto" className="sm:col-span-2 xl:col-span-2">{row.receiptDescription}</Field>
+                <Field label="Tipo de Pagto">{row.receiptDescription}</Field>
+                <Field label="Tipo Parcela">{row.installmentType}</Field>
                 <Field label="Data de Pagamento">{row.paymentDate}</Field>
                 <Field label="Valor">{formatMoney(row.amount)}</Field>
                 <Field label="Valor Pago">

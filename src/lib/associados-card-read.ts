@@ -6,6 +6,7 @@ export type AssociadoCardListItem = {
   campaign_id: string;
   batch_id: string;
   target_installment_id: string | null;
+  installment_type: string | null;
   due_date_text: string | null;
   processing_status: string;
   payment_status: string | null;
@@ -39,6 +40,7 @@ export async function getAssociadosCardList(filters: {
       campaign_id: string;
       batch_id: string;
       target_installment_id: string | null;
+      installment_type: string | null;
       due_date_text: string | null;
       processing_status: string;
       payment_status: string | null;
@@ -93,6 +95,7 @@ export async function getAssociadosCardList(filters: {
               grouped.representative_campaign_id as campaign_id,
               grouped.representative_batch_id as batch_id,
               canonical.external_installment_code as target_installment_id,
+              canonical.installment_type,
               canonical.due_date_text,
               grouped.aggregate_processing_status as processing_status,
               canonical.payment_status,
@@ -122,6 +125,7 @@ export async function getAssociadosCardList(filters: {
       campaign_id: row.campaign_id,
       batch_id: row.batch_id,
       target_installment_id: row.target_installment_id,
+      installment_type: row.installment_type,
       due_date_text: row.due_date_text,
       processing_status: row.processing_status,
       payment_status: row.payment_status,
