@@ -74,38 +74,42 @@ export default async function CampaignDetailPage({
       <PageHeader detail eyebrow="Campanha" title={
         <div className="flex flex-wrap items-center gap-3">
           <span>{campaign?.name ?? "Campanha nao encontrada"}</span>
-            {campaign ? <RenameCampaignForm campaignId={campaign.id} initialName={campaign.name} /> : null}
-            {campaign ? <CampaignDescriptionInfo description={campaign.description} /> : null}
+          {campaign ? <RenameCampaignForm campaignId={campaign.id} initialName={campaign.name} /> : null}
+          {campaign ? <CampaignDescriptionInfo description={campaign.description} /> : null}
         </div>
-        } actions={campaign && metrics ? (
-          <div className="flex flex-wrap items-start gap-2">
-            <CampaignProcessDialog
-              campaignId={campaign.id}
-              campaignName={campaign.name}
-              metrics={metrics}
-            />
-            <ProcessResourceButton
-              endpoint={`/api/campanhas/${campaign.id}/pausar`}
-              label="Interromper processamento"
-              variant="red"
-            />
-            <AddBatchDialog campaignId={campaign.id} campaignName={campaign.name} />
-            <DestructiveDeleteDialog
-              title="Excluir campanha permanentemente?"
-              confirmLabel="EXCLUIR CAMPANHA"
-              endpoint={`/api/campanhas/${campaign.id}`}
-              successMessage="Campanha e todos os seus registros foram excluidos permanentemente."
-              redirectTo="/campanhas"
-              triggerLabel="Excluir campanha"
-              summaryLines={[
-                "Esta acao apagara a campanha, todos os lotes, associados, parcelas, resultados, historicos e jobs.",
-                `Campanha: ${campaign.name}`,
-                `Lotes: ${metrics.totalBatches}`,
-                `Associados: ${metrics.total}`
-              ]}
-            />
-          </div>
-        ) : null} />
+      } actions={campaign && metrics ? (
+        <div className="flex flex-wrap items-start gap-2">
+          <CampaignProcessDialog
+            campaignId={campaign.id}
+            campaignName={campaign.name}
+            metrics={metrics}
+          />
+          <ProcessResourceButton
+            endpoint={`/api/campanhas/${campaign.id}/pausar`}
+            label="Interromper processamento"
+            variant="red"
+          />
+          <AddBatchDialog
+            campaignId={campaign.id}
+            campaignName={campaign.name}
+            batches={batches.map((batch) => ({ id: batch.id, name: batch.name }))}
+          />
+          <DestructiveDeleteDialog
+            title="Excluir campanha permanentemente?"
+            confirmLabel="EXCLUIR CAMPANHA"
+            endpoint={`/api/campanhas/${campaign.id}`}
+            successMessage="Campanha e todos os seus registros foram excluidos permanentemente."
+            redirectTo="/campanhas"
+            triggerLabel="Excluir campanha"
+            summaryLines={[
+              "Esta acao apagara a campanha, todos os lotes, associados, parcelas, resultados, historicos e jobs.",
+              `Campanha: ${campaign.name}`,
+              `Lotes: ${metrics.totalBatches}`,
+              `Associados: ${metrics.total}`
+            ]}
+          />
+        </div>
+      ) : null} />
 
       {errorMessage || !campaign || !metrics ? (
         <SemanticAlert>
