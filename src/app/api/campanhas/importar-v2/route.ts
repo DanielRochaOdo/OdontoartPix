@@ -48,6 +48,10 @@ function chunks<T>(items: T[], size: number) {
   return result;
 }
 
+function duplicateBatchMessage(name: string) {
+  return `Ja existe um lote "${name}" nesta campanha. Selecione o lote existente ou informe outro nome.`;
+}
+
 export async function POST(request: Request) {
   const auth = await requireApiUser(["administrador", "operador"]);
   if (!auth.ok) return auth.response;
@@ -70,6 +74,12 @@ export async function POST(request: Request) {
   }
   if ((!campaignId.success || !campaignId.data) && !payload.data.name) {
     return fail("VALIDATION_ERROR", "Informe um nome valido para a campanha.", 400);
+  }
+  if (form.get("campaignId") && !campaignId.success) {
+    return fail("VALIDATION_ERROR", "Campanha invalida.", 400);
+  }
+  if (form.get("batchId") && !batchId.success) {
+    return fail("VALIDATION_ERROR", "Lote invalido.", 400);
   }
 
   const { imports, issues, inspectedRows } = await parseMemberFile(file);
@@ -130,6 +140,28 @@ export async function POST(request: Request) {
         }
         batch = selected.rows[0];
       } else {
+        const requestedBatchName = payload.data.batchName || `${campaign.name} - Lote 1`;
+
+        await clientQuery(
+          client,
+          `select pg_advisory_xact_lock(20260903, hashtext($1))`,
+          [campaign.id]
+        );
+
+        const duplicate = await clientQuery<{ id: string }>(
+          client,
+          `select id
+             from campaign_batches
+            where campaign_id = $1::uuid
+              and deleted_at is null
+              and lower(btrim(name)) = lower(btrim($2))
+            limit 1`,
+          [campaign.id, requestedBatchName]
+        );
+        if (duplicate.rows[0]) {
+          throw new ImportHttpError("CONFLICT", duplicateBatchMessage(requestedBatchName), 409);
+        }
+
         const inserted = await clientQuery<BatchRow>(
           client,
           `insert into campaign_batches(
@@ -140,7 +172,7 @@ export async function POST(request: Request) {
            returning id, campaign_id, name`,
           [
             campaign.id,
-            payload.data.batchName || `${campaign.name} - Lote 1`,
+            requestedBatchName,
             payload.data.description.trim(),
             auth.profile.id
           ]
@@ -336,7 +368,7 @@ export async function POST(request: Request) {
           processing: { status: "aguardando", jobsCreated: 0 }
         },
         message: importedRecords > 0
-          ? "A base foi importada e esta aguardando o processamento. Parcelas ja existentes em outras campanhas foram apenas vinculadas ao novo lote."
+          ? "A base foi importada e esta aguardando o processamento. Parcelas ja existentes em outras campanhas foram apenas vinculadas ao lote selecionado."
           : "Todas as parcelas informadas ja existem neste lote."
       };
     });
@@ -346,6 +378,20 @@ export async function POST(request: Request) {
     if (error instanceof ImportHttpError) {
       return fail(error.code, error.message, error.status);
     }
+
+    const databaseError = error as { code?: string; constraint?: string; message?: string };
+    if (
+      databaseError.code === "23505" &&
+      (databaseError.constraint === "campaign_batches_active_name_guard" ||
+        databaseError.message?.includes("Ja existe um lote"))
+    ) {
+      return fail(
+        "CONFLICT",
+        databaseError.message ?? "Ja existe um lote com este nome nesta campanha.",
+        409
+      );
+    }
+
     console.error("[CAMPAIGN_IMPORT_V2_FAILED]", error);
     return fail("INTERNAL_ERROR", "Nao foi possivel importar a base.", 500);
   }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CampaignControlIcon } from "@/components/campaign-control-icon";
 
@@ -12,32 +12,48 @@ type ImportResponse = {
       imported_records?: number;
       invalid_records?: number;
       skipped_duplicate_records?: number;
-      issues?: Array<{ line?: number; associatedCode?: string; targetInstallmentId?: string; reason?: string }>;
     };
   };
   error?: { message?: string };
   message?: string;
 };
 
+type CampaignOption = { id: string; name: string };
+type BatchOption = { id: string; campaignId: string; name: string };
+
 const STORAGE_KEY = "campaign-import-report";
+const inputClass = "w-full rounded-lg border border-[#d6e3ef] bg-[#eef4f8] px-3 py-2 text-sm text-[#102033] dark:border-[#284665] dark:bg-[#0B2133] dark:text-[#F5F8FF]";
+
+function normalizedBatchName(value: string) {
+  return value.trim().toLocaleLowerCase("pt-BR");
+}
 
 export function CampaignImportForm({
   campaigns,
+  batches = [],
   initialCampaignId = "",
   initialCampaignName = ""
 }: {
-  campaigns: Array<{ id: string; name: string }>;
+  campaigns: CampaignOption[];
+  batches?: BatchOption[];
   initialCampaignId?: string;
   initialCampaignName?: string;
 }) {
   const router = useRouter();
-  const [status, setStatus] = useState<string>("");
-  const [busy, setBusy] = useState(false);
-  const [isDragging, setIsDragging] = useState(false);
-  const [selectedFile, setSelectedFile] = useState<string>("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [campaignId, setCampaignId] = useState(initialCampaignId);
   const [campaignName, setCampaignName] = useState(initialCampaignName);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [batchId, setBatchId] = useState("");
+  const [selectedFile, setSelectedFile] = useState("");
+  const [status, setStatus] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+
+  const availableBatches = useMemo(
+    () => batches.filter((batch) => batch.campaignId === campaignId),
+    [batches, campaignId]
+  );
+  const selectedBatchName = availableBatches.find((batch) => batch.id === batchId)?.name ?? "";
 
   function setFile(file: File | undefined) {
     if (!file || !fileInputRef.current) return;
@@ -51,9 +67,17 @@ export function CampaignImportForm({
     event.preventDefault();
     const form = event.currentTarget;
     const data = new FormData(form);
+    const requestedBatchName = String(data.get("batchName") ?? "").trim();
+    const duplicateBatch = campaignId && !batchId && requestedBatchName && availableBatches.some(
+      (batch) => normalizedBatchName(batch.name) === normalizedBatchName(requestedBatchName)
+    );
+    if (duplicateBatch) {
+      setStatus(`Ja existe um lote "${requestedBatchName}" nesta campanha. Selecione o lote existente ou informe outro nome.`);
+      return;
+    }
+
     setBusy(true);
     setStatus("");
-
     try {
       const response = await fetch("/api/campanhas/importar-v2", {
         method: "POST",
@@ -61,7 +85,6 @@ export function CampaignImportForm({
         headers: { Accept: "application/json" }
       });
       const json = (await response.json().catch(() => null)) as ImportResponse | null;
-
       if (!response.ok || !json?.success) {
         setStatus(json?.error?.message ?? "Falha na importacao.");
         return;
@@ -70,30 +93,20 @@ export function CampaignImportForm({
       const imported = json.data?.summary?.imported_records ?? 0;
       const invalid = json.data?.summary?.invalid_records ?? 0;
       const skipped = json.data?.summary?.skipped_duplicate_records ?? 0;
+      setStatus(`Base importada: ${imported} registro(s).${invalid ? ` ${invalid} ignorado(s).` : ""}${skipped ? ` ${skipped} parcela(s) ja existiam neste lote.` : ""}`);
 
-      setStatus(
-        `Base importada: ${imported} registros aguardando processamento.${invalid ? ` ${invalid} registro(s) foram ignorados.` : ""}${skipped ? ` ${skipped} parcela(s) ja existiam neste lote e foram ignoradas.` : ""}`
-      );
+      try {
+        window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify({
+          campaignId: json.data?.campaignId,
+          message: json.message,
+          summary: json.data?.summary
+        }));
+        window.dispatchEvent(new Event("campaign-import-report-updated"));
+      } catch {}
+
       form.reset();
       setSelectedFile("");
-
-      if (json.data?.campaignId) {
-        try {
-          window.sessionStorage.setItem(
-            STORAGE_KEY,
-            JSON.stringify({
-              campaignId: json.data.campaignId,
-              message: json.message,
-              summary: json.data.summary
-            })
-          );
-          window.dispatchEvent(new Event("campaign-import-report-updated"));
-        } catch {}
-      }
-
-      // Durante a migracao para PostgreSQL proprio, a listagem de campanhas ja
-      // usa o banco local. O detalhe ainda sera migrado na proxima etapa, entao
-      // permanecemos na listagem apos a importacao para evitar rotas legadas.
+      setBatchId("");
       router.replace("/campanhas");
       router.refresh();
     } catch {
@@ -104,24 +117,26 @@ export function CampaignImportForm({
   }
 
   return (
-    <form
-      onSubmit={onSubmit}
-      className="space-y-4 rounded-2xl border border-[#16C79A]/70 bg-white p-5 shadow-sm dark:bg-[#071b34]/90 dark:shadow-[0_8px_28px_rgba(0,0,0,0.2)]"
-    >
+    <form onSubmit={onSubmit} className="space-y-4 rounded-2xl border border-[#16C79A]/70 bg-white p-5 shadow-sm dark:bg-[#071b34]/90">
       <div className="border-b border-[#183956] pb-4">
-        <div className="flex items-center gap-3"><span className="inline-flex h-12 w-12 items-center justify-center rounded-full border border-[#d6e3ef] bg-[#eef4f8] dark:border-[#284665] dark:bg-[#071525]"><CampaignControlIcon name="importCampaign" className="h-7 w-7" /></span><div><h2 className="text-lg font-semibold text-[#102033] dark:text-[#F5F8FF]">Importar campanha ou lote</h2>
-        <p className="mt-1 text-sm text-[#5d7184] dark:text-[#8CA3B3]">
-          Aceita CSV, TXT e XLSX com CodigoAssociadoEmpresa, Parcela e Valor da Parcela obrigatorios.
-        </p></div></div>
+        <div className="flex items-center gap-3">
+          <CampaignControlIcon name="importCampaign" className="h-7 w-7" />
+          <div>
+            <h2 className="text-lg font-semibold text-[#102033] dark:text-[#F5F8FF]">Importar campanha ou lote</h2>
+            <p className="mt-1 text-sm text-[#5d7184] dark:text-[#8CA3B3]">Escolha uma campanha e importe para um lote existente ou crie um novo lote.</p>
+          </div>
+        </div>
       </div>
+
       {initialCampaignId ? (
         <>
           <input type="hidden" name="campaignId" value={initialCampaignId} />
-          <p className="text-sm text-slate-600 dark:text-slate-300">Novo lote para: <strong className="text-slate-900 dark:text-white">{initialCampaignName}</strong></p>
+          <input type="hidden" name="name" value={initialCampaignName} />
+          <p className="text-sm text-slate-600 dark:text-slate-300">Campanha: <strong>{initialCampaignName}</strong></p>
         </>
       ) : (
         <>
-          <label className="flex items-center gap-2 text-sm font-medium text-[#00F0C2]" htmlFor="campaign-target"><CampaignControlIcon name="destination" className="h-5 w-5" />Destino da importacao</label>
+          <label htmlFor="campaign-target" className="text-sm font-medium text-[#00F0C2]">Destino da importacao</label>
           <select
             id="campaign-target"
             name="campaignId"
@@ -130,66 +145,50 @@ export function CampaignImportForm({
               const nextId = event.target.value;
               setCampaignId(nextId);
               setCampaignName(campaigns.find((campaign) => campaign.id === nextId)?.name ?? "");
+              setBatchId("");
             }}
-            className="w-full rounded-lg border border-[#d6e3ef] bg-[#eef4f8] px-3 py-2 text-sm text-[#102033] dark:border-[#284665] dark:bg-[#0B2133] dark:text-[#F5F8FF]"
+            className={inputClass}
           >
             <option value="">Criar nova campanha</option>
-            {campaigns.map((campaign) => <option key={campaign.id} value={campaign.id}>Adicionar lote em: {campaign.name}</option>)}
+            {campaigns.map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.name}</option>)}
           </select>
+          {campaignId ? <input type="hidden" name="name" value={campaignName} /> : (
+            <input name="name" placeholder="Nome da campanha" required className={inputClass} />
+          )}
         </>
       )}
-      {initialCampaignId ? (
-        <input type="hidden" name="name" value={initialCampaignName} />
-      ) : campaignId ? (
+
+      {campaignId ? (
         <>
-          <p className="text-xs text-slate-500 dark:text-slate-400">A planilha sera adicionada como um novo lote em <strong className="text-slate-700 dark:text-slate-200">{campaignName}</strong>.</p>
-          <input type="hidden" name="name" value={campaignName} />
+          <label htmlFor="batch-target" className="text-sm font-medium text-[#00F0C2]">Lote de destino</label>
+          <select id="batch-target" name="batchId" value={batchId} onChange={(event) => setBatchId(event.target.value)} className={inputClass}>
+            <option value="">Criar novo lote</option>
+            {availableBatches.map((batch) => <option key={batch.id} value={batch.id}>{batch.name}</option>)}
+          </select>
+          {batchId ? (
+            <p className="text-xs text-slate-500 dark:text-slate-400">Importando para o lote existente <strong>{selectedBatchName}</strong>. Parcelas ja presentes nele serao ignoradas.</p>
+          ) : null}
         </>
-      ) : (
-        <div className="flex items-center gap-3 rounded-lg border border-[#d6e3ef] bg-[#eef4f8] px-3 dark:border-[#284665] dark:bg-[#0B2133]"><CampaignControlIcon name="campaignName" className="h-5 w-5 shrink-0" /><input name="name" placeholder="Nome da campanha" required className="campaign-field-control w-full py-3 text-sm text-[#102033] outline-none placeholder:text-[#5d7184] dark:text-[#F5F8FF] dark:placeholder:text-[#8CA3B3]" /></div>
-      )}
-      <div className="flex items-center gap-3 rounded-lg border border-[#d6e3ef] bg-[#eef4f8] px-3 dark:border-[#284665] dark:bg-[#0B2133]"><CampaignControlIcon name="batchName" className="h-5 w-5 shrink-0" /><input name="batchName" placeholder="Nome do lote" className="campaign-field-control w-full py-3 text-sm text-[#102033] outline-none placeholder:text-[#5d7184] dark:text-[#F5F8FF] dark:placeholder:text-[#8CA3B3]" /></div>
-      <div className="flex items-start gap-3 rounded-lg border border-[#d6e3ef] bg-[#eef4f8] px-3 dark:border-[#284665] dark:bg-[#0B2133]"><CampaignControlIcon name="description" className="mt-3 h-5 w-5 shrink-0" /><textarea name="description" placeholder="Descricao" className="campaign-field-control min-h-24 w-full resize-y py-3 text-sm text-[#102033] outline-none placeholder:text-[#5d7184] dark:text-[#F5F8FF] dark:placeholder:text-[#8CA3B3]" /></div>
+      ) : null}
+
+      {!batchId ? <input name="batchName" placeholder="Nome do novo lote" className={inputClass} /> : null}
+      <textarea name="description" placeholder="Descricao" className={`${inputClass} min-h-20 resize-y`} />
+
       <div
-        onDragOver={(event) => {
-          event.preventDefault();
-          setIsDragging(true);
-        }}
+        onDragOver={(event) => { event.preventDefault(); setIsDragging(true); }}
         onDragLeave={() => setIsDragging(false)}
-        onDrop={(event) => {
-          event.preventDefault();
-          setIsDragging(false);
-          setFile(event.dataTransfer.files[0]);
-        }}
-        className={`rounded-xl border-2 border-dashed p-5 text-center transition ${
-          isDragging
-            ? "border-[#00F0C2] bg-[#0B3442]"
-            : "border-[#284665] bg-[#071525]"
-        }`}
+        onDrop={(event) => { event.preventDefault(); setIsDragging(false); setFile(event.dataTransfer.files[0]); }}
+        className={`rounded-xl border-2 border-dashed p-5 text-center ${isDragging ? "border-[#00F0C2] bg-[#0B3442]" : "border-[#284665] bg-[#071525]"}`}
       >
-        <input
-          ref={fileInputRef}
-          id="campaign-file"
-          name="file"
-          type="file"
-          accept=".csv,.txt,.xlsx,.xls"
-          required
-          onChange={(event) => setSelectedFile(event.target.files?.[0]?.name ?? "")}
-          className="sr-only"
-        />
-        <label htmlFor="campaign-file" className="flex cursor-pointer flex-col items-center text-sm text-[#AFC3D4]">
-          <CampaignControlIcon name="upload" className="h-12 w-12" /><span className="mt-2"><span className="font-medium text-[#00F0C2]">Arraste o arquivo aqui</span> ou clique para escolher</span>
-        </label>
-        <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">CSV, TXT ou XLSX</p>
-        {selectedFile ? <p className="mt-2 truncate text-sm font-medium text-slate-900 dark:text-white">{selectedFile}</p> : null}
+        <input ref={fileInputRef} id="campaign-file" name="file" type="file" accept=".csv,.txt,.xlsx,.xls" required onChange={(event) => setSelectedFile(event.target.files?.[0]?.name ?? "")} className="sr-only" />
+        <label htmlFor="campaign-file" className="cursor-pointer text-sm text-[#AFC3D4]"><span className="font-medium text-[#00F0C2]">Arraste o arquivo aqui</span> ou clique para escolher</label>
+        {selectedFile ? <p className="mt-2 truncate text-sm font-medium text-white">{selectedFile}</p> : null}
       </div>
-      <button
-        disabled={busy}
-        className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-[#00F0C2] px-4 py-3 text-sm font-semibold text-[#06151F] shadow-[0_0_18px_rgba(0,240,194,0.2)] transition hover:bg-[#73FFE8] disabled:opacity-60"
-      >
+
+      <button disabled={busy} className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-[#00F0C2] px-4 py-3 text-sm font-semibold text-[#06151F] disabled:opacity-60">
         <CampaignControlIcon name="importBase" className="h-5 w-5" />{busy ? "Importando..." : "Importar base"}
       </button>
-      {status ? <p className="text-sm text-slate-600">{status}</p> : null}
+      {status ? <p className="text-sm text-slate-600 dark:text-slate-300">{status}</p> : null}
     </form>
   );
 }

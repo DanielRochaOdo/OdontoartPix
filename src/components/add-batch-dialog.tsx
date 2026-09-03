@@ -5,10 +5,12 @@ import { AddBatchForm } from "@/components/add-batch-form";
 
 export function AddBatchDialog({
   campaignId,
-  campaignName
+  campaignName,
+  batches = []
 }: {
   campaignId: string;
   campaignName: string;
+  batches?: Array<{ id: string; name: string }>;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -19,7 +21,7 @@ export function AddBatchDialog({
         onClick={() => setOpen(true)}
         className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-medium text-emerald-800 transition hover:bg-emerald-100"
       >
-        Adicionar lote
+        Adicionar parcelas/lote
       </button>
 
       {open ? (
@@ -37,7 +39,12 @@ export function AddBatchDialog({
                 </svg>
               </button>
             </div>
-            <AddBatchForm campaignId={campaignId} campaignName={campaignName} onCompleted={() => setOpen(false)} />
+            <AddBatchForm
+              campaignId={campaignId}
+              campaignName={campaignName}
+              batches={batches}
+              onCompleted={() => setOpen(false)}
+            />
           </div>
         </div>
       ) : null}
