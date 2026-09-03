@@ -3,13 +3,14 @@ import * as XLSX from "xlsx";
 import { parseMemberFile, parseMemberUpdateFile } from "@/lib/imports";
 
 describe("parseMemberFile", () => {
-  it("recognizes CodigoAssociadoEmpresa, Parcela, Valor da Parcela, Nome and CPF columns", async () => {
+  it("recognizes CodigoAssociadoEmpresa, Parcela, Valor da Parcela, Tipo Parcela, Nome and CPF columns", async () => {
     const workbook = XLSX.utils.book_new();
     const sheet = XLSX.utils.json_to_sheet([
       {
         CodigoAssociadoEmpresa: "A-123",
         Parcela: "P-9",
         "Valor da Parcela": "87,42",
+        "Tipo Parcela": "Clinico",
         Nome: "Maria de Teste",
         CPF: "529.982.247-25"
       }
@@ -25,6 +26,7 @@ describe("parseMemberFile", () => {
         associatedCode: "A-123",
         targetInstallmentId: "P-9",
         installmentAmountCents: 8742,
+        installmentType: "clinico",
         cpf: "52998224725",
         name: "Maria de Teste"
       })
@@ -38,6 +40,7 @@ describe("parseMemberFile", () => {
         CodigoAssociadoEmpresa: "A-123",
         Parcela: "P-9",
         "Valor da Parcela": "87,42",
+        "Tipo Parcela": "Orto",
         "Data de Vencimento": "15/08/2026"
       }
     ]);
@@ -46,14 +49,17 @@ describe("parseMemberFile", () => {
 
     const result = await parseMemberFile(new File([buffer], "modelo.xlsx"));
 
-    expect(result.imports[0]).toEqual(expect.objectContaining({ dueDate: "15/08/2026" }));
+    expect(result.imports[0]).toEqual(expect.objectContaining({
+      dueDate: "15/08/2026",
+      installmentType: "orto"
+    }));
   });
 
   it("accepts numeric CodigoAssociadoEmpresa, Parcela and Valor da Parcela in XLSX", async () => {
     const workbook = XLSX.utils.book_new();
     const sheet = XLSX.utils.aoa_to_sheet([
-      ["Nome", "CodigoAssociadoEmpresa", "Parcela", "Valor da Parcela", "CPF"],
-      ["Pessoa Numerica", 4100406304, 55, 91.3, ""]
+      ["Nome", "CodigoAssociadoEmpresa", "Parcela", "Valor da Parcela", "CPF", "Tipo Parcela"],
+      ["Pessoa Numerica", 4100406304, 55, 91.3, "", "Clinico"]
     ]);
     XLSX.utils.book_append_sheet(workbook, sheet, "Base");
     const buffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
@@ -65,7 +71,8 @@ describe("parseMemberFile", () => {
       expect.objectContaining({
         associatedCode: "4100406304",
         targetInstallmentId: "55",
-        installmentAmountCents: 9130
+        installmentAmountCents: 9130,
+        installmentType: "clinico"
       })
     );
   });
@@ -77,6 +84,7 @@ describe("parseMemberFile", () => {
         " Codigo associado ": "COD-77",
         " Parcela ": "1",
         " Valor da Parcela ": "120,55",
+        " Tipo da Parcela ": "Clínico",
         "Nome completo": "Joao de Teste",
         " CPF ": "04100406304"
       }
@@ -91,6 +99,7 @@ describe("parseMemberFile", () => {
         associatedCode: "COD-77",
         targetInstallmentId: "1",
         installmentAmountCents: 12055,
+        installmentType: "clinico",
         cpf: "04100406304",
         name: "Joao de Teste"
       })
@@ -100,8 +109,8 @@ describe("parseMemberFile", () => {
   it("marks the row as invalid when Valor da Parcela is missing", async () => {
     const workbook = XLSX.utils.book_new();
     const sheet = XLSX.utils.aoa_to_sheet([
-      ["Nome", "CodigoAssociadoEmpresa", "Parcela", "Valor da Parcela", "CPF"],
-      ["Sem Valor", "COD-1", "33", "", ""]
+      ["Nome", "CodigoAssociadoEmpresa", "Parcela", "Valor da Parcela", "CPF", "Tipo Parcela"],
+      ["Sem Valor", "COD-1", "33", "", "", "Orto"]
     ]);
     XLSX.utils.book_append_sheet(workbook, sheet, "Base");
     const buffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });

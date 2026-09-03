@@ -174,6 +174,10 @@ export function CampaignImportForm({
       {!batchId ? <input name="batchName" placeholder="Nome do novo lote" className={inputClass} /> : null}
       <textarea name="description" placeholder="Descricao" className={`${inputClass} min-h-20 resize-y`} />
 
+      <p className="rounded-lg border border-[#284665] bg-[#071525] px-3 py-2 text-xs text-[#AFC3D4]">
+        A planilha deve conter a coluna <strong className="text-white">Tipo Parcela</strong>. Em cada linha informe somente <strong className="text-white">Clinico</strong> ou <strong className="text-white">Orto</strong>. Essa classificacao fica vinculada a parcela, mesmo que ela participe de outros lotes ou campanhas.
+      </p>
+
       <div
         onDragOver={(event) => { event.preventDefault(); setIsDragging(true); }}
         onDragLeave={() => setIsDragging(false)}

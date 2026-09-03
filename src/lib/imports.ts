@@ -1,10 +1,13 @@
 import * as XLSX from "xlsx";
 import { toCents } from "@/lib/money";
 
+export type InstallmentType = "clinico" | "orto";
+
 export type ImportRow = {
   associatedCode: string;
   targetInstallmentId: string;
   installmentAmountCents: number;
+  installmentType: InstallmentType;
   cpf?: string;
   name?: string;
   dueDate?: string;
@@ -16,6 +19,7 @@ export type ImportIssue = {
   associatedCode?: string;
   targetInstallmentId?: string;
   installmentAmountCents?: number | null;
+  installmentType?: InstallmentType;
   cpf?: string;
   name?: string;
   dueDate?: string;
@@ -27,6 +31,7 @@ export type ImportInspectionRow = {
   associatedCode?: string;
   targetInstallmentId?: string;
   installmentAmountCents?: number | null;
+  installmentType?: InstallmentType;
   cpf?: string;
   name?: string;
   dueDate?: string;
@@ -79,6 +84,18 @@ function normalizeInstallmentAmount(value: unknown) {
   return { cents: parsed.cents, valid: true };
 }
 
+function normalizeInstallmentType(value: unknown): InstallmentType | undefined {
+  const normalized = String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+
+  if (normalized === "clinico") return "clinico";
+  if (normalized === "orto") return "orto";
+  return undefined;
+}
+
 function normalizeCpf(value: unknown) {
   const digits = String(value ?? "").replace(/\D/g, "");
   if (!digits) return undefined;
@@ -120,6 +137,7 @@ export async function parseMemberFile(file: File) {
           valor_parcela: String(values[3] ?? ""),
           cpf: String(values[4] ?? ""),
           vencimento: String(values[5] ?? ""),
+          tipo_parcela: String(values[6] ?? ""),
           __line: index + 1
         });
       }
@@ -143,6 +161,7 @@ export async function parseMemberFile(file: File) {
         valor_parcela: tokens[3] ?? "",
         cpf: tokens[4] ?? "",
         vencimento: tokens[5] ?? "",
+        tipo_parcela: tokens[6] ?? "",
         __line: index + 1
       });
     }
@@ -177,6 +196,16 @@ export async function parseMemberFile(file: File) {
         "amount"
       ])
     );
+    const installmentType = normalizeInstallmentType(
+      readColumn(row, [
+        "tipo parcela",
+        "tipo da parcela",
+        "tipo_parcela",
+        "tipoparcela",
+        "clinico_orto",
+        "classificacao"
+      ])
+    );
     const cpf = normalizeCpf(
       readColumn(row, ["cpf", "cpf_usuario", "CpfUsuario", "cpf/cnpj"])
     );
@@ -192,6 +221,7 @@ export async function parseMemberFile(file: File) {
       associatedCode: associatedCode || undefined,
       targetInstallmentId: targetInstallmentId || undefined,
       installmentAmountCents: installmentAmount.valid ? installmentAmount.cents : null,
+      installmentType,
       cpf,
       name,
       dueDate
@@ -202,6 +232,7 @@ export async function parseMemberFile(file: File) {
         line,
         targetInstallmentId: targetInstallmentId || undefined,
         installmentAmountCents: installmentAmount.valid ? installmentAmount.cents : null,
+        installmentType,
         cpf,
         name,
         dueDate,
@@ -215,6 +246,7 @@ export async function parseMemberFile(file: File) {
         line,
         associatedCode,
         installmentAmountCents: installmentAmount.valid ? installmentAmount.cents : null,
+        installmentType,
         cpf,
         name,
         dueDate,
@@ -228,10 +260,25 @@ export async function parseMemberFile(file: File) {
         line,
         associatedCode,
         targetInstallmentId,
+        installmentType,
         cpf,
         name,
         dueDate,
         reason: "Valor da Parcela ausente ou invalido."
+      });
+      continue;
+    }
+
+    if (!installmentType) {
+      issues.push({
+        line,
+        associatedCode,
+        targetInstallmentId,
+        installmentAmountCents: installmentAmount.cents,
+        cpf,
+        name,
+        dueDate,
+        reason: "Tipo da Parcela ausente ou invalido. Use Clinico ou Orto."
       });
       continue;
     }
@@ -242,6 +289,7 @@ export async function parseMemberFile(file: File) {
         associatedCode,
         targetInstallmentId,
         installmentAmountCents: installmentAmount.cents,
+        installmentType,
         cpf,
         name,
         dueDate,
@@ -255,6 +303,7 @@ export async function parseMemberFile(file: File) {
       associatedCode,
       targetInstallmentId,
       installmentAmountCents: installmentAmount.cents,
+      installmentType,
       cpf,
       name,
       dueDate,

@@ -17,6 +17,11 @@ const OptionalIdSchema = z.string().uuid().optional();
 type CampaignRow = { id: string; name: string };
 type BatchRow = { id: string; campaign_id: string; name: string };
 type MemberRow = { id: string; external_user_code: string | null };
+type CanonicalClassificationRow = {
+  member_id: string;
+  external_installment_code: string;
+  installment_type: string | null;
+};
 type ImportedMember = {
   cpf: string;
   cpf_hash: string;
@@ -50,6 +55,10 @@ function chunks<T>(items: T[], size: number) {
 
 function duplicateBatchMessage(name: string) {
   return `Ja existe um lote "${name}" nesta campanha. Selecione o lote existente ou informe outro nome.`;
+}
+
+function installmentKey(memberId: string, installmentCode: string) {
+  return `${memberId}:${installmentCode}`;
 }
 
 export async function POST(request: Request) {
@@ -86,7 +95,7 @@ export async function POST(request: Request) {
   if (imports.length === 0) {
     return fail(
       "VALIDATION_ERROR",
-      "O arquivo nao possui nenhum CodigoAssociadoEmpresa valido para importacao.",
+      "O arquivo nao possui nenhuma linha valida para importacao. Verifique CodigoAssociadoEmpresa, Parcela, Valor da Parcela e Tipo da Parcela (Clinico ou Orto).",
       400
     );
   }
@@ -249,7 +258,7 @@ export async function POST(request: Request) {
         const memberId = memberIdByCode.get(item.associatedCode);
         if (!memberId) continue;
         const installmentCode = item.targetInstallmentId.trim();
-        uniqueLinks.set(`${memberId}:${installmentCode}`, {
+        uniqueLinks.set(installmentKey(memberId, installmentCode), {
           ...item,
           targetInstallmentId: installmentCode
         });
@@ -263,15 +272,70 @@ export async function POST(request: Request) {
           associatedCode: item.associatedCode,
           targetInstallmentId: item.targetInstallmentId,
           installmentAmountCents: item.installmentAmountCents,
+          installmentType: item.installmentType,
           dueDateText: item.dueDate ?? null,
           sourceLine: item.line
         };
       });
 
+      const classificationConflictKeys = new Set<string>();
+
+      for (const linkChunk of chunks(links, 500)) {
+        const classified = await clientQuery<CanonicalClassificationRow>(
+          client,
+          `insert into member_target_installments(
+             member_id,
+             external_installment_code,
+             due_date_text,
+             amount_cents,
+             pending_amount_cents,
+             installment_type,
+             amount_source,
+             financial_observed_at
+           )
+           select incoming.member_id,
+                  incoming.external_installment_code,
+                  incoming.due_date_text,
+                  incoming.amount_cents,
+                  0,
+                  incoming.installment_type,
+                  'import',
+                  now()
+             from unnest($1::uuid[], $2::text[], $3::text[], $4::bigint[], $5::text[])
+                  as incoming(member_id, external_installment_code, due_date_text, amount_cents, installment_type)
+           on conflict (member_id, external_installment_code)
+           do update set
+             installment_type = excluded.installment_type,
+             due_date_text = coalesce(member_target_installments.due_date_text, excluded.due_date_text),
+             updated_at = now()
+           where member_target_installments.installment_type is null
+              or member_target_installments.installment_type = excluded.installment_type
+           returning member_id, external_installment_code, installment_type`,
+          [
+            linkChunk.map((item) => item.memberId),
+            linkChunk.map((item) => item.targetInstallmentId),
+            linkChunk.map((item) => item.dueDateText),
+            linkChunk.map((item) => item.installmentAmountCents),
+            linkChunk.map((item) => item.installmentType)
+          ]
+        );
+
+        const acceptedKeys = new Set(
+          classified.rows.map((row) => installmentKey(row.member_id, row.external_installment_code))
+        );
+        for (const item of linkChunk) {
+          const key = installmentKey(item.memberId, item.targetInstallmentId);
+          if (!acceptedKeys.has(key)) classificationConflictKeys.add(key);
+        }
+      }
+
+      const insertableLinks = links.filter(
+        (item) => !classificationConflictKeys.has(installmentKey(item.memberId, item.targetInstallmentId))
+      );
       let importedRecords = 0;
       const duplicateInBatchKeys = new Set<string>();
 
-      for (const linkChunk of chunks(links, 500)) {
+      for (const linkChunk of chunks(insertableLinks, 500)) {
         const inserted = await clientQuery<{ id: string; member_id: string; target_installment_id: string | null }>(
           client,
           `insert into campaign_batch_members(
@@ -301,24 +365,42 @@ export async function POST(request: Request) {
 
         importedRecords += inserted.rows.length;
         const insertedKeys = new Set(
-          inserted.rows.map((row) => `${row.member_id}:${String(row.target_installment_id ?? "").trim()}`)
+          inserted.rows.map((row) => installmentKey(row.member_id, String(row.target_installment_id ?? "").trim()))
         );
         for (const item of linkChunk) {
-          const key = `${item.memberId}:${item.targetInstallmentId}`;
+          const key = installmentKey(item.memberId, item.targetInstallmentId);
           if (!insertedKeys.has(key)) duplicateInBatchKeys.add(key);
         }
       }
 
       const inspectedRowsByLine = new Map(inspectedRows.map((row) => [row.line, row]));
       const importIssues = [...issues];
+
       for (const item of links) {
-        if (!duplicateInBatchKeys.has(`${item.memberId}:${item.targetInstallmentId}`)) continue;
+        const key = installmentKey(item.memberId, item.targetInstallmentId);
+        if (!classificationConflictKeys.has(key)) continue;
         const inspected = inspectedRowsByLine.get(item.sourceLine);
         importIssues.push({
           line: item.sourceLine,
           associatedCode: item.associatedCode,
           targetInstallmentId: item.targetInstallmentId,
           installmentAmountCents: item.installmentAmountCents,
+          installmentType: item.installmentType,
+          cpf: inspected?.cpf,
+          name: inspected?.name,
+          reason: "Parcela ja possui classificacao Clinico/Orto diferente da informada. A classificacao canonica nao foi alterada."
+        });
+      }
+
+      for (const item of insertableLinks) {
+        if (!duplicateInBatchKeys.has(installmentKey(item.memberId, item.targetInstallmentId))) continue;
+        const inspected = inspectedRowsByLine.get(item.sourceLine);
+        importIssues.push({
+          line: item.sourceLine,
+          associatedCode: item.associatedCode,
+          targetInstallmentId: item.targetInstallmentId,
+          installmentAmountCents: item.installmentAmountCents,
+          installmentType: item.installmentType,
           cpf: inspected?.cpf,
           name: inspected?.name,
           reason: `Parcela ja existente no lote "${batch.name}".`
@@ -346,6 +428,7 @@ export async function POST(request: Request) {
           associatedCode: issue.associatedCode ?? inspected?.associatedCode,
           targetInstallmentId: issue.targetInstallmentId ?? inspected?.targetInstallmentId,
           installmentAmountCents: issue.installmentAmountCents ?? inspected?.installmentAmountCents ?? null,
+          installmentType: issue.installmentType ?? inspected?.installmentType,
           cpf: issue.cpf ?? inspected?.cpf,
           name: issue.name ?? inspected?.name,
           reason: issue.reason
@@ -361,6 +444,7 @@ export async function POST(request: Request) {
             valid_records: imports.length,
             invalid_records: importIssues.length,
             duplicated_records: Math.max(0, imports.length - uniqueLinks.size),
+            classification_conflicts: classificationConflictKeys.size,
             skipped_duplicate_records: duplicateInBatchKeys.size,
             imported_records: importedRecords,
             issues: eventIssues
@@ -368,8 +452,10 @@ export async function POST(request: Request) {
           processing: { status: "aguardando", jobsCreated: 0 }
         },
         message: importedRecords > 0
-          ? "A base foi importada e esta aguardando o processamento. Parcelas ja existentes em outras campanhas foram apenas vinculadas ao lote selecionado."
-          : "Todas as parcelas informadas ja existem neste lote."
+          ? "A base foi importada e esta aguardando o processamento. A classificacao Clinico/Orto ficou vinculada a parcela canonica."
+          : classificationConflictKeys.size > 0
+            ? "Nenhuma parcela foi importada porque existe conflito de classificacao Clinico/Orto com parcelas ja cadastradas."
+            : "Todas as parcelas informadas ja existem neste lote."
       };
     });
 

@@ -128,6 +128,10 @@ export function AddBatchForm({
         <p className="mt-2 text-xs text-slate-600 dark:text-slate-300">As novas parcelas serao adicionadas ao lote existente. Parcelas ja presentes nele serao ignoradas.</p>
       )}
 
+      <p className="mt-3 rounded-lg border border-emerald-200 bg-white px-3 py-2 text-xs text-slate-600 dark:border-emerald-800 dark:bg-slate-900 dark:text-slate-300">
+        Inclua na planilha a coluna <strong>Tipo Parcela</strong> e informe <strong>Clinico</strong> ou <strong>Orto</strong> em cada linha. O tipo pertence a parcela e sera compartilhado entre todos os lotes/campanhas em que ela aparecer.
+      </p>
+
       <div
         onDragOver={(event) => { event.preventDefault(); setIsDragging(true); }}
         onDragLeave={() => setIsDragging(false)}
