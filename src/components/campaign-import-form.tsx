@@ -24,6 +24,10 @@ type BatchOption = { id: string; campaignId: string; name: string };
 const STORAGE_KEY = "campaign-import-report";
 const inputClass = "w-full rounded-lg border border-[#d6e3ef] bg-[#eef4f8] px-3 py-2 text-sm text-[#102033] dark:border-[#284665] dark:bg-[#0B2133] dark:text-[#F5F8FF]";
 
+function normalizedBatchName(value: string) {
+  return value.trim().toLocaleLowerCase("pt-BR");
+}
+
 export function CampaignImportForm({
   campaigns,
   batches = [],
@@ -62,13 +66,22 @@ export function CampaignImportForm({
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
+    const data = new FormData(form);
+    const requestedBatchName = String(data.get("batchName") ?? "").trim();
+    const duplicateBatch = campaignId && !batchId && requestedBatchName && availableBatches.some(
+      (batch) => normalizedBatchName(batch.name) === normalizedBatchName(requestedBatchName)
+    );
+    if (duplicateBatch) {
+      setStatus(`Ja existe um lote "${requestedBatchName}" nesta campanha. Selecione o lote existente ou informe outro nome.`);
+      return;
+    }
+
     setBusy(true);
     setStatus("");
-
     try {
       const response = await fetch("/api/campanhas/importar-v2", {
         method: "POST",
-        body: new FormData(form),
+        body: data,
         headers: { Accept: "application/json" }
       });
       const json = (await response.json().catch(() => null)) as ImportResponse | null;
