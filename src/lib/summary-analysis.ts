@@ -6,11 +6,7 @@ export type SummaryAnalysisEntityMetrics = {
   paidAmountCents: number;
 };
 
-export type SummaryAnalysisPixMetrics = {
-  paidAssociateCount: number;
-  paidInstallmentCount: number;
-  paidAmountCents: number;
-};
+export type SummaryAnalysisPixMetrics = SummaryAnalysisEntityMetrics;
 
 export type SummaryAnalysisMetrics = {
   from: string;
@@ -57,7 +53,6 @@ export async function getSummaryAnalysisMetrics(
        select
          mti.member_id,
          mti.installment_type,
-         mti.payment_status,
          mti.paid_amount_cents,
          nullif(trim(mti.payment_description), '') as payment_description,
          case
@@ -77,48 +72,43 @@ export async function getSummaryAnalysisMetrics(
        select *
          from canonical
         where payment_date between $1::date and $2::date
+     ), paid as (
+       select *
+         from ranged
+        where paid_amount_cents is not null
+          and payment_description is not null
+          and upper(payment_description) <> 'ABERTO'
+          and upper(payment_description) <> 'ACORDADO'
      )
      select
        count(distinct member_id) filter (
-         where installment_type = 'clinico' and payment_status = 'paid'
+         where installment_type = 'clinico'
        )::int as clinico_paid_associates,
        count(*) filter (
-         where installment_type = 'clinico' and payment_status = 'paid'
+         where installment_type = 'clinico'
        )::int as clinico_paid_installments,
        coalesce(sum(paid_amount_cents) filter (
-         where installment_type = 'clinico' and payment_status = 'paid'
+         where installment_type = 'clinico'
        ), 0)::float8 as clinico_paid_amount_cents,
        count(distinct member_id) filter (
-         where installment_type = 'orto' and payment_status = 'paid'
+         where installment_type = 'orto'
        )::int as orto_paid_associates,
        count(*) filter (
-         where installment_type = 'orto' and payment_status = 'paid'
+         where installment_type = 'orto'
        )::int as orto_paid_installments,
        coalesce(sum(paid_amount_cents) filter (
-         where installment_type = 'orto' and payment_status = 'paid'
+         where installment_type = 'orto'
        ), 0)::float8 as orto_paid_amount_cents,
        count(distinct member_id) filter (
-         where paid_amount_cents is not null
-           and payment_description is not null
-           and upper(payment_description) <> 'ABERTO'
-           and upper(payment_description) <> 'ACORDADO'
-           and upper(payment_description) like '%PIX%'
+         where upper(payment_description) like '%PIX%'
        )::int as pix_paid_associates,
        count(*) filter (
-         where paid_amount_cents is not null
-           and payment_description is not null
-           and upper(payment_description) <> 'ABERTO'
-           and upper(payment_description) <> 'ACORDADO'
-           and upper(payment_description) like '%PIX%'
+         where upper(payment_description) like '%PIX%'
        )::int as pix_paid_installments,
        coalesce(sum(paid_amount_cents) filter (
-         where paid_amount_cents is not null
-           and payment_description is not null
-           and upper(payment_description) <> 'ABERTO'
-           and upper(payment_description) <> 'ACORDADO'
-           and upper(payment_description) like '%PIX%'
+         where upper(payment_description) like '%PIX%'
        ), 0)::float8 as pix_paid_amount_cents
-     from ranged`,
+     from paid`,
     [from, to]
   );
 
