@@ -25,11 +25,7 @@ const BodySchema = z.object({
   clinico: EntitySchema,
   orto: EntitySchema,
   combined: EntitySchema,
-  robo: z.object({
-    paidAssociateCount: z.number().finite(),
-    paidInstallmentCount: z.number().finite(),
-    paidAmountCents: z.number().finite()
-  })
+  robo: EntitySchema
 });
 
 function ascii(value: string) {
@@ -122,9 +118,7 @@ export async function POST(request: Request) {
       ...entityLines("Clinico", parsed.data.clinico),
       ...entityLines("Orto", parsed.data.orto),
       ...entityLines("Clinico + Orto", parsed.data.combined),
-      { text: "Robo - resultados via PIX", size: 13, gap: 20 },
-      { text: `Associados PIX: ${count(parsed.data.robo.paidAssociateCount)} | Pagamentos PIX: ${count(parsed.data.robo.paidInstallmentCount)}` },
-      { text: `Valor recebido via PIX: ${currency(parsed.data.robo.paidAmountCents)}` }
+      ...entityLines("Robo - resultados via PIX", parsed.data.robo)
     ];
     const pdf = buildPdf(lines);
     return new Response(pdf, {
