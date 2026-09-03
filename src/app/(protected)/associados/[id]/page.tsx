@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getMemberDetail } from "@/lib/data";
+import { getCanonicalInstallmentCampaignLinks } from "@/lib/canonical-installment-links";
 import { DataAccessError } from "@/lib/errors/data-access-error";
 import { formatCurrencyBR } from "@/lib/money";
 import { formatDateTime } from "@/lib/date-time";
@@ -51,10 +52,14 @@ export default async function MemberDetailPage({
   const { id } = await params;
 
   let detail: Awaited<ReturnType<typeof getMemberDetail>> = null;
+  let campaignLinks: Awaited<ReturnType<typeof getCanonicalInstallmentCampaignLinks>> = [];
   let errorMessage: string | null = null;
 
   try {
-    detail = await getMemberDetail(id);
+    [detail, campaignLinks] = await Promise.all([
+      getMemberDetail(id),
+      getCanonicalInstallmentCampaignLinks(id)
+    ]);
   } catch (error) {
     console.error("[MEMBER_DETAIL_LOAD_FAILED]", {
       campaignBatchMemberId: id,
@@ -165,6 +170,44 @@ export default async function MemberDetailPage({
             </article>
           </section>
 
+          {campaignLinks.length > 0 ? (
+            <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="flex flex-wrap items-end justify-between gap-2">
+                <div>
+                  <h2 className="text-lg font-semibold">Campanhas</h2>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Esta parcela financeira é única; abaixo estão apenas os vínculos de cobrança por campanha e lote.
+                  </p>
+                </div>
+                <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
+                  {campaignLinks.length} campanha(s)
+                </span>
+              </div>
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                {campaignLinks.map((campaignLink) => (
+                  <article key={campaignLink.campaignId} className="rounded-xl border border-slate-200 p-4">
+                    <Link
+                      href={`/campanhas/${campaignLink.campaignId}`}
+                      className="font-semibold text-brand hover:underline"
+                    >
+                      {campaignLink.campaignName}
+                    </Link>
+                    <div className="mt-3 space-y-2">
+                      {campaignLink.batches.map((batchLink) => (
+                        <div key={batchLink.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 text-sm">
+                          <Link href={`/lotes/${batchLink.id}`} className="font-medium text-slate-800 hover:underline">
+                            {batchLink.name}
+                          </Link>
+                          <span className="text-xs text-slate-500">{translateStatus(batchLink.processingStatus)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </section>
+          ) : null}
+
           {link.last_error ? (
             <div className="mt-6 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
               <strong>Último erro:</strong> {link.last_error}
@@ -260,7 +303,6 @@ export default async function MemberDetailPage({
               </div>
             </article>
           </section>
-
         </>
       )}
     </PageSurface>

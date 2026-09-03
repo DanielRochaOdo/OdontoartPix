@@ -121,14 +121,27 @@ export async function getLocalCampaignMetrics(
          count(*) filter (where processing_status in ('pending', 'queued', 'retrying'))::int as pending,
          count(*) filter (where processing_status = 'processing')::int as processing,
          count(*) filter (where processing_status = 'completed')::int as completed,
-         count(*) filter (where processing_status = 'error')::int as errored,
-         count(*) filter (where payment_status = 'paid')::int as paid,
-         count(*) filter (where payment_status = 'unpaid')::int as unpaid,
-         coalesce(sum(total_pending_amount_cents), 0)::float8 as total_pending_amount_cents
+         count(*) filter (where processing_status = 'error')::int as errored
        from campaign_batch_members
       where campaign_id = $1
         and deleted_at is null
       group by campaign_id
+     ), scoped_targets as (
+       select distinct target_installment_ref_id
+         from campaign_batch_members
+        where campaign_id = $1
+          and deleted_at is null
+          and target_installment_ref_id is not null
+     ), financial_metrics as (
+       select
+         count(*) filter (where canonical.payment_status = 'paid')::int as paid,
+         count(*) filter (where canonical.payment_status = 'unpaid')::int as unpaid,
+         coalesce(sum(canonical.pending_amount_cents) filter (
+           where canonical.payment_status = 'unpaid'
+         ), 0)::float8 as total_pending_amount_cents
+       from scoped_targets
+       join member_target_installments canonical
+         on canonical.id = scoped_targets.target_installment_ref_id
      ), batch_metrics as (
        select campaign_id, count(*)::int as total_batches
          from campaign_batches
@@ -158,14 +171,14 @@ export async function getLocalCampaignMetrics(
        coalesce(mm.processing, 0)::int as processing,
        coalesce(mm.completed, 0)::int as completed,
        coalesce(mm.errored, 0)::int as errored,
-       coalesce(mm.paid, 0)::int as paid,
-       coalesce(mm.unpaid, 0)::int as unpaid,
+       coalesce(fm.paid, 0)::int as paid,
+       coalesce(fm.unpaid, 0)::int as unpaid,
        greatest(coalesce(mm.total, 0) - coalesce(mm.completed, 0) - coalesce(mm.errored, 0), 0)::int as remaining,
        case
          when coalesce(mm.total, 0) = 0 then 0::float8
          else round(((coalesce(mm.completed, 0) + coalesce(mm.errored, 0))::numeric / mm.total::numeric) * 100, 2)::float8
        end as "progressPercentage",
-       coalesce(mm.total_pending_amount_cents, 0)::float8 as "totalPendingAmountCents",
+       coalesce(fm.total_pending_amount_cents, 0)::float8 as "totalPendingAmountCents",
        coalesce(jm.queued_jobs, 0)::int as "queuedJobs",
        coalesce(jm.running_jobs, 0)::int as "runningJobs",
        (coalesce(jm.queued_jobs, 0) + coalesce(jm.running_jobs, 0))::int as "activeJobs",
@@ -189,6 +202,7 @@ export async function getLocalCampaignMetrics(
        end as "calculatedStatus"
      from campaigns c
      left join member_metrics mm on mm.campaign_id = c.id
+     left join financial_metrics fm on true
      left join batch_metrics bm on bm.campaign_id = c.id
      left join job_metrics jm on jm.campaign_id = c.id
      left join latest_job lj on true

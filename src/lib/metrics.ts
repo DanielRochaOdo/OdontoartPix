@@ -183,36 +183,28 @@ export async function getDashboardMetrics(filters: DashboardMetricsFilters = {})
           where cb.deleted_at is null
             and cb.campaign_id in (select id from selected_campaigns)
             and ($2::uuid[] is null or cb.id = any($2::uuid[]))
-       ), target_rows as (
+       ), scoped_targets as (
          select
-           cbm.id as campaign_batch_member_id,
-           cbm.member_id,
-           cbm.processing_status,
-           cbm.payment_status as stored_payment_status,
-           coalesce(target.base_amount_cents, cbm.installment_amount_cents, 0)::bigint as target_amount_cents,
-           target.paid_amount_cents as target_paid_amount_cents,
-           nullif(trim(target.payment_description), '') as payment_description
+           cbm.target_installment_ref_id,
+           bool_or(cbm.processing_status = 'error') as has_error
          from campaign_batch_members cbm
-         left join lateral (
-           select mi.base_amount_cents,
-                  mi.paid_amount_cents,
-                  mi.payment_description
-             from member_installments mi
-            where mi.campaign_batch_member_id = cbm.id
-              and trim(mi.cod_parcela) = trim(cbm.target_installment_id)
-            order by mi.updated_at desc, mi.created_at desc, mi.id desc
-            limit 1
-         ) target on true
         where cbm.deleted_at is null
+          and cbm.target_installment_ref_id is not null
           and cbm.campaign_id in (select id from selected_campaigns)
           and cbm.batch_id in (select id from selected_batches)
+        group by cbm.target_installment_ref_id
        ), financial_rows as (
-         select *,
-                case
-                  when stored_payment_status in ('paid', 'unpaid', 'agreed') then stored_payment_status
-                  else null
-                end as financial_status
-           from target_rows
+         select
+           canonical.id,
+           canonical.member_id,
+           canonical.payment_status as financial_status,
+           canonical.amount_cents as target_amount_cents,
+           canonical.paid_amount_cents as target_paid_amount_cents,
+           canonical.pending_amount_cents as target_open_amount_cents,
+           scoped_targets.has_error
+         from scoped_targets
+         join member_target_installments canonical
+           on canonical.id = scoped_targets.target_installment_ref_id
        ), member_metrics as (
          select
            count(*)::int as total_cpfs,
@@ -221,8 +213,8 @@ export async function getDashboardMetrics(filters: DashboardMetricsFilters = {})
            count(*) filter (where financial_status = 'unpaid')::int as unpaid,
            count(*) filter (where financial_status = 'agreed')::int as agreed,
            count(distinct member_id) filter (where financial_status = 'agreed')::int as agreed_associates,
-           count(*) filter (where processing_status = 'error')::int as errored,
-           coalesce(sum(target_amount_cents) filter (where financial_status = 'unpaid'), 0)::float8 as pending_amount,
+           count(*) filter (where has_error)::int as errored,
+           coalesce(sum(target_open_amount_cents) filter (where financial_status = 'unpaid'), 0)::float8 as pending_amount,
            coalesce(sum(target_paid_amount_cents) filter (where financial_status = 'paid'), 0)::float8 as paid_amount,
            coalesce(sum(target_amount_cents) filter (where financial_status = 'agreed'), 0)::float8 as agreed_amount,
            coalesce(sum(target_amount_cents), 0)::float8 as total_amount
@@ -285,28 +277,24 @@ export async function getDashboardReceiptStatusMetrics(filters: DashboardMetrics
 
   try {
     const result = await dbQuery(
-      `with selected as (
+      `with scoped_targets as (
+         select distinct cbm.target_installment_ref_id
+           from campaign_batch_members cbm
+           join campaigns c on c.id = cbm.campaign_id and c.deleted_at is null
+           join campaign_batches cb on cb.id = cbm.batch_id and cb.deleted_at is null
+          where cbm.deleted_at is null
+            and cbm.target_installment_ref_id is not null
+            and ($1::uuid[] is null or cbm.campaign_id = any($1::uuid[]))
+            and ($2::uuid[] is null or cbm.batch_id = any($2::uuid[]))
+       ), selected as (
          select
-           cbm.id,
-           cbm.member_id,
-           cbm.campaign_id,
-           cbm.batch_id,
-           target.paid_amount_cents,
-           nullif(trim(target.payment_description), '') as payment_description
-         from campaign_batch_members cbm
-         join campaigns c on c.id = cbm.campaign_id and c.deleted_at is null
-         join campaign_batches cb on cb.id = cbm.batch_id and cb.deleted_at is null
-         left join lateral (
-           select mi.paid_amount_cents, mi.payment_description
-             from member_installments mi
-            where mi.campaign_batch_member_id = cbm.id
-              and trim(mi.cod_parcela) = trim(cbm.target_installment_id)
-            order by mi.updated_at desc, mi.created_at desc, mi.id desc
-            limit 1
-         ) target on true
-        where cbm.deleted_at is null
-          and ($1::uuid[] is null or cbm.campaign_id = any($1::uuid[]))
-          and ($2::uuid[] is null or cbm.batch_id = any($2::uuid[]))
+           canonical.id,
+           canonical.member_id,
+           canonical.paid_amount_cents,
+           nullif(trim(canonical.payment_description), '') as payment_description
+         from scoped_targets
+         join member_target_installments canonical
+           on canonical.id = scoped_targets.target_installment_ref_id
        )
        select
          payment_description as label,
@@ -348,34 +336,25 @@ export async function getDashboardPixPaidMetrics(filters: DashboardMetricsFilter
 
   try {
     const result = await dbQuery(
-      `with selected as (
-         select
-           cbm.campaign_id,
-           cbm.batch_id,
-           target.paid_amount_cents,
-           nullif(trim(target.payment_description), '') as payment_description
-         from campaign_batch_members cbm
-         join campaigns c on c.id = cbm.campaign_id and c.deleted_at is null
-         join campaign_batches cb on cb.id = cbm.batch_id and cb.deleted_at is null
-         left join lateral (
-           select mi.paid_amount_cents, mi.payment_description
-             from member_installments mi
-            where mi.campaign_batch_member_id = cbm.id
-              and trim(mi.cod_parcela) = trim(cbm.target_installment_id)
-            order by mi.updated_at desc, mi.created_at desc, mi.id desc
-            limit 1
-         ) target on true
-        where cbm.deleted_at is null
-          and ($1::uuid[] is null or cbm.campaign_id = any($1::uuid[]))
-          and ($2::uuid[] is null or cbm.batch_id = any($2::uuid[]))
+      `with scoped_targets as (
+         select distinct cbm.target_installment_ref_id
+           from campaign_batch_members cbm
+           join campaigns c on c.id = cbm.campaign_id and c.deleted_at is null
+           join campaign_batches cb on cb.id = cbm.batch_id and cb.deleted_at is null
+          where cbm.deleted_at is null
+            and cbm.target_installment_ref_id is not null
+            and ($1::uuid[] is null or cbm.campaign_id = any($1::uuid[]))
+            and ($2::uuid[] is null or cbm.batch_id = any($2::uuid[]))
        )
-       select coalesce(sum(paid_amount_cents), 0)::float8 as "pixPaidAmountCents"
-         from selected
-        where paid_amount_cents is not null
-          and payment_description is not null
-          and upper(payment_description) <> 'ABERTO'
-          and upper(payment_description) <> 'ACORDADO'
-          and upper(payment_description) like '%PIX%'`,
+       select coalesce(sum(canonical.paid_amount_cents), 0)::float8 as "pixPaidAmountCents"
+         from scoped_targets
+         join member_target_installments canonical
+           on canonical.id = scoped_targets.target_installment_ref_id
+        where canonical.paid_amount_cents is not null
+          and canonical.payment_description is not null
+          and upper(canonical.payment_description) <> 'ABERTO'
+          and upper(canonical.payment_description) <> 'ACORDADO'
+          and upper(canonical.payment_description) like '%PIX%'`,
       [campaignIds, batchIds]
     );
 

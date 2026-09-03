@@ -54,12 +54,13 @@ describe("agreed financial state", () => {
   it("separa agreed de pago, pendente e recebimentos do dashboard", () => {
     const metrics = source("src/lib/metrics.ts");
 
-    expect(metrics).toContain("stored_payment_status in ('paid', 'unpaid', 'agreed')");
+    expect(metrics).toContain("canonical.payment_status as financial_status");
     expect(metrics).toContain("where financial_status = 'agreed'");
     expect(metrics).toContain('as "totalAgreedAmountCents"');
-    expect(metrics).toContain("sum(target_amount_cents) filter (where financial_status = 'unpaid')");
+    expect(metrics).toContain("sum(target_open_amount_cents) filter (where financial_status = 'unpaid')");
     expect(metrics).toContain("sum(target_paid_amount_cents) filter (where financial_status = 'paid')");
     expect(metrics).toContain("upper(payment_description) <> 'ACORDADO'");
+    expect(metrics).toContain("group by cbm.target_installment_ref_id");
   });
 
   it("substitui o card Aproveitamento por Acordado mantendo aproveitamento no grafico", () => {

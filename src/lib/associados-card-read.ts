@@ -54,48 +54,66 @@ export async function getAssociadosCardList(filters: {
       batch_name: string;
       campaign_name: string;
     }>(
-      `select cbm.id,
-              cbm.campaign_id,
-              cbm.batch_id,
-              cbm.target_installment_id,
-              cbm.due_date_text,
-              cbm.processing_status,
-              cbm.payment_status,
-              cbm.installment_amount_cents::float8 as installment_amount_cents,
-              cbm.payment_amount_cents::float8 as payment_amount_cents,
-              cbm.total_pending_amount_cents::float8 as total_pending_amount_cents,
-              cbm.last_error,
+      `with scoped_links as (
+         select cbm.*,
+                b.name as batch_name,
+                c.name as campaign_name
+           from campaign_batch_members cbm
+           join campaign_batches b
+             on b.id = cbm.batch_id
+            and b.deleted_at is null
+           join campaigns c
+             on c.id = cbm.campaign_id
+            and c.deleted_at is null
+          where cbm.deleted_at is null
+            and cbm.target_installment_ref_id is not null
+            and (cardinality($1::uuid[]) = 0 or cbm.campaign_id = any($1::uuid[]))
+            and (cardinality($2::uuid[]) = 0 or cbm.batch_id = any($2::uuid[]))
+            and ($3::text is null or cbm.processing_status = $3)
+       ), grouped as (
+         select
+           target_installment_ref_id,
+           (array_agg(id order by created_at desc, id desc))[1] as representative_id,
+           (array_agg(campaign_id order by created_at desc, id desc))[1] as representative_campaign_id,
+           (array_agg(batch_id order by created_at desc, id desc))[1] as representative_batch_id,
+           case
+             when bool_or(processing_status = 'error') then 'error'
+             when bool_or(processing_status = 'processing') then 'processing'
+             when bool_or(processing_status = 'retrying') then 'retrying'
+             when bool_and(processing_status = 'completed') then 'completed'
+             else 'pending'
+           end as aggregate_processing_status,
+           (array_remove(array_agg(last_error order by updated_at desc), null))[1] as aggregate_last_error,
+           string_agg(distinct campaign_name, ', ' order by campaign_name) as campaign_names,
+           string_agg(distinct batch_name, ', ' order by batch_name) as batch_names
+         from scoped_links
+         group by target_installment_ref_id
+       )
+       select grouped.representative_id as id,
+              grouped.representative_campaign_id as campaign_id,
+              grouped.representative_batch_id as batch_id,
+              canonical.external_installment_code as target_installment_id,
+              canonical.due_date_text,
+              grouped.aggregate_processing_status as processing_status,
+              canonical.payment_status,
+              canonical.payment_description,
+              canonical.payment_date_text,
+              canonical.amount_cents::float8 as installment_amount_cents,
+              canonical.paid_amount_cents::float8 as payment_amount_cents,
+              canonical.pending_amount_cents::float8 as total_pending_amount_cents,
+              grouped.aggregate_last_error as last_error,
               m.cpf,
               m.name as member_name,
               m.external_user_code,
-              b.name as batch_name,
-              c.name as campaign_name,
-              target.payment_description,
-              target.payment_date_text
-         from campaign_batch_members cbm
+              grouped.batch_names as batch_name,
+              grouped.campaign_names as campaign_name
+         from grouped
+         join member_target_installments canonical
+           on canonical.id = grouped.target_installment_ref_id
          join members m
-           on m.id = cbm.member_id
+           on m.id = canonical.member_id
           and m.deleted_at is null
-         join campaign_batches b
-           on b.id = cbm.batch_id
-          and b.deleted_at is null
-         join campaigns c
-           on c.id = cbm.campaign_id
-          and c.deleted_at is null
-         left join lateral (
-           select mi.payment_description,
-                  mi.payment_date_text
-             from member_installments mi
-            where mi.campaign_batch_member_id = cbm.id
-              and trim(mi.cod_parcela) = trim(cbm.target_installment_id)
-            order by mi.updated_at desc, mi.created_at desc, mi.id desc
-            limit 1
-         ) target on true
-        where cbm.deleted_at is null
-          and (cardinality($1::uuid[]) = 0 or cbm.campaign_id = any($1::uuid[]))
-          and (cardinality($2::uuid[]) = 0 or cbm.batch_id = any($2::uuid[]))
-          and ($3::text is null or cbm.processing_status = $3)
-        order by cbm.created_at desc, cbm.id asc`,
+        order by canonical.updated_at desc, canonical.id asc`,
       [campaignIds, batchIds, status]
     );
 

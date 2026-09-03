@@ -55,7 +55,7 @@ export function CampaignImportForm({
     setStatus("");
 
     try {
-      const response = await fetch("/api/campanhas/importar", {
+      const response = await fetch("/api/campanhas/importar-v2", {
         method: "POST",
         body: data,
         headers: { Accept: "application/json" }
@@ -72,7 +72,7 @@ export function CampaignImportForm({
       const skipped = json.data?.summary?.skipped_duplicate_records ?? 0;
 
       setStatus(
-        `Base importada: ${imported} registros aguardando processamento.${invalid ? ` ${invalid} registro(s) foram ignorados.` : ""}${skipped ? ` ${skipped} parcela(s) foram ignoradas por ja estarem vinculadas a outra campanha.` : ""}`
+        `Base importada: ${imported} registros aguardando processamento.${invalid ? ` ${invalid} registro(s) foram ignorados.` : ""}${skipped ? ` ${skipped} parcela(s) ja existiam neste lote e foram ignoradas.` : ""}`
       );
       form.reset();
       setSelectedFile("");
