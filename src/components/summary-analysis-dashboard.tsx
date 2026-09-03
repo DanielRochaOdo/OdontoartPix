@@ -9,7 +9,7 @@ import type {
 } from "@/lib/summary-analysis";
 
 type EntityKey = "clinico" | "orto" | "robo" | "combined";
-type ManualEntityKey = "clinico" | "orto";
+type ManualEntityKey = Exclude<EntityKey, "combined">;
 
 type ManualInputs = Record<ManualEntityKey, {
   dispatchCount: string;
@@ -26,10 +26,13 @@ type CalculatedEntity = SummaryAnalysisEntityMetrics & {
   netAmountCents: number;
 };
 
-const EMPTY_INPUTS: ManualInputs = {
-  clinico: { dispatchCount: "", dispatchValue: "" },
-  orto: { dispatchCount: "", dispatchValue: "" }
-};
+function emptyInputs(): ManualInputs {
+  return {
+    clinico: { dispatchCount: "", dispatchValue: "" },
+    orto: { dispatchCount: "", dispatchValue: "" },
+    robo: { dispatchCount: "", dispatchValue: "" }
+  };
+}
 
 function parseDispatchCount(value: string) {
   const digits = value.replace(/\D/g, "");
@@ -51,6 +54,12 @@ function parseMoneyInput(value: string) {
   }
   const number = Number(normalized.replace(/[^0-9.-]/g, ""));
   return Number.isFinite(number) && number >= 0 ? Math.round(number * 100) : 0;
+}
+
+function maskMoneyInput(value: string) {
+  const digits = value.replace(/\D/g, "");
+  if (!digits) return "";
+  return formatCurrencyBR(Number(digits));
 }
 
 function percent(numerator: number, denominator: number) {
@@ -149,7 +158,7 @@ export function SummaryAnalysisDashboard({
   const [to, setTo] = useState(initialTo);
   const [metrics, setMetrics] = useState(initialMetrics);
   const [activeEntity, setActiveEntity] = useState<EntityKey>("clinico");
-  const [manual, setManual] = useState<ManualInputs>(EMPTY_INPUTS);
+  const [manual, setManual] = useState<ManualInputs>(() => emptyInputs());
   const [loading, setLoading] = useState(false);
   const [exportingPdf, setExportingPdf] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -161,6 +170,10 @@ export function SummaryAnalysisDashboard({
   const orto = useMemo(
     () => entityFromInputs(metrics.orto, manual.orto, dispatchUnitCostCents),
     [dispatchUnitCostCents, manual.orto, metrics.orto]
+  );
+  const robo = useMemo(
+    () => entityFromInputs(metrics.robo, manual.robo, dispatchUnitCostCents),
+    [dispatchUnitCostCents, manual.robo, metrics.robo]
   );
   const combined = useMemo<CalculatedEntity>(() => {
     const dispatchCount = clinico.dispatchCount + orto.dispatchCount;
@@ -183,11 +196,18 @@ export function SummaryAnalysisDashboard({
     };
   }, [clinico, orto]);
 
+  const activeManualEntity: ManualEntityKey | null = activeEntity === "combined" ? null : activeEntity;
+  const activeCalculated =
+    activeEntity === "clinico"
+      ? clinico
+      : activeEntity === "orto"
+        ? orto
+        : activeEntity === "robo"
+          ? robo
+          : combined;
+
   function resetManualInputs() {
-    setManual({
-      clinico: { dispatchCount: "", dispatchValue: "" },
-      orto: { dispatchCount: "", dispatchValue: "" }
-    });
+    setManual(emptyInputs());
   }
 
   async function loadRange(nextFrom: string, nextTo: string) {
@@ -235,9 +255,10 @@ export function SummaryAnalysisDashboard({
   }
 
   function updateManual(entity: ManualEntityKey, field: "dispatchCount" | "dispatchValue", value: string) {
+    const normalized = field === "dispatchValue" ? maskMoneyInput(value) : value.replace(/\D/g, "");
     setManual((current) => ({
       ...current,
-      [entity]: { ...current[entity], [field]: value }
+      [entity]: { ...current[entity], [field]: normalized }
     }));
   }
 
@@ -247,16 +268,16 @@ export function SummaryAnalysisDashboard({
       ["Custo unitário por disparo", formatCurrencyBR(dispatchUnitCostCents)],
       [],
       ["Indicador", "Clínico", "Orto", "Clínico + Orto", "Robô"],
-      ["Qtde disparos", clinico.dispatchCount, orto.dispatchCount, combined.dispatchCount, "-"],
-      ["Valor disparos", formatCurrencyBR(clinico.dispatchValueCents), formatCurrencyBR(orto.dispatchValueCents), formatCurrencyBR(combined.dispatchValueCents), "-"],
-      ["Custo ação", formatCurrencyBR(clinico.actionCostCents), formatCurrencyBR(orto.actionCostCents), formatCurrencyBR(combined.actionCostCents), "-"],
-      ["Qtde assoc. pagos", clinico.paidAssociateCount, orto.paidAssociateCount, combined.paidAssociateCount, metrics.robo.paidAssociateCount],
-      ["% assoc. pagos", formatPercent(clinico.paidAssociatePercentage), formatPercent(orto.paidAssociatePercentage), formatPercent(combined.paidAssociatePercentage), "-"],
-      ["Qtde parcelas pagas", clinico.paidInstallmentCount, orto.paidInstallmentCount, combined.paidInstallmentCount, metrics.robo.paidInstallmentCount],
-      ["% parcelas pagas", formatPercent(clinico.paidInstallmentPercentage), formatPercent(orto.paidInstallmentPercentage), formatPercent(combined.paidInstallmentPercentage), "-"],
-      ["Pago", formatCurrencyBR(clinico.paidAmountCents), formatCurrencyBR(orto.paidAmountCents), formatCurrencyBR(combined.paidAmountCents), formatCurrencyBR(metrics.robo.paidAmountCents)],
-      ["% pago", formatPercent(clinico.paidPercentage), formatPercent(orto.paidPercentage), formatPercent(combined.paidPercentage), "-"],
-      ["Líquido", formatCurrencyBR(clinico.netAmountCents), formatCurrencyBR(orto.netAmountCents), formatCurrencyBR(combined.netAmountCents), "-"]
+      ["Qtde disparos", clinico.dispatchCount, orto.dispatchCount, combined.dispatchCount, robo.dispatchCount],
+      ["Valor disparos", formatCurrencyBR(clinico.dispatchValueCents), formatCurrencyBR(orto.dispatchValueCents), formatCurrencyBR(combined.dispatchValueCents), formatCurrencyBR(robo.dispatchValueCents)],
+      ["Custo ação", formatCurrencyBR(clinico.actionCostCents), formatCurrencyBR(orto.actionCostCents), formatCurrencyBR(combined.actionCostCents), formatCurrencyBR(robo.actionCostCents)],
+      ["Qtde assoc. pagos", clinico.paidAssociateCount, orto.paidAssociateCount, combined.paidAssociateCount, robo.paidAssociateCount],
+      ["% assoc. pagos", formatPercent(clinico.paidAssociatePercentage), formatPercent(orto.paidAssociatePercentage), formatPercent(combined.paidAssociatePercentage), formatPercent(robo.paidAssociatePercentage)],
+      ["Qtde parcelas pagas", clinico.paidInstallmentCount, orto.paidInstallmentCount, combined.paidInstallmentCount, robo.paidInstallmentCount],
+      ["% parcelas pagas", formatPercent(clinico.paidInstallmentPercentage), formatPercent(orto.paidInstallmentPercentage), formatPercent(combined.paidInstallmentPercentage), formatPercent(robo.paidInstallmentPercentage)],
+      ["Pago", formatCurrencyBR(clinico.paidAmountCents), formatCurrencyBR(orto.paidAmountCents), formatCurrencyBR(combined.paidAmountCents), formatCurrencyBR(robo.paidAmountCents)],
+      ["% pago", formatPercent(clinico.paidPercentage), formatPercent(orto.paidPercentage), formatPercent(combined.paidPercentage), formatPercent(robo.paidPercentage)],
+      ["Líquido", formatCurrencyBR(clinico.netAmountCents), formatCurrencyBR(orto.netAmountCents), formatCurrencyBR(combined.netAmountCents), formatCurrencyBR(robo.netAmountCents)]
     ];
     const worksheet = XLSX.utils.aoa_to_sheet(rows);
     worksheet["!cols"] = [{ wch: 24 }, { wch: 22 }, { wch: 22 }, { wch: 22 }, { wch: 22 }];
@@ -279,7 +300,7 @@ export function SummaryAnalysisDashboard({
           clinico,
           orto,
           combined,
-          robo: metrics.robo
+          robo
         })
       });
       if (!response.ok) {
@@ -307,7 +328,16 @@ export function SummaryAnalysisDashboard({
     { key: "robo", label: "Robô" },
     { key: "combined", label: "Clínico + Orto" }
   ];
-  const activeCalculated = activeEntity === "clinico" ? clinico : activeEntity === "orto" ? orto : combined;
+
+  const activeTitle =
+    activeEntity === "clinico"
+      ? "Clínico"
+      : activeEntity === "orto"
+        ? "Orto"
+        : activeEntity === "robo"
+          ? "Robô"
+          : "Consolidado Clínico + Orto";
+  const isRobot = activeEntity === "robo";
 
   return (
     <>
@@ -354,77 +384,87 @@ export function SummaryAnalysisDashboard({
           </div>
 
           <div className="p-4 lg:p-5">
-            {activeEntity === "robo" ? (
+            {activeManualEntity ? (
               <>
-                <div className="rounded-xl border border-brand bg-brand-soft p-4">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-wide text-brand">Robô</p>
-                      <h2 className="mt-1 text-lg font-semibold text-primary">Resultados via PIX</h2>
+                {isRobot ? (
+                  <div className="mb-4 rounded-xl border border-brand bg-brand-soft p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-brand">Robô</p>
+                        <h2 className="mt-1 text-lg font-semibold text-primary">Resultados via PIX</h2>
+                      </div>
+                      <span className="rounded-full border border-brand bg-surface-primary px-3 py-1 text-xs font-semibold text-brand">Captura automática</span>
                     </div>
-                    <span className="rounded-full border border-brand bg-surface-primary px-3 py-1 text-xs font-semibold text-brand">Captura automática</span>
+                    <p className="mt-2 text-sm text-secondary">Considera somente pagamentos com DataPagamento dentro do período e DescricaoRecebimento contendo PIX.</p>
                   </div>
-                  <p className="mt-2 text-sm text-secondary">São considerados os pagamentos do período cuja DescriçãoRecebimento contém PIX, usando a mesma regra do Dashboard.</p>
-                </div>
-                <div className="mt-4 grid gap-3 sm:grid-cols-3">
-                  <MetricCard label="Assoc. pagos via PIX" value={formatCount(metrics.robo.paidAssociateCount)} />
-                  <MetricCard label="Pagamentos PIX" value={formatCount(metrics.robo.paidInstallmentCount)} />
-                  <MetricCard label="Valor recebido via PIX" value={formatCurrencyBR(metrics.robo.paidAmountCents)} highlight />
-                </div>
-              </>
-            ) : (
-              <>
+                ) : null}
+
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-wide text-muted">Entradas</p>
-                  <h2 className="mt-1 text-lg font-semibold text-primary">
-                    {activeEntity === "combined" ? "Consolidado Clínico + Orto" : activeEntity === "clinico" ? "Clínico" : "Orto"}
-                  </h2>
+                  <h2 className="mt-1 text-lg font-semibold text-primary">{activeTitle}</h2>
                   <p className="mt-1 text-sm text-secondary">
-                    {activeEntity === "combined"
-                      ? "Valores absolutos são somados e os percentuais são recalculados sobre o consolidado."
-                      : "Informe quantidade e valor dos disparos. Os demais indicadores vêm automaticamente dos pagamentos no período."}
+                    {isRobot
+                      ? "Informe quantidade e valor dos disparos do Robô. Os resultados financeiros são capturados automaticamente pelos recebimentos PIX no período."
+                      : "Informe quantidade e valor dos disparos. Os resultados pagos usam DataPagamento e DescricaoRecebimento; o Tipo de Parcela define Clínico ou Orto."}
                   </p>
                 </div>
 
                 <div className="mt-4 grid gap-3 md:grid-cols-3">
-                  {activeEntity === "combined" ? (
-                    <>
-                      <MetricCard label="Qtde disparos" value={formatCount(combined.dispatchCount)} />
-                      <MetricCard label="Valor disparos" value={formatCurrencyBR(combined.dispatchValueCents)} />
-                      <MetricCard label="Custo ação" value={formatCurrencyBR(combined.actionCostCents)} />
-                    </>
-                  ) : (
-                    <>
-                      <label className="text-xs font-medium text-secondary">
-                        Qtde disparos
-                        <input inputMode="numeric" value={manual[activeEntity].dispatchCount} onChange={(event) => updateManual(activeEntity, "dispatchCount", event.target.value)} placeholder="0" className="mt-1 w-full rounded-lg border border-default bg-surface-secondary px-3 py-3 text-base font-semibold text-primary outline-none focus:border-focus focus:ring-2 focus:ring-brand" />
-                      </label>
-                      <label className="text-xs font-medium text-secondary">
-                        Valor disparos
-                        <input inputMode="decimal" value={manual[activeEntity].dispatchValue} onChange={(event) => updateManual(activeEntity, "dispatchValue", event.target.value)} placeholder="R$ 0,00" className="mt-1 w-full rounded-lg border border-default bg-surface-secondary px-3 py-3 text-base font-semibold text-primary outline-none focus:border-focus focus:ring-2 focus:ring-brand" />
-                      </label>
-                      <article className="rounded-xl border border-success bg-success-soft p-3">
-                        <p className="text-xs font-medium text-secondary">Custo ação</p>
-                        <p className="mt-1 text-xl font-semibold text-success">{formatCurrencyBR(activeCalculated.actionCostCents)}</p>
-                        <p className="mt-1 text-[11px] text-secondary">{formatCount(activeCalculated.dispatchCount)} × {formatCurrencyBR(dispatchUnitCostCents)}</p>
-                      </article>
-                    </>
-                  )}
+                  <label className="text-xs font-medium text-secondary">
+                    Qtde disparos
+                    <input inputMode="numeric" value={manual[activeManualEntity].dispatchCount} onChange={(event) => updateManual(activeManualEntity, "dispatchCount", event.target.value)} placeholder="0" className="mt-1 w-full rounded-lg border border-default bg-surface-secondary px-3 py-3 text-base font-semibold text-primary outline-none focus:border-focus focus:ring-2 focus:ring-brand" />
+                  </label>
+                  <label className="text-xs font-medium text-secondary">
+                    Valor disparos
+                    <input inputMode="numeric" value={manual[activeManualEntity].dispatchValue} onChange={(event) => updateManual(activeManualEntity, "dispatchValue", event.target.value)} placeholder="R$ 0,00" className="mt-1 w-full rounded-lg border border-default bg-surface-secondary px-3 py-3 text-base font-semibold text-primary outline-none focus:border-focus focus:ring-2 focus:ring-brand" />
+                  </label>
+                  <article className="rounded-xl border border-success bg-success-soft p-3">
+                    <p className="text-xs font-medium text-secondary">Custo ação</p>
+                    <p className="mt-1 text-xl font-semibold text-success">{formatCurrencyBR(activeCalculated.actionCostCents)}</p>
+                    <p className="mt-1 text-[11px] text-secondary">{formatCount(activeCalculated.dispatchCount)} × {formatCurrencyBR(dispatchUnitCostCents)}</p>
+                  </article>
                 </div>
                 <p className="mt-2 text-xs text-muted">Custo unitário por disparo: {formatCurrencyBR(dispatchUnitCostCents)} (definido em Configurações).</p>
 
                 <div className="mt-6 border-t border-subtle pt-5">
                   <p className="text-xs font-semibold uppercase tracking-wide text-muted">Resultados</p>
                   <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                    <MetricCard label="Qtde assoc. pagos" value={formatCount(activeCalculated.paidAssociateCount)} />
+                    <MetricCard label={isRobot ? "Assoc. pagos via PIX" : "Qtde assoc. pagos"} value={formatCount(activeCalculated.paidAssociateCount)} />
                     <MetricCard label="% assoc. pagos" value={formatPercent(activeCalculated.paidAssociatePercentage)} />
-                    <MetricCard label="Qtde parcelas pagas" value={formatCount(activeCalculated.paidInstallmentCount)} />
+                    <MetricCard label={isRobot ? "Pagamentos PIX" : "Qtde parcelas pagas"} value={formatCount(activeCalculated.paidInstallmentCount)} />
                     <MetricCard label="% parcelas pagas" value={formatPercent(activeCalculated.paidInstallmentPercentage)} />
-                    <MetricCard label="Pago" value={formatCurrencyBR(activeCalculated.paidAmountCents)} />
+                    <MetricCard label={isRobot ? "Valor recebido via PIX" : "Pago"} value={formatCurrencyBR(activeCalculated.paidAmountCents)} />
                     <MetricCard label="% pago" value={formatPercent(activeCalculated.paidPercentage)} />
                   </div>
                   <div className="mt-3">
                     <MetricCard label="Líquido" value={formatCurrencyBR(activeCalculated.netAmountCents)} highlight />
+                  </div>
+                </div>
+              </>
+            ) : (
+              <>
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted">Consolidado</p>
+                  <h2 className="mt-1 text-lg font-semibold text-primary">Consolidado Clínico + Orto</h2>
+                  <p className="mt-1 text-sm text-secondary">Valores absolutos são somados e os percentuais são recalculados sobre o consolidado.</p>
+                </div>
+                <div className="mt-4 grid gap-3 md:grid-cols-3">
+                  <MetricCard label="Qtde disparos" value={formatCount(combined.dispatchCount)} />
+                  <MetricCard label="Valor disparos" value={formatCurrencyBR(combined.dispatchValueCents)} />
+                  <MetricCard label="Custo ação" value={formatCurrencyBR(combined.actionCostCents)} />
+                </div>
+                <div className="mt-6 border-t border-subtle pt-5">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted">Resultados</p>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                    <MetricCard label="Qtde assoc. pagos" value={formatCount(combined.paidAssociateCount)} />
+                    <MetricCard label="% assoc. pagos" value={formatPercent(combined.paidAssociatePercentage)} />
+                    <MetricCard label="Qtde parcelas pagas" value={formatCount(combined.paidInstallmentCount)} />
+                    <MetricCard label="% parcelas pagas" value={formatPercent(combined.paidInstallmentPercentage)} />
+                    <MetricCard label="Pago" value={formatCurrencyBR(combined.paidAmountCents)} />
+                    <MetricCard label="% pago" value={formatPercent(combined.paidPercentage)} />
+                  </div>
+                  <div className="mt-3">
+                    <MetricCard label="Líquido" value={formatCurrencyBR(combined.netAmountCents)} highlight />
                   </div>
                 </div>
               </>
@@ -447,9 +487,9 @@ export function SummaryAnalysisDashboard({
               { label: "Líquido", value: formatCurrencyBR(orto.netAmountCents), positive: orto.netAmountCents >= 0 }
             ]} />
             <SummaryCard title="Robô" badge="Resultados via PIX" rows={[
-              { label: "Pagamentos PIX", value: formatCount(metrics.robo.paidInstallmentCount) },
-              { label: "Associados PIX", value: formatCount(metrics.robo.paidAssociateCount) },
-              { label: "Recebido via PIX", value: formatCurrencyBR(metrics.robo.paidAmountCents), positive: true }
+              { label: "Disparos", value: formatCount(robo.dispatchCount) },
+              { label: "Recebido via PIX", value: formatCurrencyBR(robo.paidAmountCents) },
+              { label: "Líquido", value: formatCurrencyBR(robo.netAmountCents), positive: robo.netAmountCents >= 0 }
             ]} />
             <SummaryCard title="Clínico + Orto" badge="Consolidado automático" rows={[
               { label: "Disparos", value: formatCount(combined.dispatchCount) },
