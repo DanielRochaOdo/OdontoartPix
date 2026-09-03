@@ -47,4 +47,27 @@ describe("installment type import", () => {
     expect(importForm).toContain("Clinico");
     expect(importForm).toContain("Orto");
   });
+
+  it("inclui Tipo Parcela no modelo XLSX e orienta o preenchimento manual", () => {
+    const modelRoute = source("src/app/api/campanhas/modelo/route.ts");
+
+    expect(modelRoute).toContain('"Tipo Parcela"');
+    expect(modelRoute).toContain('"!autofilter"] = { ref: "A1:G1" }');
+    expect(modelRoute).toContain("Valor da Parcela e Tipo Parcela sao obrigatorios");
+    expect(modelRoute).toContain("Clinico ou Orto");
+  });
+
+  it("le o tipo da parcela canonica e exibe entre Tipo de Pagto e Data de Pagamento", () => {
+    const readModel = source("src/lib/associados-card-read.ts");
+    const cards = source("src/components/associados-card-list.tsx");
+
+    expect(readModel).toContain("canonical.installment_type");
+    expect(readModel).toContain("installment_type: row.installment_type");
+    expect(cards).toContain('installmentType: installmentTypeLabel(item.installment_type)');
+    expect(cards).toContain('<Field label="Tipo de Pagto">{row.receiptDescription}</Field>');
+    expect(cards).toContain('<Field label="Tipo Parcela">{row.installmentType}</Field>');
+    expect(cards).toContain('<Field label="Data de Pagamento">{row.paymentDate}</Field>');
+    expect(cards.indexOf('label="Tipo de Pagto"')).toBeLessThan(cards.indexOf('label="Tipo Parcela"'));
+    expect(cards.indexOf('label="Tipo Parcela"')).toBeLessThan(cards.indexOf('label="Data de Pagamento"'));
+  });
 });
