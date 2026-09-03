@@ -184,7 +184,7 @@ create unique index if not exists idx_cbm_unique_batch_canonical_installment
   on public.campaign_batch_members(batch_id, target_installment_ref_id)
   where deleted_at is null and target_installment_ref_id is not null;
 
--- Vincula automaticamente novos registros ao canonico sem sobrescrever verdade ERP ja conhecida.
+-- Vincula automaticamente novos registros ao canonico sem sobrescrever verdade ja conhecida.
 create or replace function public.bind_campaign_batch_member_target_v1()
 returns trigger
 language plpgsql
@@ -230,11 +230,6 @@ begin
   on conflict (member_id, external_installment_code)
   do update set
     due_date_text = coalesce(public.member_target_installments.due_date_text, excluded.due_date_text),
-    amount_cents = case
-      when public.member_target_installments.last_erp_status_at is null
-        then greatest(public.member_target_installments.amount_cents, excluded.amount_cents)
-      else public.member_target_installments.amount_cents
-    end,
     updated_at = now()
   returning * into v_target;
 
@@ -340,7 +335,7 @@ declare
   v_payment_date text;
   v_paid_amount bigint;
   v_base_amount bigint;
-  v_updated boolean := false;
+  v_updated_count integer := 0;
 begin
   if pg_trigger_depth() > 1 or new.target_installment_ref_id is null then
     return new;
@@ -396,8 +391,8 @@ begin
       or v_observed_at >= target.financial_observed_at
     );
 
-  get diagnostics v_updated = row_count;
-  if v_updated then
+  get diagnostics v_updated_count = row_count;
+  if v_updated_count > 0 then
     perform public.sync_target_installment_links_v1(new.target_installment_ref_id);
   end if;
 
