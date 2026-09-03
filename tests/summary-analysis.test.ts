@@ -32,12 +32,13 @@ describe("Resumo e Analise", () => {
   it("reutiliza a regra operacional de PIX usada no Dashboard", () => {
     const metrics = source("src/lib/summary-analysis.ts");
     const dashboardMetrics = source("src/lib/metrics.ts");
-    const pixRule = "upper(payment_description) like '%PIX%'";
 
-    expect(metrics).toContain(pixRule);
+    expect(metrics).toContain("upper(payment_description) like '%PIX%'");
     expect(metrics).toContain("upper(payment_description) <> 'ABERTO'");
     expect(metrics).toContain("upper(payment_description) <> 'ACORDADO'");
-    expect(dashboardMetrics).toContain(pixRule);
+    expect(dashboardMetrics).toContain("upper(canonical.payment_description) like '%PIX%'");
+    expect(dashboardMetrics).toContain("upper(canonical.payment_description) <> 'ABERTO'");
+    expect(dashboardMetrics).toContain("upper(canonical.payment_description) <> 'ACORDADO'");
   });
 
   it("oferece exportacao PDF e XLSX sem vinculo manual com campanhas", () => {
