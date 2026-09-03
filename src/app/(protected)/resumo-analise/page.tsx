@@ -13,7 +13,7 @@ function currentDateParts() {
     month: "2-digit",
     day: "2-digit"
   }).formatToParts(new Date());
-  const read = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? "";
+  const read = (type: "year" | "month" | "day") => parts.find((part) => part.type === type)?.value ?? "";
   return { year: read("year"), month: read("month"), day: read("day") };
 }
 
