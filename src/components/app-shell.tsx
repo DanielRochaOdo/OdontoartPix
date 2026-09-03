@@ -53,6 +53,15 @@ function LayersIcon({ className = "h-5 w-5" }: { className?: string }) {
   );
 }
 
+function AnalysisIcon({ className = "h-5 w-5" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden="true">
+      <path d="M5 19V9M12 19V5M19 19v-7" className="stroke-current" strokeWidth="1.8" strokeLinecap="round" />
+      <path d="M3 19.5h18" className="stroke-current" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 function SettingsIcon({ className = "h-5 w-5" }: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden="true">
@@ -66,6 +75,7 @@ const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: DashboardIcon },
   { href: "/campanhas", label: "Campanhas", icon: CampaignsIcon },
   { href: "/associados", label: "Associados", icon: MembersIcon },
+  { href: "/resumo-analise", label: "Resumo e Análise", icon: AnalysisIcon },
   { href: "/configuracoes", label: "Configurações", icon: SettingsIcon }
 ];
 
