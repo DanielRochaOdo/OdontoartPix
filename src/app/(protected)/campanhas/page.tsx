@@ -49,6 +49,11 @@ export default async function CampaignsPage() {
       <section className="mt-7 grid min-w-0 gap-5 xl:grid-cols-[minmax(300px,0.52fr)_minmax(0,1.48fr)]">
         <CampaignImportForm
           campaigns={campaignOptions.map((campaign) => ({ id: campaign.id, name: campaign.name }))}
+          batches={searchBatches.map((batch) => ({
+            id: batch.id,
+            campaignId: batch.campaign_id,
+            name: batch.name
+          }))}
         />
 
         <article className="min-w-0 overflow-hidden rounded-2xl border border-default bg-surface-primary p-4 shadow-sm lg:p-5">
