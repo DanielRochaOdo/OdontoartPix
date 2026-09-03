@@ -3,6 +3,8 @@ import { requireApiUser } from "@/lib/auth/require-api-user";
 import { fail } from "@/lib/http/api-response";
 import { validateSummaryAnalysisRange } from "@/lib/summary-analysis";
 
+export const runtime = "nodejs";
+
 const EntitySchema = z.object({
   dispatchCount: z.number().finite(),
   dispatchValueCents: z.number().finite(),
@@ -92,7 +94,7 @@ function buildPdf(lines: Array<{ text: string; size?: number; gap?: number }>) {
     pdf += `${String(offsets[index]).padStart(10, "0")} 00000 n \n`;
   }
   pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
-  return new Uint8Array(Buffer.from(pdf, "ascii"));
+  return Buffer.from(pdf, "ascii");
 }
 
 function entityLines(title: string, entity: z.infer<typeof EntitySchema>) {
@@ -105,7 +107,7 @@ function entityLines(title: string, entity: z.infer<typeof EntitySchema>) {
 }
 
 export async function POST(request: Request) {
-  const auth = await requireApiUser(["administrador", "operador"]);
+  const auth = await requireApiUser(["administrador", "operador", "visualizador"]);
   if (!auth.ok) return auth.response;
 
   const parsed = BodySchema.safeParse(await request.json().catch(() => null));
