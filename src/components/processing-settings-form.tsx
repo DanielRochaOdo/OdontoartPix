@@ -21,12 +21,12 @@ const labels: Record<ProcessingPresetKey, string> = {
 };
 
 const descriptions: Record<ProcessingPresetKey, string> = {
-  conservador: "Menor pressao no ERP, mais tolerancia operacional e menor throughput.",
-  mediano: "Antigo perfil agressivo, agora usado como opcao intermediaria entre seguranca e velocidade.",
-  agressivo: "Perfil de alta performance validado em producao, com bloco 60 e concorrencia ERP 50."
+  conservador: "Menor pressão no ERP e operação mais cautelosa.",
+  mediano: "Equilíbrio entre segurança operacional e velocidade.",
+  agressivo: "Perfil de alta performance validado em produção."
 };
 
-function rowsForConfig(config: ProcessingConfig) {
+function technicalRows(config: ProcessingConfig) {
   return [
     ["Workers", String(config.workerCount)],
     ["Block size", String(config.claimBatchSize)],
@@ -65,29 +65,23 @@ export function ProcessingSettingsForm({
       setMessage("Selecione um perfil antes de aplicar.");
       return;
     }
-
     setBusy(true);
     setMessage(null);
-
     try {
       const response = await fetch("/api/configuracoes/processamento", {
         method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json"
-        },
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
         body: JSON.stringify({ presetKey: selected, scheduledIntervalMinutes: interval })
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok || !payload?.success) {
-        setMessage(payload?.error?.message ?? "Nao foi possivel salvar a configuracao.");
+        setMessage(payload?.error?.message ?? "Não foi possível salvar a configuração.");
         return;
       }
-
-      setMessage(payload?.message ?? "Configuracao atualizada.");
+      setMessage(payload?.message ?? "Configuração atualizada.");
       router.refresh();
     } catch {
-      setMessage("Falha de comunicacao ao salvar configuracoes.");
+      setMessage("Falha de comunicação ao salvar configurações.");
     } finally {
       setBusy(false);
     }
@@ -97,14 +91,10 @@ export function ProcessingSettingsForm({
     const nextEnabled = !automaticEnabled;
     setAutomaticBusy(true);
     setMessage(null);
-
     try {
       const response = await fetch("/api/configuracoes/processamento", {
         method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json"
-        },
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
         body: JSON.stringify({
           automaticSyncEnabled: nextEnabled,
           scheduledIntervalMinutes: interval
@@ -112,134 +102,105 @@ export function ProcessingSettingsForm({
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok || !payload?.success) {
-        setMessage(
-          payload?.error?.message ?? "Nao foi possivel alterar a sincronizacao automatica."
-        );
+        setMessage(payload?.error?.message ?? "Não foi possível alterar a sincronização automática.");
         return;
       }
-
       setAutomaticEnabled(payload.data?.automaticSyncEnabled === true);
-      setMessage(payload?.message ?? "Sincronizacao automatica atualizada.");
+      setMessage(payload?.message ?? "Sincronização automática atualizada.");
       router.refresh();
     } catch {
-      setMessage("Falha de comunicacao ao alterar a sincronizacao automatica.");
+      setMessage("Falha de comunicação ao alterar a sincronização automática.");
     } finally {
       setAutomaticBusy(false);
     }
   }
 
   return (
-    <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-[#284665] dark:bg-[#071b34]/90">
-      <div>
-        <h2 className="text-lg font-semibold">Perfis de processamento</h2>
-        <p className="mt-1 text-sm text-slate-500 dark:text-slate-300">
-          Selecione o perfil operacional e aplique sem editar variaveis manualmente.
-        </p>
-      </div>
-
-      {selectedPresetKey === null ? (
-        <div className="mt-4 rounded-xl border border-amber-400/40 bg-amber-400/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-200">
-          A configuracao atual e personalizada e nao corresponde exatamente a nenhum dos perfis disponiveis.
-          Selecione um perfil somente se quiser substituir a configuracao atual.
+    <>
+      <section id="processamento" className="mt-6 rounded-2xl border border-default bg-surface-primary p-5 shadow-sm">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-brand">Processamento</p>
+          <h2 className="mt-1 text-xl font-semibold text-primary">Perfil operacional</h2>
+          <p className="mt-1 text-sm text-secondary">
+            Escolha o comportamento do pipeline. Os parâmetros técnicos ficam recolhidos por padrão.
+          </p>
         </div>
-      ) : null}
 
-      <div className="mt-4 grid gap-4 xl:grid-cols-3">
-        {(Object.keys(presets) as ProcessingPresetKey[]).map((key) => {
-          const config = presets[key];
-          const active = selected === key;
-          return (
-            <button
-              key={key}
-              type="button"
-              onClick={() => setSelected(key)}
-              className={`rounded-2xl border p-4 text-left transition ${
-                active
-                  ? "border-emerald-500 bg-emerald-50 shadow-sm dark:border-emerald-500 dark:bg-emerald-950/40"
-                  : "border-slate-200 bg-slate-50 hover:border-slate-300 dark:border-[#284665] dark:bg-[#0b243d] dark:hover:border-slate-500"
-              }`}
-            >
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">{labels[key]}</h3>
-                  <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{descriptions[key]}</p>
-                </div>
-                <span
-                  className={`rounded-full px-2 py-1 text-xs font-medium ${
-                    active
-                      ? "bg-emerald-700 text-white"
-                      : "bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200"
-                  }`}
-                >
-                  {active ? "Selecionado" : "Disponivel"}
-                </span>
-              </div>
+        {selectedPresetKey === null ? (
+          <div className="mt-4 rounded-xl border border-warning bg-warning-soft px-4 py-3 text-sm text-warning">
+            A configuração atual é personalizada. Selecione um perfil somente se quiser substituí-la.
+          </div>
+        ) : null}
 
-              <div className="mt-4 grid gap-2 text-sm text-slate-700 dark:text-slate-200">
-                {rowsForConfig(config).map(([label, value]) => (
-                  <div key={label} className="flex items-center justify-between gap-3">
-                    <span className="text-slate-500 dark:text-slate-400">{label}</span>
-                    <span className="font-medium text-slate-900 dark:text-slate-100">{value}</span>
+        <div className="mt-4 grid gap-4 xl:grid-cols-3">
+          {(Object.keys(presets) as ProcessingPresetKey[]).map((key) => {
+            const config = presets[key];
+            const active = selected === key;
+            return (
+              <article key={key} className={`rounded-2xl border p-4 transition ${active ? "border-brand bg-brand-soft" : "border-default bg-surface-secondary"}`}>
+                <button type="button" onClick={() => setSelected(key)} className="w-full text-left">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h3 className="text-base font-semibold text-primary">{labels[key]}</h3>
+                      <p className="mt-1 text-sm text-secondary">{descriptions[key]}</p>
+                    </div>
+                    <span className={`rounded-full px-2 py-1 text-xs font-semibold ${active ? "bg-brand text-inverse" : "bg-surface-tertiary text-secondary"}`}>
+                      {active ? "Selecionado" : "Disponível"}
+                    </span>
                   </div>
-                ))}
-              </div>
-            </button>
-          );
-        })}
-      </div>
+                  <div className="mt-4 grid grid-cols-3 gap-2">
+                    <div><p className="text-[10px] uppercase text-muted">Workers</p><p className="mt-1 font-semibold text-primary">{config.workerCount}</p></div>
+                    <div><p className="text-[10px] uppercase text-muted">Bloco</p><p className="mt-1 font-semibold text-primary">{config.claimBatchSize}</p></div>
+                    <div><p className="text-[10px] uppercase text-muted">ERP</p><p className="mt-1 font-semibold text-primary">{config.erpConcurrency}</p></div>
+                  </div>
+                </button>
+                <details className="mt-4 border-t border-subtle pt-3">
+                  <summary className="cursor-pointer text-xs font-semibold text-brand">Ver parâmetros técnicos</summary>
+                  <div className="mt-3 grid gap-2 text-xs">
+                    {technicalRows(config).map(([label, value]) => (
+                      <div key={label} className="flex items-center justify-between gap-3">
+                        <span className="text-muted">{label}</span>
+                        <span className="font-medium text-primary">{value}</span>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              </article>
+            );
+          })}
+        </div>
 
-      <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-[#284665] dark:bg-[#0b243d]">
-        <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="mt-5 flex flex-wrap items-center gap-3">
+          <button type="button" onClick={apply} disabled={busy || automaticBusy || !selected} className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-inverse transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50">
+            {busy ? "Salvando..." : "Aplicar perfil"}
+          </button>
+          {message ? <p className="text-sm text-secondary">{message}</p> : null}
+        </div>
+      </section>
+
+      <section id="automacao" className="mt-6 rounded-2xl border border-default bg-surface-primary p-5 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <div className="flex items-center gap-2">
-              <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                Frequência automática
-              </h3>
-              <span
-                className={`rounded-full px-2 py-1 text-xs font-semibold ${
-                  automaticEnabled
-                    ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
-                    : "bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200"
-                }`}
-              >
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-brand">Automação</p>
+            <div className="mt-1 flex items-center gap-2">
+              <h2 className="text-xl font-semibold text-primary">Sincronização automática</h2>
+              <span className={`rounded-full px-2 py-1 text-xs font-semibold ${automaticEnabled ? "bg-success-soft text-success" : "bg-surface-tertiary text-secondary"}`}>
                 {automaticEnabled ? "Ativada" : "Desativada"}
               </span>
             </div>
-            <p className="mt-1 max-w-2xl text-sm text-slate-500 dark:text-slate-300">
-              {automaticEnabled
-                ? "A sincronizacao geral sera criada automaticamente conforme o intervalo selecionado."
-                : "Com a frequencia desativada, nenhuma sincronizacao geral sera criada automaticamente. A sincronizacao manual do Dashboard continua disponivel."}
+            <p className="mt-1 max-w-2xl text-sm text-secondary">
+              Controle quando o sistema inicia a sincronização geral sem intervenção manual.
             </p>
           </div>
-
-          <button
-            type="button"
-            onClick={toggleAutomaticSync}
-            disabled={busy || automaticBusy}
-            aria-pressed={automaticEnabled}
-            className={`rounded-lg px-4 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
-              automaticEnabled
-                ? "border border-rose-300 bg-white text-rose-700 hover:bg-rose-50 dark:border-rose-700 dark:bg-[#071b34] dark:text-rose-300 dark:hover:bg-rose-950/30"
-                : "bg-emerald-700 text-white hover:bg-emerald-800"
-            }`}
-          >
-            {automaticBusy
-              ? "Salvando..."
-              : automaticEnabled
-                ? "Desativar"
-                : "Ativar"}
+          <button type="button" onClick={toggleAutomaticSync} disabled={busy || automaticBusy} aria-pressed={automaticEnabled} className={`rounded-lg px-4 py-2 text-sm font-semibold transition disabled:opacity-50 ${automaticEnabled ? "border border-danger bg-danger-soft text-danger" : "bg-brand text-inverse"}`}>
+            {automaticBusy ? "Salvando..." : automaticEnabled ? "Desativar" : "Ativar"}
           </button>
         </div>
 
-        <div className="mt-4 flex flex-wrap items-center gap-3">
-          <label className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
-            <span>Intervalo</span>
-            <select
-              value={interval}
-              onChange={(event) => setInterval(Number(event.target.value) as IntervalMinutes)}
-              disabled={busy || automaticBusy}
-              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-[#34516f] dark:bg-[#0b243d] dark:text-slate-100"
-            >
+        <div className="mt-5 max-w-md rounded-xl border border-default bg-surface-secondary p-4">
+          <label className="text-sm font-medium text-primary">
+            Frequência
+            <select value={interval} onChange={(event) => setInterval(Number(event.target.value) as IntervalMinutes)} disabled={busy || automaticBusy} className="mt-2 w-full rounded-lg border border-default bg-surface-primary px-3 py-2.5 text-sm text-primary">
               <option value={1}>A cada 1 minuto</option>
               <option value={5}>A cada 5 minutos</option>
               <option value={30}>A cada 30 minutos</option>
@@ -247,23 +208,9 @@ export function ProcessingSettingsForm({
               <option value={120}>A cada 2 horas</option>
             </select>
           </label>
-          <span className="text-xs text-slate-500 dark:text-slate-400">
-            Ao ativar, o proximo ciclo sera contado a partir da ativacao.
-          </span>
+          <p className="mt-2 text-xs text-muted">Ao ativar, o próximo ciclo será contado a partir da ativação.</p>
         </div>
-      </div>
-
-      <div className="mt-5 flex flex-wrap items-center gap-3">
-        <button
-          type="button"
-          onClick={apply}
-          disabled={busy || automaticBusy || !selected}
-          className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {busy ? "Salvando..." : "Aplicar perfil"}
-        </button>
-        {message ? <p className="text-sm text-slate-600 dark:text-slate-300">{message}</p> : null}
-      </div>
-    </section>
+      </section>
+    </>
   );
 }
