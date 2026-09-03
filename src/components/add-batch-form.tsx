@@ -5,6 +5,10 @@ import { useRouter } from "next/navigation";
 
 const STORAGE_KEY = "campaign-import-report";
 
+function normalizedBatchName(value: string) {
+  return value.trim().toLocaleLowerCase("pt-BR");
+}
+
 export function AddBatchForm({
   campaignId,
   campaignName,
@@ -41,6 +45,11 @@ export function AddBatchForm({
     event.preventDefault();
     const form = event.currentTarget;
     if (!canSubmit) return;
+
+    if (creatingBatch && batches.some((batch) => normalizedBatchName(batch.name) === normalizedBatchName(batchName))) {
+      setMessage(`Ja existe um lote "${batchName.trim()}" nesta campanha. Selecione o lote existente ou informe outro nome.`);
+      return;
+    }
 
     setBusy(true);
     setMessage(null);
