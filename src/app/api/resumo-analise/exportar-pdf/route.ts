@@ -137,7 +137,7 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     return fail(
-      "EXPORT_ERROR",
+      "INTERNAL_ERROR",
       error instanceof Error ? error.message : "Nao foi possivel gerar o PDF.",
       500
     );
