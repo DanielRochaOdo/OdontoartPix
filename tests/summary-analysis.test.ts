@@ -19,14 +19,18 @@ describe("Resumo e Analise", () => {
     expect(settingsPage).toContain("Resumo e Análise");
   });
 
-  it("classifica Clinico e Orto pela parcela canonica e aplica range pela data de pagamento", () => {
+  it("usa DescricaoRecebimento e DataPagamento como base do que esta pago", () => {
     const metrics = source("src/lib/summary-analysis.ts");
 
     expect(metrics).toContain("from member_target_installments mti");
     expect(metrics).toContain("installment_type = 'clinico'");
     expect(metrics).toContain("installment_type = 'orto'");
     expect(metrics).toContain("payment_date between $1::date and $2::date");
-    expect(metrics).toContain("payment_status = 'paid'");
+    expect(metrics).toContain("paid_amount_cents is not null");
+    expect(metrics).toContain("payment_description is not null");
+    expect(metrics).toContain("upper(payment_description) <> 'ABERTO'");
+    expect(metrics).toContain("upper(payment_description) <> 'ACORDADO'");
+    expect(metrics).not.toContain("payment_status = 'paid'");
   });
 
   it("reutiliza a regra operacional de PIX usada no Dashboard", () => {
@@ -34,11 +38,21 @@ describe("Resumo e Analise", () => {
     const dashboardMetrics = source("src/lib/metrics.ts");
 
     expect(metrics).toContain("upper(payment_description) like '%PIX%'");
-    expect(metrics).toContain("upper(payment_description) <> 'ABERTO'");
-    expect(metrics).toContain("upper(payment_description) <> 'ACORDADO'");
     expect(dashboardMetrics).toContain("upper(canonical.payment_description) like '%PIX%'");
     expect(dashboardMetrics).toContain("upper(canonical.payment_description) <> 'ABERTO'");
     expect(dashboardMetrics).toContain("upper(canonical.payment_description) <> 'ACORDADO'");
+  });
+
+  it("oferece entradas manuais nas tres entidades com mascara monetaria", () => {
+    const dashboard = source("src/components/summary-analysis-dashboard.tsx");
+    const pdfRoute = source("src/app/api/resumo-analise/exportar-pdf/route.ts");
+
+    expect(dashboard).toContain('type ManualEntityKey = Exclude<EntityKey, "combined">');
+    expect(dashboard).toContain('robo: { dispatchCount: "", dispatchValue: "" }');
+    expect(dashboard).toContain("function maskMoneyInput");
+    expect(dashboard).toContain('field === "dispatchValue" ? maskMoneyInput(value)');
+    expect(dashboard).toContain('placeholder="R$ 0,00"');
+    expect(pdfRoute).toContain("robo: EntitySchema");
   });
 
   it("oferece exportacao PDF e XLSX sem vinculo manual com campanhas", () => {
