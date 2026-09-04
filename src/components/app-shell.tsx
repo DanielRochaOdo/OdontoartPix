@@ -73,6 +73,7 @@ function SettingsIcon({ className = "h-5 w-5" }: { className?: string }) {
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: DashboardIcon },
+  { href: "/vidas-ativas", label: "Vidas ativas", icon: MembersIcon },
   { href: "/campanhas", label: "Campanhas", icon: CampaignsIcon },
   { href: "/associados", label: "Associados", icon: MembersIcon },
   { href: "/resumo-analise", label: "Resumo e Análise", icon: AnalysisIcon },
