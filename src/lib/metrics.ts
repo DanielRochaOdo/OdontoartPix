@@ -306,6 +306,7 @@ export async function getDashboardReceiptStatusMetrics(filters: DashboardMetrics
          and payment_description is not null
          and upper(payment_description) <> 'ABERTO'
          and upper(payment_description) <> 'ACORDADO'
+         and upper(payment_description) <> 'EXCLUIDA'
        group by payment_description
        order by "amountCents" desc, label asc`,
       [campaignIds, batchIds]
@@ -354,6 +355,7 @@ export async function getDashboardPixPaidMetrics(filters: DashboardMetricsFilter
           and canonical.payment_description is not null
           and upper(canonical.payment_description) <> 'ABERTO'
           and upper(canonical.payment_description) <> 'ACORDADO'
+          and upper(canonical.payment_description) <> 'EXCLUIDA'
           and upper(canonical.payment_description) like '%PIX%'`,
       [campaignIds, batchIds]
     );
