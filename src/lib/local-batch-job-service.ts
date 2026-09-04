@@ -68,7 +68,7 @@ export async function enqueueLocalBatchJob(input: {
          from campaign_batch_members
         where batch_id = $1
           and deleted_at is null
-          and (payment_status is null or payment_status not in ('paid', 'agreed'))
+          and (payment_status is null or payment_status not in ('paid', 'agreed', 'excluded'))
           and (
             (
               processing_status in ('pending', 'queued', 'retrying')
