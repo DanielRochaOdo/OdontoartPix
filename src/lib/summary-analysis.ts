@@ -79,6 +79,7 @@ export async function getSummaryAnalysisMetrics(
           and payment_description is not null
           and upper(payment_description) <> 'ABERTO'
           and upper(payment_description) <> 'ACORDADO'
+          and upper(payment_description) <> 'EXCLUIDA'
      )
      select
        count(distinct member_id) filter (
