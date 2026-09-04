@@ -49,7 +49,7 @@ export type GeneralSyncPreview = Omit<GeneralSyncScopeResolution, "filters" | "b
 };
 
 const ACTIVE_BATCH_JOB_STATUSES = ["queued", "running", "paused"];
-const GENERAL_SYNC_TERMINAL_PAYMENT_STATUSES = ["paid", "agreed"];
+const GENERAL_SYNC_TERMINAL_PAYMENT_STATUSES = ["paid", "agreed", "excluded"];
 
 function uniqueIds(values?: string[]) {
   return [...new Set((values ?? []).map((value) => value.trim()).filter(Boolean))];
