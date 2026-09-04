@@ -5,6 +5,7 @@ const StringOrNumberSchema = z.union([z.string(), z.number()]);
 const NullableStringOrNumberSchema = StringOrNumberSchema.nullish();
 const OPEN_RECEIPT_DESCRIPTION = "ABERTO";
 const AGREED_RECEIPT_DESCRIPTION = "ACORDADO";
+const EXCLUDED_RECEIPT_DESCRIPTION = "EXCLUIDA";
 
 const MonthlyApiDataItemSchema = z
   .object({
@@ -61,8 +62,12 @@ export class MonthlyResponseError extends Error {
   }
 }
 
-export type MonthlyPaymentStatus = "paid" | "unpaid" | "agreed";
-export type MonthlyPaymentStatusSource = "erp_open_invoice" | "erp_explicit" | "erp_agreed";
+export type MonthlyPaymentStatus = "paid" | "unpaid" | "agreed" | "excluded";
+export type MonthlyPaymentStatusSource =
+  | "erp_open_invoice"
+  | "erp_explicit"
+  | "erp_agreed"
+  | "erp_excluded";
 
 export type MonthlyInstallment = {
   userCode?: string;
@@ -275,6 +280,15 @@ function classifyFinancialState(
     };
   }
 
+  if (description === EXCLUDED_RECEIPT_DESCRIPTION) {
+    return {
+      status: "excluded",
+      baseAmountCents,
+      paidAmountCents: null,
+      description
+    };
+  }
+
   if (!description) {
     return {
       status: "invalid",
@@ -305,9 +319,9 @@ function classifyFinancialState(
     };
   }
 
-  // DescricaoRecebimento diferente de ABERTO/ACORDADO representa recebimento
-  // confirmado pelo ERP. ValorPago inferior ao Valor e um pagamento parcial,
-  // nao uma falha tecnica. O saldo residual e calculado separadamente.
+  // DescricaoRecebimento diferente de ABERTO/ACORDADO/EXCLUIDA representa
+  // recebimento confirmado pelo ERP. ValorPago inferior ao Valor e um pagamento
+  // parcial, nao uma falha tecnica. O saldo residual e calculado separadamente.
   return {
     status: "paid",
     baseAmountCents,
@@ -368,6 +382,7 @@ function pendingAmountForInstallment(installment: MonthlyInstallment) {
 function paymentStatusSource(status: MonthlyPaymentStatus): MonthlyPaymentStatusSource {
   if (status === "paid") return "erp_explicit";
   if (status === "agreed") return "erp_agreed";
+  if (status === "excluded") return "erp_excluded";
   return "erp_open_invoice";
 }
 
@@ -485,17 +500,22 @@ function analyzeNormalizedPayload(
       paymentStatusSource: targetPaymentStatusSource,
       installmentAmountCents: targetInstallment.baseAmountCents,
       paymentAmountCents: targetPaymentAmountCents ?? 0,
-      pendingAmountCents: targetPaymentStatus === "agreed" ? 0 : targetPendingAmountCents
+      pendingAmountCents:
+        targetPaymentStatus === "agreed" || targetPaymentStatus === "excluded"
+          ? 0
+          : targetPendingAmountCents
     },
     message:
       payload.message ||
-      (targetPaymentStatus === "agreed"
-        ? "Parcela acordada conforme DescricaoRecebimento do ERP."
-        : targetPaymentStatus === "paid"
-          ? targetPendingAmountCents > 0
-            ? "Parcela paga com pendencia conforme DescricaoRecebimento e ValorPago do ERP."
-            : "Parcela paga conforme DescricaoRecebimento e ValorPago do ERP."
-          : "Parcela em aberto conforme DescricaoRecebimento do ERP."),
+      (targetPaymentStatus === "excluded"
+        ? "Parcela excluida conforme DescricaoRecebimento do ERP."
+        : targetPaymentStatus === "agreed"
+          ? "Parcela acordada conforme DescricaoRecebimento do ERP."
+          : targetPaymentStatus === "paid"
+            ? targetPendingAmountCents > 0
+              ? "Parcela paga com pendencia conforme DescricaoRecebimento e ValorPago do ERP."
+              : "Parcela paga conforme DescricaoRecebimento e ValorPago do ERP."
+            : "Parcela em aberto conforme DescricaoRecebimento do ERP."),
     installmentsCount: installments.length,
     totalPendingAmountCents: pendingInstallments.reduce(
       (sum, item) => sum + item.pendingAmountCents,
