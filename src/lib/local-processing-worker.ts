@@ -235,7 +235,7 @@ async function claimMembers(job: LocalJob, workerId: string, limit: number) {
           and (
             $4::uuid is not null
             or payment_status is null
-            or payment_status not in ('paid', 'agreed')
+            or payment_status not in ('paid', 'agreed', 'excluded')
           )
           and (
             $5::uuid is null
@@ -586,13 +586,13 @@ async function recalculateBatch(batchId: string) {
          count(*) filter (where payment_status = 'unpaid')::int as unpaid_records,
          count(*) filter (
            where processing_status = 'error'
-             and (payment_status is null or payment_status not in ('paid','agreed'))
+             and (payment_status is null or payment_status not in ('paid','agreed','excluded'))
          )::int as error_records,
          coalesce(sum(total_pending_amount_cents), 0)::bigint as total_pending_amount_cents,
          count(*) filter (where processing_status = 'processing')::int as processing_records,
          count(*) filter (
            where processing_status in ('pending','queued','retrying','aguardando')
-             and (payment_status is null or payment_status not in ('paid','agreed'))
+             and (payment_status is null or payment_status not in ('paid','agreed','excluded'))
          )::int as waiting_records
        from campaign_batch_members
       where batch_id = $1 and deleted_at is null
@@ -663,7 +663,7 @@ async function releaseAndFinalizeJob(job: LocalJob, workerId: string) {
       client,
       `select
          count(*) filter (
-           where ($3::uuid is not null or payment_status is null or payment_status not in ('paid','agreed'))
+           where ($3::uuid is not null or payment_status is null or payment_status not in ('paid','agreed','excluded'))
              and (
                $4::uuid is null
                or exists (
@@ -683,7 +683,7 @@ async function releaseAndFinalizeJob(job: LocalJob, workerId: string) {
          )::int as immediate_count,
          count(*) filter (
            where processing_status = 'processing'
-             and ($3::uuid is not null or payment_status is null or payment_status not in ('paid','agreed'))
+             and ($3::uuid is not null or payment_status is null or payment_status not in ('paid','agreed','excluded'))
              and (
                $4::uuid is null
                or exists (
@@ -697,7 +697,7 @@ async function releaseAndFinalizeJob(job: LocalJob, workerId: string) {
          )::int as processing_count,
          min(next_retry_at) filter (
            where processing_status = 'retrying'
-             and ($3::uuid is not null or payment_status is null or payment_status not in ('paid','agreed'))
+             and ($3::uuid is not null or payment_status is null or payment_status not in ('paid','agreed','excluded'))
              and (
                $4::uuid is null
                or exists (
