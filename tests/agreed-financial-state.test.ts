@@ -19,18 +19,18 @@ describe("agreed financial state", () => {
     expect(migration).toContain("next_check_at = null");
   });
 
-  it("mantem acordados fora das sincronizacoes gerais e jobs de lote", () => {
+  it("mantem estados financeiros terminais fora das sincronizacoes gerais e jobs de lote", () => {
     const preview = source("src/lib/general-sync-preview.ts");
     const scheduled = source("src/lib/general-sync-scheduled-start.ts");
     const batchJobs = source("src/lib/batch-job-service.ts");
     const localBatchJobs = source("src/lib/local-batch-job-service.ts");
-    const migration = source("db/migrations/019_agreed_financial_truth.sql");
+    const migration = source("db/migrations/031_excluded_financial_truth.sql");
 
-    expect(preview).toContain('GENERAL_SYNC_TERMINAL_PAYMENT_STATUSES = ["paid", "agreed"]');
-    expect(scheduled).toContain('GENERAL_SYNC_TERMINAL_PAYMENT_STATUSES = ["paid", "agreed"]');
-    expect(batchJobs).toContain("payment_status not in ('paid', 'agreed')");
-    expect(localBatchJobs).toContain("payment_status not in ('paid', 'agreed')");
-    expect(migration).toContain("old.payment_status = 'agreed'");
+    expect(preview).toContain('GENERAL_SYNC_TERMINAL_PAYMENT_STATUSES = ["paid", "agreed", "excluded"]');
+    expect(scheduled).toContain('GENERAL_SYNC_TERMINAL_PAYMENT_STATUSES = ["paid", "agreed", "excluded"]');
+    expect(batchJobs).toContain("payment_status not in ('paid', 'agreed', 'excluded')");
+    expect(localBatchJobs).toContain("payment_status not in ('paid', 'agreed', 'excluded')");
+    expect(migration).toContain("old.payment_status in ('agreed', 'excluded')");
     expect(migration).toContain("new.next_check_at is null");
   });
 
@@ -38,16 +38,18 @@ describe("agreed financial state", () => {
     const route = source("src/app/api/associados/[id]/reprocessar/route.ts");
     const queue = source("src/lib/member-reprocess-queue.ts");
     const worker = source("src/lib/local-processing-worker.ts");
-    const migration = source("db/migrations/019_agreed_financial_truth.sql");
+    const migration = source("db/migrations/031_excluded_financial_truth.sql");
 
     expect(route).not.toContain('if (member.payment_status === "paid")');
     expect(route).not.toContain('member.payment_status === "agreed"');
+    expect(route).not.toContain('member.payment_status === "excluded"');
     expect(queue).not.toContain('if (member.payment_status === "paid")');
     expect(queue).not.toContain('member.payment_status === "agreed"');
+    expect(queue).not.toContain('member.payment_status === "excluded"');
     expect(queue).toContain("next_check_at = now()");
     expect(worker).toContain("$4::uuid is not null");
-    expect(worker).toContain("payment_status not in ('paid', 'agreed')");
-    expect(worker).toContain("where ($3::uuid is not null or payment_status is null or payment_status not in ('paid','agreed'))");
+    expect(worker).toContain("payment_status not in ('paid', 'agreed', 'excluded')");
+    expect(worker).toContain("where ($3::uuid is not null or payment_status is null or payment_status not in ('paid','agreed','excluded'))");
     expect(migration).toContain("new.next_check_at is null");
   });
 
@@ -60,6 +62,7 @@ describe("agreed financial state", () => {
     expect(metrics).toContain("sum(target_open_amount_cents) filter (where financial_status = 'unpaid')");
     expect(metrics).toContain("sum(target_paid_amount_cents) filter (where financial_status = 'paid')");
     expect(metrics).toContain("upper(payment_description) <> 'ACORDADO'");
+    expect(metrics).toContain("upper(payment_description) <> 'EXCLUIDA'");
     expect(metrics).toContain("group by cbm.target_installment_ref_id");
   });
 

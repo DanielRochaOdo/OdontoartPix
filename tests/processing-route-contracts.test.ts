@@ -54,6 +54,6 @@ describe("processing route contracts", () => {
     expect(route).toContain("filtered_error_reprocess_requests");
     expect(route).toContain("filtered_error_reprocess_items");
     expect(route).toContain("processing_status = 'error'");
-    expect(route).toContain("payment_status is null or payment_status not in ('paid', 'agreed')");
+    expect(route).toContain("payment_status is null or payment_status not in ('paid', 'agreed', 'excluded')");
   });
 });

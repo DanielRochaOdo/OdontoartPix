@@ -91,6 +91,7 @@ const PAYMENT_LABELS: Record<string, string> = {
   paid: "Pago",
   unpaid: "Nao pago",
   agreed: "Acordado",
+  excluded: "Excluída",
   pending: "Pendente"
 };
 
@@ -111,6 +112,7 @@ function normalizePayment(value: string) {
   if (normalized === "paid" || normalized === "pago") return "paid";
   if (["unpaid", "nao pago", "nao pagos", "not paid"].includes(normalized)) return "unpaid";
   if (normalized === "agreed" || normalized === "acordado") return "agreed";
+  if (normalized === "excluded" || normalized === "excluida") return "excluded";
   if (normalized === "pending" || normalized === "pendente") return "pending";
   return normalized || "-";
 }

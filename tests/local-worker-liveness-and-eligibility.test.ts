@@ -27,12 +27,12 @@ it("recuperacao de lease nao ressuscita job com parada solicitada", () => {
   );
 });
 
-it("jobs gerais ignoram quitados e acordados mas o reprocessamento individual continua explicito", () => {
+it("jobs gerais ignoram quitados, acordados e excluidos mas o reprocessamento individual continua explicito", () => {
   expect(localWorkerSource).toMatch(
-    /\$4::uuid is not null[\s\S]*payment_status not in \('paid', 'agreed'\)/
+    /\$4::uuid is not null[\s\S]*payment_status not in \('paid', 'agreed', 'excluded'\)/
   );
   expect(localWorkerSource).toMatch(
-    /\$3::uuid is not null or payment_status is null or payment_status not in \('paid','agreed'\)/
+    /\$3::uuid is not null or payment_status is null or payment_status not in \('paid','agreed','excluded'\)/
   );
 });
 

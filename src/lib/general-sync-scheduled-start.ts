@@ -55,7 +55,7 @@ export type LocalScheduledGeneralSyncStartResult =
 
 const ACTIVE_RUN_STATUSES = ["queued", "running", "paused", "cancelling"];
 const ACTIVE_JOB_STATUSES = ["queued", "running", "paused", "deferred"];
-const GENERAL_SYNC_TERMINAL_PAYMENT_STATUSES = ["paid", "agreed"];
+const GENERAL_SYNC_TERMINAL_PAYMENT_STATUSES = ["paid", "agreed", "excluded"];
 const GENERAL_SYNC_LOCK_NAMESPACE = "odontoartpix";
 const GENERAL_SYNC_LOCK_KEY = "general-sync-single-active";
 
