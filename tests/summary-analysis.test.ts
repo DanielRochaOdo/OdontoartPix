@@ -30,6 +30,7 @@ describe("Resumo e Analise", () => {
     expect(metrics).toContain("payment_description is not null");
     expect(metrics).toContain("upper(payment_description) <> 'ABERTO'");
     expect(metrics).toContain("upper(payment_description) <> 'ACORDADO'");
+    expect(metrics).toContain("upper(payment_description) <> 'EXCLUIDA'");
     expect(metrics).not.toContain("payment_status = 'paid'");
   });
 
@@ -41,6 +42,7 @@ describe("Resumo e Analise", () => {
     expect(dashboardMetrics).toContain("upper(canonical.payment_description) like '%PIX%'");
     expect(dashboardMetrics).toContain("upper(canonical.payment_description) <> 'ABERTO'");
     expect(dashboardMetrics).toContain("upper(canonical.payment_description) <> 'ACORDADO'");
+    expect(dashboardMetrics).toContain("upper(canonical.payment_description) <> 'EXCLUIDA'");
   });
 
   it("oferece entradas manuais nas tres entidades com mascara monetaria", () => {
