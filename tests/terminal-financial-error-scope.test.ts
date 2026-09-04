@@ -7,14 +7,14 @@ function source(path: string) {
 }
 
 describe("terminal financial error scope", () => {
-  it("mantem paid e agreed fora dos reprocessamentos de erro", () => {
+  it("mantem paid, agreed e excluded fora dos reprocessamentos de erro", () => {
     const filtered = source("src/app/api/associados/reprocessar-erros-filtrados/route.ts");
     const dashboard = source("src/lib/dashboard-error-absorption.ts");
     const worker = source("src/lib/local-processing-worker.ts");
 
-    expect(filtered).toContain("payment_status is null or payment_status not in ('paid', 'agreed')");
-    expect(dashboard).toContain("cbm.payment_status is null or cbm.payment_status not in ('paid', 'agreed')");
-    expect(worker).toContain("payment_status is null or payment_status not in ('paid','agreed')");
+    expect(filtered).toContain("payment_status is null or payment_status not in ('paid', 'agreed', 'excluded')");
+    expect(dashboard).toContain("cbm.payment_status is null or cbm.payment_status not in ('paid', 'agreed', 'excluded')");
+    expect(worker).toContain("payment_status is null or payment_status not in ('paid','agreed','excluded')");
   });
 
   it("faz o worker persistir a verdade tipada do analisador sem reclassificar pagamento", () => {
@@ -28,14 +28,18 @@ describe("terminal financial error scope", () => {
     expect(worker).not.toContain("const isPaid =");
   });
 
-  it("repara legado terminal sem atropelar reconciliacao individual ativa", () => {
-    const migration = source("db/migrations/022_repair_terminal_financial_processing_state.sql");
+  it("mantem a reparacao historica de paid/agreed e adiciona EXCLUIDA em migration posterior", () => {
+    const historicalMigration = source("db/migrations/022_repair_terminal_financial_processing_state.sql");
+    const excludedMigration = source("db/migrations/031_excluded_financial_truth.sql");
 
-    expect(migration).toContain("cbm.payment_status in ('paid', 'agreed')");
-    expect(migration).toContain("processing_status = 'completed'");
-    expect(migration).toContain("pj.target_member_link_id = cbm.id");
-    expect(migration).toContain("pj.processing_scope = 'member'");
-    expect(migration).toContain("pj.status in ('queued', 'running', 'paused', 'deferred')");
-    expect(migration).toContain("values (22, 'repair_terminal_financial_processing_state')");
+    expect(historicalMigration).toContain("cbm.payment_status in ('paid', 'agreed')");
+    expect(historicalMigration).toContain("processing_status = 'completed'");
+    expect(historicalMigration).toContain("pj.target_member_link_id = cbm.id");
+    expect(historicalMigration).toContain("pj.processing_scope = 'member'");
+    expect(historicalMigration).toContain("pj.status in ('queued', 'running', 'paused', 'deferred')");
+    expect(historicalMigration).toContain("values (22, 'repair_terminal_financial_processing_state')");
+    expect(excludedMigration).toContain("payment_status = 'excluded'");
+    expect(excludedMigration).toContain("payment_status_source = 'erp_excluded'");
+    expect(excludedMigration).toContain("processing_status = 'completed'");
   });
 });
