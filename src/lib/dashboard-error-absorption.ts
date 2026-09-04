@@ -49,7 +49,7 @@ export async function absorbBatchErrorsIntoActiveDashboard(
         where cbm.batch_id = $1::uuid
           and cbm.deleted_at is null
           and cbm.processing_status = 'error'
-          and (cbm.payment_status is null or cbm.payment_status not in ('paid', 'agreed'))
+          and (cbm.payment_status is null or cbm.payment_status not in ('paid', 'agreed', 'excluded'))
           and not exists (
             select 1
               from dashboard_error_reprocess_items open_item
