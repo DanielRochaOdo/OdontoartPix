@@ -481,6 +481,7 @@ export function AssociadosCardList({
   const [receiptFilters, setReceiptFilters] = useState<string[]>(() =>
     uniqueValues((initialFilters?.receipt ?? []).map((value) => value.trim()))
   );
+  const [installmentTypeFilters, setInstallmentTypeFilters] = useState<string[]>([]);
   const [campaignFilters, setCampaignFilters] = useState<string[]>(() =>
     uniqueValues(initialFilters?.campaign ?? [])
   );
@@ -543,6 +544,7 @@ export function AssociadosCardList({
       status: [...new Set(rows.map((row) => row.status))].sort(),
       payment: [...new Set(rows.map((row) => row.payment))].sort(),
       receipt: [...new Set(rows.map((row) => row.receiptDescription))].sort((a, b) => a.localeCompare(b, "pt-BR")),
+      installmentType: [...new Set(rows.map((row) => row.installmentType).filter((value) => value !== "-"))].sort((a, b) => a.localeCompare(b, "pt-BR")),
       campaign: [...new Map(rows.map((row) => [row.campaignId, row.campaign])).entries()],
       batch: [...new Map(rows.map((row) => [row.batchId, row.batch])).entries()]
     }),
@@ -596,6 +598,7 @@ export function AssociadosCardList({
             (paymentFilters.length === 0 || paymentFilters.includes(row.payment)) &&
             matchesPaidPendingFilter(row.payment, row.pending, paidPendingFilter) &&
             (receiptFilters.length === 0 || receiptFilters.includes(row.receiptDescription)) &&
+            (installmentTypeFilters.length === 0 || installmentTypeFilters.includes(row.installmentType)) &&
             (campaignFilters.length === 0 || campaignFilters.includes(row.campaignId)) &&
             (batchFilters.length === 0 || batchFilters.includes(row.batchId))
           );
@@ -620,6 +623,7 @@ export function AssociadosCardList({
       dueDateFrom,
       dueDateTo,
       installmentFilter,
+      installmentTypeFilters,
       paidPendingFilter,
       paymentDateFrom,
       paymentDateTo,
@@ -753,6 +757,7 @@ export function AssociadosCardList({
     setPaymentFilters([]);
     setPaidPendingFilter("all");
     setReceiptFilters([]);
+    setInstallmentTypeFilters([]);
     setCampaignFilters([]);
     setBatchFilters([]);
     setSelectedIds(new Set());
@@ -1012,19 +1017,19 @@ export function AssociadosCardList({
             value={query}
             onChange={(event) => { setQuery(event.target.value); setPage(1); }}
             placeholder="Buscar em todas as colunas..."
-            className={`${controlClass} xl:col-span-2`}
+            className={`${controlClass} xl:col-span-3`}
           />
           <input
             value={codeFilter}
             onChange={(event) => { setCodeFilter(event.target.value); setPage(1); }}
             placeholder="Filtrar por codigo"
-            className={`${controlClass} xl:col-span-2`}
+            className={`${controlClass} xl:col-span-3`}
           />
           <input
             value={installmentFilter}
             onChange={(event) => { setInstallmentFilter(event.target.value); setPage(1); }}
             placeholder="Filtrar por parcela"
-            className={`${controlClass} xl:col-span-2`}
+            className={`${controlClass} xl:col-span-3`}
           />
           <div className="relative xl:col-span-3">
             <button
@@ -1120,14 +1125,14 @@ export function AssociadosCardList({
             values={statusFilters}
             onChange={(values) => updateMultiFilter(setStatusFilters, values.map(normalizeStatus))}
             options={options.status.map((value) => ({ value, label: statusLabel(value) }))}
-            className="xl:col-span-2"
+            className="xl:col-span-3"
           />
           <MultiSelectFilter
             label="Pagamento"
             values={paymentFilters}
             onChange={(values) => updateMultiFilter(setPaymentFilters, values.map(normalizePayment))}
             options={options.payment.map((value) => ({ value, label: paymentLabel(value) }))}
-            className="xl:col-span-2"
+            className="xl:col-span-3"
           />
           <MultiSelectFilter
             label="Tipo de Pagto"
@@ -1135,7 +1140,14 @@ export function AssociadosCardList({
             onChange={(values) => updateMultiFilter(setReceiptFilters, values)}
             options={options.receipt.map((value) => ({ value, label: value }))}
             searchable
-            className="xl:col-span-2"
+            className="xl:col-span-3"
+          />
+          <MultiSelectFilter
+            label="Tipo Parcela"
+            values={installmentTypeFilters}
+            onChange={(values) => updateMultiFilter(setInstallmentTypeFilters, values)}
+            options={options.installmentType.map((value) => ({ value, label: value }))}
+            className="xl:col-span-3"
           />
           <MultiSelectFilter
             label="Campanha"
@@ -1143,7 +1155,7 @@ export function AssociadosCardList({
             onChange={(values) => updateMultiFilter(setCampaignFilters, values)}
             options={options.campaign.map(([value, label]) => ({ value, label }))}
             searchable
-            className="xl:col-span-2"
+            className="xl:col-span-3"
           />
           <MultiSelectFilter
             label="Lote"
@@ -1151,12 +1163,12 @@ export function AssociadosCardList({
             onChange={(values) => updateMultiFilter(setBatchFilters, values)}
             options={options.batch.map(([value, label]) => ({ value, label }))}
             searchable
-            className="xl:col-span-2"
+            className="xl:col-span-3"
           />
           <select
             value={paidPendingFilter}
             onChange={(event) => { setPaidPendingFilter(normalizePaidPendingFilter(event.target.value)); setPage(1); }}
-            className={`${controlClass} xl:col-span-2`}
+            className={`${controlClass} xl:col-span-3`}
             aria-label="Filtrar pago com pendência"
           >
             <option value="all">Pago com pendência?: Selecione</option>
