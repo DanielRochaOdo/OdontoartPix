@@ -5,20 +5,16 @@ import * as XLSX from "xlsx";
 import { formatCurrencyBR } from "@/lib/money";
 import type {
   SummaryAnalysisEntityMetrics,
+  SummaryAnalysisFilterOptions,
   SummaryAnalysisMetrics
 } from "@/lib/summary-analysis";
 
 type EntityKey = "clinico" | "orto" | "robo" | "combined";
 type ManualEntityKey = Exclude<EntityKey, "combined">;
-
-type ManualInputs = Record<ManualEntityKey, {
-  dispatchCount: string;
-  dispatchValue: string;
-}>;
+type ManualInputs = Record<ManualEntityKey, { dispatchCount: string }>;
 
 type CalculatedEntity = SummaryAnalysisEntityMetrics & {
   dispatchCount: number;
-  dispatchValueCents: number;
   actionCostCents: number;
   paidAssociatePercentage: number;
   paidInstallmentPercentage: number;
@@ -26,40 +22,22 @@ type CalculatedEntity = SummaryAnalysisEntityMetrics & {
   netAmountCents: number;
 };
 
+type MultiSelectOption = {
+  value: string;
+  label: string;
+};
+
 function emptyInputs(): ManualInputs {
   return {
-    clinico: { dispatchCount: "", dispatchValue: "" },
-    orto: { dispatchCount: "", dispatchValue: "" },
-    robo: { dispatchCount: "", dispatchValue: "" }
+    clinico: { dispatchCount: "" },
+    orto: { dispatchCount: "" },
+    robo: { dispatchCount: "" }
   };
 }
 
 function parseDispatchCount(value: string) {
   const digits = value.replace(/\D/g, "");
   return digits ? Number(digits) : 0;
-}
-
-function parseMoneyInput(value: string) {
-  const cleaned = value.trim().replace(/^R\$\s*/i, "").replace(/\s/g, "");
-  if (!cleaned) return 0;
-  const comma = cleaned.lastIndexOf(",");
-  const dot = cleaned.lastIndexOf(".");
-  let normalized = cleaned;
-  if (comma >= 0 && dot >= 0) {
-    normalized = comma > dot
-      ? cleaned.replace(/\./g, "").replace(",", ".")
-      : cleaned.replace(/,/g, "");
-  } else if (comma >= 0) {
-    normalized = cleaned.replace(/\./g, "").replace(",", ".");
-  }
-  const number = Number(normalized.replace(/[^0-9.-]/g, ""));
-  return Number.isFinite(number) && number >= 0 ? Math.round(number * 100) : 0;
-}
-
-function maskMoneyInput(value: string) {
-  const digits = value.replace(/\D/g, "");
-  if (!digits) return "";
-  return formatCurrencyBR(Number(digits));
 }
 
 function percent(numerator: number, denominator: number) {
@@ -78,10 +56,6 @@ function formatCount(value: number) {
   return new Intl.NumberFormat("pt-BR").format(value);
 }
 
-function localDateKey(date: Date) {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-}
-
 function displayDate(value: string) {
   const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   return match ? `${match[3]}/${match[2]}/${match[1]}` : value;
@@ -93,25 +67,34 @@ function entityFromInputs(
   dispatchUnitCostCents: number
 ): CalculatedEntity {
   const dispatchCount = parseDispatchCount(input.dispatchCount);
-  const dispatchValueCents = parseMoneyInput(input.dispatchValue);
   const actionCostCents = dispatchCount * dispatchUnitCostCents;
   return {
     ...automatic,
     dispatchCount,
-    dispatchValueCents,
     actionCostCents,
     paidAssociatePercentage: percent(automatic.paidAssociateCount, dispatchCount),
     paidInstallmentPercentage: percent(automatic.paidInstallmentCount, dispatchCount),
-    paidPercentage: percent(automatic.paidAmountCents, dispatchValueCents),
+    paidPercentage: percent(automatic.paidAmountCents, automatic.dispatchValueCents),
     netAmountCents: automatic.paidAmountCents - actionCostCents
   };
 }
 
-function MetricCard({ label, value, highlight = false }: { label: string; value: string; highlight?: boolean }) {
+function MetricCard({
+  label,
+  value,
+  highlight = false,
+  hint
+}: {
+  label: string;
+  value: string;
+  highlight?: boolean;
+  hint?: string;
+}) {
   return (
     <article className={`rounded-xl border p-4 ${highlight ? "border-success bg-success-soft" : "border-default bg-surface-secondary"}`}>
       <p className="text-xs font-medium uppercase tracking-wide text-muted">{label}</p>
       <p className={`mt-2 text-xl font-semibold ${highlight ? "text-success" : "text-primary"}`}>{value}</p>
+      {hint ? <p className="mt-1 text-[11px] text-muted">{hint}</p> : null}
     </article>
   );
 }
@@ -143,19 +126,83 @@ function SummaryCard({
   );
 }
 
+function MultiSelectFilter({
+  label,
+  values,
+  options,
+  onChange
+}: {
+  label: string;
+  values: string[];
+  options: MultiSelectOption[];
+  onChange: (values: string[]) => void;
+}) {
+  const selectedLabels = options.filter((option) => values.includes(option.value)).map((option) => option.label);
+  const summary = selectedLabels.length === 0
+    ? `Todos: ${label}`
+    : selectedLabels.length <= 2
+      ? `${label}: ${selectedLabels.join(", ")}`
+      : `${label}: ${selectedLabels.length} selecionados`;
+
+  function toggle(value: string) {
+    onChange(values.includes(value) ? values.filter((item) => item !== value) : [...values, value]);
+  }
+
+  return (
+    <details className="group relative">
+      <summary className="flex min-h-[42px] cursor-pointer list-none items-center justify-between gap-2 rounded-lg border border-default bg-surface-secondary px-3 py-2.5 text-sm text-primary outline-none transition hover:bg-surface-hover focus:border-focus focus:ring-2 focus:ring-brand">
+        <span className="truncate">{summary}</span>
+        <span className="shrink-0 text-muted transition group-open:rotate-180">▾</span>
+      </summary>
+      <div className="absolute left-0 top-full z-50 mt-2 w-full min-w-[260px] rounded-xl border border-default bg-surface-elevated p-2 shadow-xl">
+        {values.length > 0 ? (
+          <button
+            type="button"
+            onClick={() => onChange([])}
+            className="mb-1 w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-brand hover:bg-surface-hover"
+          >
+            Limpar seleção
+          </button>
+        ) : null}
+        <div className="max-h-64 overflow-auto">
+          {options.length === 0 ? (
+            <div className="px-3 py-2 text-xs text-muted">Nenhuma opção disponível.</div>
+          ) : (
+            options.map((option) => (
+              <label key={option.value} className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm text-secondary hover:bg-surface-hover hover:text-primary">
+                <input
+                  type="checkbox"
+                  checked={values.includes(option.value)}
+                  onChange={() => toggle(option.value)}
+                  className="h-4 w-4 rounded border-default"
+                />
+                <span className="min-w-0 break-words">{option.label}</span>
+              </label>
+            ))
+          )}
+        </div>
+      </div>
+    </details>
+  );
+}
+
 export function SummaryAnalysisDashboard({
   initialFrom,
   initialTo,
   initialMetrics,
+  filterOptions,
   dispatchUnitCostCents
 }: {
   initialFrom: string;
   initialTo: string;
   initialMetrics: SummaryAnalysisMetrics;
+  filterOptions: SummaryAnalysisFilterOptions;
   dispatchUnitCostCents: number;
 }) {
   const [from, setFrom] = useState(initialFrom);
   const [to, setTo] = useState(initialTo);
+  const [campaignIds, setCampaignIds] = useState<string[]>(initialMetrics.campaignIds);
+  const [batchIds, setBatchIds] = useState<string[]>(initialMetrics.batchIds);
   const [metrics, setMetrics] = useState(initialMetrics);
   const [activeEntity, setActiveEntity] = useState<EntityKey>("clinico");
   const [manual, setManual] = useState<ManualInputs>(() => emptyInputs());
@@ -196,75 +243,101 @@ export function SummaryAnalysisDashboard({
     };
   }, [clinico, orto]);
 
+  const campaignOptions = filterOptions.campaigns.map((campaign) => ({ value: campaign.id, label: campaign.name }));
+  const visibleBatches = campaignIds.length === 0
+    ? filterOptions.batches
+    : filterOptions.batches.filter((batch) => campaignIds.includes(batch.campaignId));
+  const batchOptions = visibleBatches.map((batch) => ({ value: batch.id, label: batch.name }));
+
   const activeManualEntity: ManualEntityKey | null = activeEntity === "combined" ? null : activeEntity;
-  const activeCalculated =
-    activeEntity === "clinico"
-      ? clinico
-      : activeEntity === "orto"
-        ? orto
-        : activeEntity === "robo"
-          ? robo
-          : combined;
+  const activeCalculated = activeEntity === "clinico"
+    ? clinico
+    : activeEntity === "orto"
+      ? orto
+      : activeEntity === "robo"
+        ? robo
+        : combined;
+  const isRobot = activeEntity === "robo";
 
-  function resetManualInputs() {
+  const periodLabel = from || to
+    ? `${from ? displayDate(from) : "início"} a ${to ? displayDate(to) : "hoje"}`
+    : "Todos os vencimentos";
+
+  const selectedCampaignNames = filterOptions.campaigns.filter((item) => campaignIds.includes(item.id)).map((item) => item.name);
+  const selectedBatchNames = filterOptions.batches.filter((item) => batchIds.includes(item.id)).map((item) => item.name);
+
+  async function loadFilters(next: {
+    from: string;
+    to: string;
+    campaignIds: string[];
+    batchIds: string[];
+  }) {
+    setFrom(next.from);
+    setTo(next.to);
+    setCampaignIds(next.campaignIds);
+    setBatchIds(next.batchIds);
     setManual(emptyInputs());
-  }
 
-  async function loadRange(nextFrom: string, nextTo: string) {
-    setFrom(nextFrom);
-    setTo(nextTo);
-    resetManualInputs();
-    if (!nextFrom || !nextTo || nextFrom > nextTo) {
-      setError("Selecione um período válido.");
+    if (next.from && next.to && next.from > next.to) {
+      setError("Selecione um período de vencimento válido.");
       return;
     }
+
+    const params = new URLSearchParams();
+    if (next.from) params.set("from", next.from);
+    if (next.to) params.set("to", next.to);
+    if (next.campaignIds.length) params.set("campaignIds", next.campaignIds.join(","));
+    if (next.batchIds.length) params.set("batchIds", next.batchIds.join(","));
 
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`/api/resumo-analise?from=${encodeURIComponent(nextFrom)}&to=${encodeURIComponent(nextTo)}`, {
+      const response = await fetch(`/api/resumo-analise?${params.toString()}`, {
         headers: { Accept: "application/json" }
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok || !payload?.success) {
-        setError(payload?.error?.message ?? "Não foi possível atualizar o período.");
+        setError(payload?.error?.message ?? "Não foi possível atualizar os filtros.");
         return;
       }
       setMetrics(payload.data as SummaryAnalysisMetrics);
     } catch {
-      setError("Falha de comunicação ao atualizar o período.");
+      setError("Falha de comunicação ao atualizar os filtros.");
     } finally {
       setLoading(false);
     }
   }
 
-  function applyQuickRange(kind: "current" | "previous" | "last30") {
-    const today = new Date();
-    if (kind === "current") {
-      void loadRange(localDateKey(new Date(today.getFullYear(), today.getMonth(), 1)), localDateKey(today));
-      return;
-    }
-    if (kind === "previous") {
-      const start = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-      const end = new Date(today.getFullYear(), today.getMonth(), 0);
-      void loadRange(localDateKey(start), localDateKey(end));
-      return;
-    }
-    const start = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 29);
-    void loadRange(localDateKey(start), localDateKey(today));
+  function updateCampaigns(values: string[]) {
+    const allowedBatches = new Set(
+      filterOptions.batches
+        .filter((batch) => values.length === 0 || values.includes(batch.campaignId))
+        .map((batch) => batch.id)
+    );
+    const nextBatchIds = batchIds.filter((id) => allowedBatches.has(id));
+    void loadFilters({ from, to, campaignIds: values, batchIds: nextBatchIds });
   }
 
-  function updateManual(entity: ManualEntityKey, field: "dispatchCount" | "dispatchValue", value: string) {
-    const normalized = field === "dispatchValue" ? maskMoneyInput(value) : value.replace(/\D/g, "");
+  function updateBatches(values: string[]) {
+    void loadFilters({ from, to, campaignIds, batchIds: values });
+  }
+
+  function updateDispatchCount(entity: ManualEntityKey, value: string) {
     setManual((current) => ({
       ...current,
-      [entity]: { ...current[entity], [field]: normalized }
+      [entity]: { dispatchCount: value.replace(/\D/g, "") }
     }));
+  }
+
+  function clearFilters() {
+    void loadFilters({ from: "", to: "", campaignIds: [], batchIds: [] });
   }
 
   function exportXlsx() {
     const rows = [
-      ["Resumo e Análise", `${displayDate(from)} a ${displayDate(to)}`],
+      ["Resumo e Análise", periodLabel],
+      ["Campanhas", selectedCampaignNames.length ? selectedCampaignNames.join(", ") : "Todas"],
+      ["Lotes", selectedBatchNames.length ? selectedBatchNames.join(", ") : "Todos"],
       ["Custo unitário por disparo", formatCurrencyBR(dispatchUnitCostCents)],
       [],
       ["Indicador", "Clínico", "Orto", "Clínico + Orto", "Robô"],
@@ -272,18 +345,21 @@ export function SummaryAnalysisDashboard({
       ["Valor disparos", formatCurrencyBR(clinico.dispatchValueCents), formatCurrencyBR(orto.dispatchValueCents), formatCurrencyBR(combined.dispatchValueCents), formatCurrencyBR(robo.dispatchValueCents)],
       ["Custo ação", formatCurrencyBR(clinico.actionCostCents), formatCurrencyBR(orto.actionCostCents), formatCurrencyBR(combined.actionCostCents), formatCurrencyBR(robo.actionCostCents)],
       ["Qtde assoc. pagos", clinico.paidAssociateCount, orto.paidAssociateCount, combined.paidAssociateCount, robo.paidAssociateCount],
-      ["% assoc. pagos", formatPercent(clinico.paidAssociatePercentage), formatPercent(orto.paidAssociatePercentage), formatPercent(combined.paidAssociatePercentage), formatPercent(robo.paidAssociatePercentage)],
       ["Qtde parcelas pagas", clinico.paidInstallmentCount, orto.paidInstallmentCount, combined.paidInstallmentCount, robo.paidInstallmentCount],
-      ["% parcelas pagas", formatPercent(clinico.paidInstallmentPercentage), formatPercent(orto.paidInstallmentPercentage), formatPercent(combined.paidInstallmentPercentage), formatPercent(robo.paidInstallmentPercentage)],
       ["Pago", formatCurrencyBR(clinico.paidAmountCents), formatCurrencyBR(orto.paidAmountCents), formatCurrencyBR(combined.paidAmountCents), formatCurrencyBR(robo.paidAmountCents)],
       ["% pago", formatPercent(clinico.paidPercentage), formatPercent(orto.paidPercentage), formatPercent(combined.paidPercentage), formatPercent(robo.paidPercentage)],
-      ["Líquido", formatCurrencyBR(clinico.netAmountCents), formatCurrencyBR(orto.netAmountCents), formatCurrencyBR(combined.netAmountCents), formatCurrencyBR(robo.netAmountCents)]
+      ["Líquido", formatCurrencyBR(clinico.netAmountCents), formatCurrencyBR(orto.netAmountCents), formatCurrencyBR(combined.netAmountCents), formatCurrencyBR(robo.netAmountCents)],
+      [],
+      ["Robô por tipo de parcela", "Clínico", "Orto"],
+      ["Parcelas PIX", metrics.roboClinico.paidInstallmentCount, metrics.roboOrto.paidInstallmentCount],
+      ["Associados PIX", metrics.roboClinico.paidAssociateCount, metrics.roboOrto.paidAssociateCount],
+      ["Recebido via PIX", formatCurrencyBR(metrics.roboClinico.paidAmountCents), formatCurrencyBR(metrics.roboOrto.paidAmountCents)]
     ];
     const worksheet = XLSX.utils.aoa_to_sheet(rows);
-    worksheet["!cols"] = [{ wch: 24 }, { wch: 22 }, { wch: 22 }, { wch: 22 }, { wch: 22 }];
+    worksheet["!cols"] = [{ wch: 28 }, { wch: 24 }, { wch: 24 }, { wch: 24 }, { wch: 24 }];
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "Resumo");
-    XLSX.writeFile(workbook, `resumo-analise-${from}-a-${to}.xlsx`);
+    XLSX.writeFile(workbook, "resumo-analise.xlsx");
   }
 
   async function exportPdf() {
@@ -312,7 +388,7 @@ export function SummaryAnalysisDashboard({
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `resumo-analise-${from}-a-${to}.pdf`;
+      link.download = "resumo-analise.pdf";
       link.click();
       URL.revokeObjectURL(url);
     } catch {
@@ -329,15 +405,13 @@ export function SummaryAnalysisDashboard({
     { key: "combined", label: "Clínico + Orto" }
   ];
 
-  const activeTitle =
-    activeEntity === "clinico"
-      ? "Clínico"
-      : activeEntity === "orto"
-        ? "Orto"
-        : activeEntity === "robo"
-          ? "Robô"
-          : "Consolidado Clínico + Orto";
-  const isRobot = activeEntity === "robo";
+  const activeTitle = activeEntity === "clinico"
+    ? "Clínico"
+    : activeEntity === "orto"
+      ? "Orto"
+      : activeEntity === "robo"
+        ? "Robô"
+        : "Consolidado Clínico + Orto";
 
   return (
     <>
@@ -350,25 +424,38 @@ export function SummaryAnalysisDashboard({
             Exportar XLSX
           </button>
         </div>
-        <p className="text-xs text-muted">Os campos manuais são reiniciados ao trocar o período.</p>
+        <p className="text-xs text-muted">Os resultados seguem campanha, lote e DataVencimento.</p>
       </div>
 
       <section className="mt-4 rounded-2xl border border-default bg-surface-primary p-4 shadow-sm">
-        <div className="grid gap-3 lg:grid-cols-[minmax(180px,1fr)_minmax(180px,1fr)_auto] lg:items-end">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5 xl:items-end">
+          <MultiSelectFilter label="Campanha" values={campaignIds} options={campaignOptions} onChange={updateCampaigns} />
+          <MultiSelectFilter label="Lote" values={batchIds} options={batchOptions} onChange={updateBatches} />
           <label className="text-xs font-medium text-secondary">
-            Data inicial
-            <input type="date" value={from} max={to || undefined} onChange={(event) => void loadRange(event.target.value, to)} className="mt-1 w-full rounded-lg border border-default bg-surface-secondary px-3 py-2.5 text-sm text-primary outline-none focus:border-focus focus:ring-2 focus:ring-brand" />
+            Vencimento inicial
+            <input
+              type="date"
+              value={from}
+              max={to || undefined}
+              onChange={(event) => void loadFilters({ from: event.target.value, to, campaignIds, batchIds })}
+              className="mt-1 w-full rounded-lg border border-default bg-surface-secondary px-3 py-2.5 text-sm text-primary outline-none focus:border-focus focus:ring-2 focus:ring-brand"
+            />
           </label>
           <label className="text-xs font-medium text-secondary">
-            Data final
-            <input type="date" value={to} min={from || undefined} onChange={(event) => void loadRange(from, event.target.value)} className="mt-1 w-full rounded-lg border border-default bg-surface-secondary px-3 py-2.5 text-sm text-primary outline-none focus:border-focus focus:ring-2 focus:ring-brand" />
+            Vencimento final
+            <input
+              type="date"
+              value={to}
+              min={from || undefined}
+              onChange={(event) => void loadFilters({ from, to: event.target.value, campaignIds, batchIds })}
+              className="mt-1 w-full rounded-lg border border-default bg-surface-secondary px-3 py-2.5 text-sm text-primary outline-none focus:border-focus focus:ring-2 focus:ring-brand"
+            />
           </label>
-          <div className="flex flex-wrap gap-2">
-            <button type="button" onClick={() => applyQuickRange("current")} className="rounded-lg border border-brand bg-brand-soft px-3 py-2.5 text-xs font-semibold text-brand">Este mês</button>
-            <button type="button" onClick={() => applyQuickRange("previous")} className="rounded-lg border border-default bg-surface-secondary px-3 py-2.5 text-xs font-semibold text-secondary">Mês anterior</button>
-            <button type="button" onClick={() => applyQuickRange("last30")} className="rounded-lg border border-default bg-surface-secondary px-3 py-2.5 text-xs font-semibold text-secondary">Últimos 30 dias</button>
-          </div>
+          <button type="button" onClick={clearFilters} className="rounded-lg border border-default bg-surface-secondary px-3 py-2.5 text-sm font-semibold text-secondary transition hover:bg-surface-hover hover:text-primary">
+            Limpar filtros
+          </button>
         </div>
+        <p className="mt-3 text-xs text-muted">As datas são opcionais e filtram a DataVencimento das parcelas. Sem período definido, entram todos os vencimentos do escopo selecionado.</p>
         {loading ? <p className="mt-3 text-xs font-medium text-brand">Atualizando resultados...</p> : null}
         {error ? <p className="mt-3 rounded-lg border border-danger bg-danger-soft px-3 py-2 text-sm text-danger">{error}</p> : null}
       </section>
@@ -388,43 +475,53 @@ export function SummaryAnalysisDashboard({
               <>
                 {isRobot ? (
                   <div className="mb-4 rounded-xl border border-brand bg-brand-soft p-4">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div>
-                        <p className="text-xs font-semibold uppercase tracking-wide text-brand">Robô</p>
-                        <h2 className="mt-1 text-lg font-semibold text-primary">Resultados via PIX</h2>
-                      </div>
-                      <span className="rounded-full border border-brand bg-surface-primary px-3 py-1 text-xs font-semibold text-brand">Captura automática</span>
-                    </div>
-                    <p className="mt-2 text-sm text-secondary">Considera somente pagamentos com DataPagamento dentro do período e DescricaoRecebimento contendo PIX.</p>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-brand">Robô</p>
+                    <h2 className="mt-1 text-lg font-semibold text-primary">Resultados via PIX</h2>
+                    <p className="mt-2 text-sm text-secondary">Os recebimentos PIX são separados pelo Tipo de Parcela e respeitam campanha, lote e DataVencimento.</p>
                   </div>
                 ) : null}
 
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-wide text-muted">Entradas</p>
                   <h2 className="mt-1 text-lg font-semibold text-primary">{activeTitle}</h2>
-                  <p className="mt-1 text-sm text-secondary">
-                    {isRobot
-                      ? "Informe quantidade e valor dos disparos do Robô. Os resultados financeiros são capturados automaticamente pelos recebimentos PIX no período."
-                      : "Informe quantidade e valor dos disparos. Os resultados pagos usam DataPagamento e DescricaoRecebimento; o Tipo de Parcela define Clínico ou Orto."}
-                  </p>
+                  <p className="mt-1 text-sm text-secondary">A quantidade de disparos permanece informada pelo usuário. O Valor disparos é calculado automaticamente pela soma das parcelas do filtro atual.</p>
                 </div>
 
                 <div className="mt-4 grid gap-3 md:grid-cols-3">
                   <label className="text-xs font-medium text-secondary">
                     Qtde disparos
-                    <input inputMode="numeric" value={manual[activeManualEntity].dispatchCount} onChange={(event) => updateManual(activeManualEntity, "dispatchCount", event.target.value)} placeholder="0" className="mt-1 w-full rounded-lg border border-default bg-surface-secondary px-3 py-3 text-base font-semibold text-primary outline-none focus:border-focus focus:ring-2 focus:ring-brand" />
+                    <input
+                      inputMode="numeric"
+                      value={manual[activeManualEntity].dispatchCount}
+                      onChange={(event) => updateDispatchCount(activeManualEntity, event.target.value)}
+                      placeholder="0"
+                      className="mt-1 w-full rounded-lg border border-default bg-surface-secondary px-3 py-3 text-base font-semibold text-primary outline-none focus:border-focus focus:ring-2 focus:ring-brand"
+                    />
                   </label>
-                  <label className="text-xs font-medium text-secondary">
-                    Valor disparos
-                    <input inputMode="numeric" value={manual[activeManualEntity].dispatchValue} onChange={(event) => updateManual(activeManualEntity, "dispatchValue", event.target.value)} placeholder="R$ 0,00" className="mt-1 w-full rounded-lg border border-default bg-surface-secondary px-3 py-3 text-base font-semibold text-primary outline-none focus:border-focus focus:ring-2 focus:ring-brand" />
-                  </label>
-                  <article className="rounded-xl border border-success bg-success-soft p-3">
-                    <p className="text-xs font-medium text-secondary">Custo ação</p>
-                    <p className="mt-1 text-xl font-semibold text-success">{formatCurrencyBR(activeCalculated.actionCostCents)}</p>
-                    <p className="mt-1 text-[11px] text-secondary">{formatCount(activeCalculated.dispatchCount)} × {formatCurrencyBR(dispatchUnitCostCents)}</p>
-                  </article>
+                  <MetricCard label="Valor disparos" value={formatCurrencyBR(activeCalculated.dispatchValueCents)} hint="Somatório automático das parcelas filtradas" />
+                  <MetricCard label="Custo ação" value={formatCurrencyBR(activeCalculated.actionCostCents)} hint={`${formatCount(activeCalculated.dispatchCount)} × ${formatCurrencyBR(dispatchUnitCostCents)}`} />
                 </div>
                 <p className="mt-2 text-xs text-muted">Custo unitário por disparo: {formatCurrencyBR(dispatchUnitCostCents)} (definido em Configurações).</p>
+
+                {isRobot ? (
+                  <div className="mt-6 border-t border-subtle pt-5">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted">PIX por tipo de parcela</p>
+                    <div className="mt-3 grid gap-3 md:grid-cols-2">
+                      <SummaryCard title="Clínico" badge="PIX" rows={[
+                        { label: "Valor das parcelas", value: formatCurrencyBR(metrics.roboClinico.dispatchValueCents) },
+                        { label: "Associados pagos", value: formatCount(metrics.roboClinico.paidAssociateCount) },
+                        { label: "Parcelas pagas", value: formatCount(metrics.roboClinico.paidInstallmentCount) },
+                        { label: "Recebido", value: formatCurrencyBR(metrics.roboClinico.paidAmountCents), positive: true }
+                      ]} />
+                      <SummaryCard title="Orto" badge="PIX" rows={[
+                        { label: "Valor das parcelas", value: formatCurrencyBR(metrics.roboOrto.dispatchValueCents) },
+                        { label: "Associados pagos", value: formatCount(metrics.roboOrto.paidAssociateCount) },
+                        { label: "Parcelas pagas", value: formatCount(metrics.roboOrto.paidInstallmentCount) },
+                        { label: "Recebido", value: formatCurrencyBR(metrics.roboOrto.paidAmountCents), positive: true }
+                      ]} />
+                    </div>
+                  </div>
+                ) : null}
 
                 <div className="mt-6 border-t border-subtle pt-5">
                   <p className="text-xs font-semibold uppercase tracking-wide text-muted">Resultados</p>
@@ -450,7 +547,7 @@ export function SummaryAnalysisDashboard({
                 </div>
                 <div className="mt-4 grid gap-3 md:grid-cols-3">
                   <MetricCard label="Qtde disparos" value={formatCount(combined.dispatchCount)} />
-                  <MetricCard label="Valor disparos" value={formatCurrencyBR(combined.dispatchValueCents)} />
+                  <MetricCard label="Valor disparos" value={formatCurrencyBR(combined.dispatchValueCents)} hint="Somatório automático das parcelas filtradas" />
                   <MetricCard label="Custo ação" value={formatCurrencyBR(combined.actionCostCents)} />
                 </div>
                 <div className="mt-6 border-t border-subtle pt-5">
@@ -474,25 +571,27 @@ export function SummaryAnalysisDashboard({
 
         <aside className="rounded-2xl border border-default bg-surface-primary p-4 shadow-sm">
           <h2 className="text-base font-semibold text-primary">Resumo por entidade</h2>
-          <p className="mt-1 text-xs text-muted">Período de {displayDate(from)} a {displayDate(to)}.</p>
+          <p className="mt-1 text-xs text-muted">Vencimento: {periodLabel}.</p>
+          <p className="mt-1 text-xs text-muted">Campanhas: {selectedCampaignNames.length ? selectedCampaignNames.join(", ") : "Todas"}.</p>
+          <p className="mt-1 text-xs text-muted">Lotes: {selectedBatchNames.length ? selectedBatchNames.join(", ") : "Todos"}.</p>
           <div className="mt-4 space-y-3">
             <SummaryCard title="Clínico" rows={[
-              { label: "Disparos", value: formatCount(clinico.dispatchCount) },
+              { label: "Valor disparos", value: formatCurrencyBR(clinico.dispatchValueCents) },
               { label: "Pago", value: formatCurrencyBR(clinico.paidAmountCents) },
               { label: "Líquido", value: formatCurrencyBR(clinico.netAmountCents), positive: clinico.netAmountCents >= 0 }
             ]} />
             <SummaryCard title="Orto" rows={[
-              { label: "Disparos", value: formatCount(orto.dispatchCount) },
+              { label: "Valor disparos", value: formatCurrencyBR(orto.dispatchValueCents) },
               { label: "Pago", value: formatCurrencyBR(orto.paidAmountCents) },
               { label: "Líquido", value: formatCurrencyBR(orto.netAmountCents), positive: orto.netAmountCents >= 0 }
             ]} />
             <SummaryCard title="Robô" badge="Resultados via PIX" rows={[
-              { label: "Disparos", value: formatCount(robo.dispatchCount) },
-              { label: "Recebido via PIX", value: formatCurrencyBR(robo.paidAmountCents) },
+              { label: "Valor disparos", value: formatCurrencyBR(robo.dispatchValueCents) },
+              { label: "Recebido PIX", value: formatCurrencyBR(robo.paidAmountCents) },
               { label: "Líquido", value: formatCurrencyBR(robo.netAmountCents), positive: robo.netAmountCents >= 0 }
             ]} />
-            <SummaryCard title="Clínico + Orto" badge="Consolidado automático" rows={[
-              { label: "Disparos", value: formatCount(combined.dispatchCount) },
+            <SummaryCard title="Clínico + Orto" badge="Consolidado" rows={[
+              { label: "Valor disparos", value: formatCurrencyBR(combined.dispatchValueCents) },
               { label: "Pago", value: formatCurrencyBR(combined.paidAmountCents) },
               { label: "Líquido", value: formatCurrencyBR(combined.netAmountCents), positive: combined.netAmountCents >= 0 }
             ]} />
