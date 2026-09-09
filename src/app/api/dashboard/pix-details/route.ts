@@ -55,7 +55,15 @@ export async function GET(request: Request) {
        where paid_amount_cents is not null
          and payment_description is not null
          and upper(payment_description) <> 'ABERTO'
-         and upper(payment_description) like '%PIX%'`,
+         and upper(trim(payment_description)) in (
+           'PIX',
+           'PIX - CLINICO',
+           'PIX - ORTODONTIA',
+           'PIX NEW ODONTO - P4X',
+           'PIX NEW ODONTOLOGIA - P4X',
+           'PIX ODONTOART - P4X',
+           'PIX RECORRENTE ODONTOART - P4X'
+         )`,
       [campaignIds.data, batchIds.data]
     );
 
