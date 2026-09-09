@@ -1,0 +1,57 @@
+name: Patch associados searchable filters
+
+on:
+  push:
+    branches:
+      - feat/associados-select-all-filter-options
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: feat/associados-select-all-filter-options
+
+      - name: Update searchable multi-select filters
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/components/associados-card-list.tsx")
+          source = path.read_text(encoding="utf-8")
+
+          marker = """  const selectedLabels = options\n    .filter((option) => values.includes(option.value))\n"""
+          replacement = """  const visibleValues = visibleOptions.map((option) => option.value);\n  const allVisibleSelected =\n    visibleValues.length > 0 && visibleValues.every((value) => values.includes(value));\n  const selectedLabels = options\n    .filter((option) => values.includes(option.value))\n"""
+          if marker not in source:
+              raise SystemExit("selectedLabels marker not found")
+          source = source.replace(marker, replacement, 1)
+
+          marker = """  function toggle(value: string) {\n    onChange(values.includes(value) ? values.filter((item) => item !== value) : [...values, value]);\n  }\n\n  return (\n"""
+          replacement = """  function toggle(value: string) {\n    onChange(values.includes(value) ? values.filter((item) => item !== value) : [...values, value]);\n  }\n\n  function toggleVisibleOptions() {\n    const visibleSet = new Set(visibleValues);\n    if (allVisibleSelected) {\n      onChange(values.filter((value) => !visibleSet.has(value)));\n      return;\n    }\n    onChange(uniqueValues([...values, ...visibleValues]));\n  }\n\n  return (\n"""
+          if marker not in source:
+              raise SystemExit("toggle marker not found")
+          source = source.replace(marker, replacement, 1)
+
+          old = """        {searchable ? (\n          <div className=\"relative mb-2\">\n            <svg\n              viewBox=\"0 0 24 24\"\n              className=\"pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted\"\n              fill=\"none\"\n              stroke=\"currentColor\"\n              strokeWidth=\"2\"\n              aria-hidden=\"true\"\n            >\n              <circle cx=\"11\" cy=\"11\" r=\"6\" />\n              <path d=\"m16 16 4 4\" strokeLinecap=\"round\" />\n            </svg>\n            <input\n              type=\"search\"\n              value={searchQuery}\n              onChange={(event) => setSearchQuery(event.target.value)}\n              placeholder=\"Pesquisar por nome...\"\n              aria-label={`Pesquisar ${label}`}\n              className=\"w-full rounded-lg border border-default bg-surface-secondary py-2 pl-9 pr-3 text-sm text-primary outline-none transition placeholder:text-muted focus:border-focus focus:ring-2 focus:ring-brand\"\n            />\n          </div>\n        ) : null}\n"""
+          new = """        {searchable ? (\n          <div className=\"mb-2 flex items-center gap-2\">\n            <div className=\"relative min-w-0 flex-1\">\n              <svg\n                viewBox=\"0 0 24 24\"\n                className=\"pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted\"\n                fill=\"none\"\n                stroke=\"currentColor\"\n                strokeWidth=\"2\"\n                aria-hidden=\"true\"\n              >\n                <circle cx=\"11\" cy=\"11\" r=\"6\" />\n                <path d=\"m16 16 4 4\" strokeLinecap=\"round\" />\n              </svg>\n              <input\n                type=\"search\"\n                value={searchQuery}\n                onChange={(event) => setSearchQuery(event.target.value)}\n                placeholder=\"Pesquisar...\"\n                aria-label={`Pesquisar ${label}`}\n                className=\"w-full rounded-lg border border-default bg-surface-secondary py-2 pl-9 pr-2 text-sm text-primary outline-none transition placeholder:text-muted focus:border-focus focus:ring-2 focus:ring-brand\"\n              />\n            </div>\n            <label className=\"flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-default bg-surface-secondary px-2.5 py-2 text-xs font-medium text-secondary transition hover:bg-surface-hover hover:text-primary\">\n              <input\n                type=\"checkbox\"\n                checked={allVisibleSelected}\n                onChange={toggleVisibleOptions}\n                disabled={visibleValues.length === 0}\n                aria-label={normalizedSearchQuery ? `Selecionar todos os resultados de ${label}` : `Selecionar todos de ${label}`}\n                className=\"h-4 w-4 rounded border-default\"\n              />\n              <span>Todos</span>\n            </label>\n          </div>\n        ) : null}\n"""
+          if old not in source:
+              raise SystemExit("searchable block not found")
+          source = source.replace(old, new, 1)
+
+          path.write_text(source, encoding="utf-8")
+          workflow = Path(".github/workflows/patch-associados-select-all.yml")
+          workflow.unlink()
+          PY
+
+      - name: Commit patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/components/associados-card-list.tsx .github/workflows/patch-associados-select-all.yml
+          git commit -m "feat: adiciona selecionar todos aos filtros pesquisáveis"
+          git push origin HEAD:feat/associados-select-all-filter-options
