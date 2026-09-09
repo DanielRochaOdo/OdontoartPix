@@ -28,25 +28,23 @@ export async function GET(request: Request) {
 
   try {
     const result = await dbQuery<PixDetailRow>(
-      `with selected as (
+      `with scoped_targets as (
+         select distinct cbm.target_installment_ref_id
+           from campaign_batch_members cbm
+           join campaigns c on c.id = cbm.campaign_id and c.deleted_at is null
+           join campaign_batches cb on cb.id = cbm.batch_id and cb.deleted_at is null
+          where cbm.deleted_at is null
+            and cbm.target_installment_ref_id is not null
+            and (cardinality($1::uuid[]) = 0 or cbm.campaign_id = any($1::uuid[]))
+            and (cardinality($2::uuid[]) = 0 or cbm.batch_id = any($2::uuid[]))
+       ), selected as (
          select
-           cbm.member_id,
-           target.paid_amount_cents,
-           nullif(trim(target.payment_description), '') as payment_description
-         from campaign_batch_members cbm
-         join campaigns c on c.id = cbm.campaign_id and c.deleted_at is null
-         join campaign_batches cb on cb.id = cbm.batch_id and cb.deleted_at is null
-         left join lateral (
-           select mi.paid_amount_cents, mi.payment_description
-             from member_installments mi
-            where mi.campaign_batch_member_id = cbm.id
-              and trim(mi.cod_parcela) = trim(cbm.target_installment_id)
-            order by mi.updated_at desc, mi.created_at desc, mi.id desc
-            limit 1
-         ) target on true
-        where cbm.deleted_at is null
-          and (cardinality($1::uuid[]) = 0 or cbm.campaign_id = any($1::uuid[]))
-          and (cardinality($2::uuid[]) = 0 or cbm.batch_id = any($2::uuid[]))
+           canonical.member_id,
+           canonical.paid_amount_cents,
+           nullif(trim(canonical.payment_description), '') as payment_description
+         from scoped_targets
+         join member_target_installments canonical
+           on canonical.id = scoped_targets.target_installment_ref_id
        )
        select
          count(*)::int as "installmentCount",

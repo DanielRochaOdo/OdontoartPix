@@ -13,12 +13,15 @@ const PIX_PAYMENT_DESCRIPTIONS = [
 ];
 
 describe("dashboard Pix details contract", () => {
-  it("conta parcelas Pix e associados unicos no mesmo escopo", () => {
+  it("conta parcelas Pix e associados unicos na fonte canonica e no mesmo escopo", () => {
     const route = readFileSync(
       resolve(process.cwd(), "src/app/api/dashboard/pix-details/route.ts"),
       "utf8"
     );
 
+    expect(route).toContain("select distinct cbm.target_installment_ref_id");
+    expect(route).toContain("join member_target_installments canonical");
+    expect(route).not.toContain("from member_installments mi");
     expect(route).toContain('count(*)::int as "installmentCount"');
     expect(route).toContain('count(distinct member_id)::int as "memberCount"');
     expect(route).toContain("upper(trim(payment_description)) in (");
