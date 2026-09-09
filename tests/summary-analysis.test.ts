@@ -2,6 +2,16 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
+const PIX_PAYMENT_DESCRIPTIONS = [
+  "PIX",
+  "PIX - CLINICO",
+  "PIX - ORTODONTIA",
+  "PIX NEW ODONTO - P4X",
+  "PIX NEW ODONTOLOGIA - P4X",
+  "PIX ODONTOART - P4X",
+  "PIX RECORRENTE ODONTOART - P4X"
+];
+
 function source(path: string) {
   return readFileSync(resolve(process.cwd(), path), "utf8");
 }
@@ -38,8 +48,14 @@ describe("Resumo e Analise", () => {
     const metrics = source("src/lib/summary-analysis.ts");
     const dashboardMetrics = source("src/lib/metrics.ts");
 
-    expect(metrics).toContain("upper(payment_description) like '%PIX%'");
-    expect(dashboardMetrics).toContain("upper(canonical.payment_description) like '%PIX%'");
+    expect(metrics).toContain("upper(trim(payment_description)) in (");
+    expect(dashboardMetrics).toContain("upper(trim(canonical.payment_description)) in (");
+    expect(metrics).not.toContain("upper(payment_description) like '%PIX%'");
+    expect(dashboardMetrics).not.toContain("upper(canonical.payment_description) like '%PIX%'");
+    for (const description of PIX_PAYMENT_DESCRIPTIONS) {
+      expect(metrics).toContain(`'${description}'`);
+      expect(dashboardMetrics).toContain(`'${description}'`);
+    }
     expect(dashboardMetrics).toContain("upper(canonical.payment_description) <> 'ABERTO'");
     expect(dashboardMetrics).toContain("upper(canonical.payment_description) <> 'ACORDADO'");
     expect(dashboardMetrics).toContain("upper(canonical.payment_description) <> 'EXCLUIDA'");
