@@ -56,6 +56,11 @@ function displayDate(value: string) {
   return match ? `${match[3]}/${match[2]}/${match[1]}` : value;
 }
 
+function periodLabel(from: string, to: string) {
+  if (!from && !to) return "Todos os vencimentos";
+  return `${from ? displayDate(from) : "inicio"} a ${to ? displayDate(to) : "hoje"}`;
+}
+
 function buildPdf(lines: Array<{ text: string; size?: number; gap?: number }>) {
   let y = 800;
   const commands: string[] = ["BT"];
@@ -113,7 +118,7 @@ export async function POST(request: Request) {
     validateSummaryAnalysisRange(parsed.data.from, parsed.data.to);
     const lines = [
       { text: "Resumo e Analise", size: 18, gap: 28 },
-      { text: `Periodo: ${displayDate(parsed.data.from)} a ${displayDate(parsed.data.to)}` },
+      { text: `Vencimento: ${periodLabel(parsed.data.from, parsed.data.to)}` },
       { text: `Custo unitario por disparo: ${currency(parsed.data.dispatchUnitCostCents)}`, gap: 24 },
       ...entityLines("Clinico", parsed.data.clinico),
       ...entityLines("Orto", parsed.data.orto),
@@ -125,7 +130,7 @@ export async function POST(request: Request) {
       status: 200,
       headers: {
         "Content-Type": "application/pdf",
-        "Content-Disposition": `attachment; filename="resumo-analise-${parsed.data.from}-a-${parsed.data.to}.pdf"`,
+        "Content-Disposition": 'attachment; filename="resumo-analise.pdf"',
         "Cache-Control": "no-store"
       }
     });
