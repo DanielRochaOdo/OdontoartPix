@@ -8,7 +8,7 @@ on:
       - postgres-local-auth-foundation
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   validate:
@@ -31,10 +31,8 @@ jobs:
           --health-retries 10
 
     steps:
-      - name: Checkout triggering branch
+      - name: Checkout triggering commit
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.ref || github.ref }}
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -44,19 +42,6 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
-
-      - name: Refresh vulnerable production dependencies
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'fix/dashboard-pagamentos-via-pix'
-        shell: bash
-        run: |
-          if [ "$(node -p "require('./package.json').dependencies.next")" != "16.3.4" ]; then
-            npm install next@16.3.4 --save-exact
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add package.json package-lock.json
-            git commit -m "chore: update vulnerable production dependencies"
-            git push origin HEAD:${{ github.event.pull_request.head.ref }}
-          fi
 
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high
