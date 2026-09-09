@@ -101,13 +101,37 @@ export async function getSummaryAnalysisMetrics(
          where installment_type = 'orto'
        ), 0)::float8 as orto_paid_amount_cents,
        count(distinct member_id) filter (
-         where upper(payment_description) like '%PIX%'
+         where upper(trim(payment_description)) in (
+           'PIX',
+           'PIX - CLINICO',
+           'PIX - ORTODONTIA',
+           'PIX NEW ODONTO - P4X',
+           'PIX NEW ODONTOLOGIA - P4X',
+           'PIX ODONTOART - P4X',
+           'PIX RECORRENTE ODONTOART - P4X'
+         )
        )::int as pix_paid_associates,
        count(*) filter (
-         where upper(payment_description) like '%PIX%'
+         where upper(trim(payment_description)) in (
+           'PIX',
+           'PIX - CLINICO',
+           'PIX - ORTODONTIA',
+           'PIX NEW ODONTO - P4X',
+           'PIX NEW ODONTOLOGIA - P4X',
+           'PIX ODONTOART - P4X',
+           'PIX RECORRENTE ODONTOART - P4X'
+         )
        )::int as pix_paid_installments,
        coalesce(sum(paid_amount_cents) filter (
-         where upper(payment_description) like '%PIX%'
+         where upper(trim(payment_description)) in (
+           'PIX',
+           'PIX - CLINICO',
+           'PIX - ORTODONTIA',
+           'PIX NEW ODONTO - P4X',
+           'PIX NEW ODONTOLOGIA - P4X',
+           'PIX ODONTOART - P4X',
+           'PIX RECORRENTE ODONTOART - P4X'
+         )
        ), 0)::float8 as pix_paid_amount_cents
      from paid`,
     [from, to]
