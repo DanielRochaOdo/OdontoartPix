@@ -356,7 +356,15 @@ export async function getDashboardPixPaidMetrics(filters: DashboardMetricsFilter
           and upper(canonical.payment_description) <> 'ABERTO'
           and upper(canonical.payment_description) <> 'ACORDADO'
           and upper(canonical.payment_description) <> 'EXCLUIDA'
-          and upper(canonical.payment_description) like '%PIX%'`,
+          and upper(trim(canonical.payment_description)) in (
+            'PIX',
+            'PIX - CLINICO',
+            'PIX - ORTODONTIA',
+            'PIX NEW ODONTO - P4X',
+            'PIX NEW ODONTOLOGIA - P4X',
+            'PIX ODONTOART - P4X',
+            'PIX RECORRENTE ODONTOART - P4X'
+          )`,
       [campaignIds, batchIds]
     );
 
