@@ -287,7 +287,7 @@ export function buildAssociadosWorkbook({
     { wch: 26 }, { wch: 22 }, { wch: 22 }, { wch: 30 }, { wch: 18 }, { wch: 20 },
     { wch: 18 }, { wch: 18 }, { wch: 18 }
   ];
-  worksheet["!rows"] = [{ hpt: 30 }, { hpt: 22 }, { hpt: 20 }, undefined, { hpt: 22 }, { hpt: 20 }];
+  worksheet["!rows"] = [{ hpt: 30 }, { hpt: 22 }, { hpt: 20 }, {}, { hpt: 22 }, { hpt: 20 }];
 
   styleRange(worksheet, 0, 0, 0, 14, titleStyle);
   styleRange(worksheet, 1, 1, 0, 14, subtitleStyle);
@@ -420,7 +420,7 @@ export function buildSummaryAnalysisWorkbook({
     { wch: 14 }, { wch: 14 }, { wch: 20 }, { wch: 14 }, { wch: 14 }, { wch: 14 },
     { wch: 20 }, { wch: 14 }, { wch: 14 }, { wch: 14 }
   ];
-  worksheet["!rows"] = [{ hpt: 30 }, { hpt: 22 }, { hpt: 20 }, undefined, { hpt: 22 }, { hpt: 20 }];
+  worksheet["!rows"] = [{ hpt: 30 }, { hpt: 22 }, { hpt: 20 }, {}, { hpt: 22 }, { hpt: 20 }];
   styleRange(worksheet, 0, 0, 0, 15, titleStyle);
   styleRange(worksheet, 1, 1, 0, 15, subtitleStyle);
   styleRange(worksheet, 2, 2, 0, 15, infoStyle);
