@@ -27,7 +27,7 @@ jobs:
       - name: Install styled XLSX writer
         run: npm install xlsx-js-style@1.2.0 --save
 
-      - name: Use styled writer only in export screens
+      - name: Prepare styled exports
         shell: bash
         run: |
           python <<'PY'
@@ -40,6 +40,10 @@ jobs:
               text = path.read_text()
               text = text.replace('import * as XLSX from "xlsx";', 'import * as XLSX from "xlsx-js-style";')
               path.write_text(text)
+
+          helper = Path('src/lib/export-workbooks.ts')
+          text = helper.read_text().replace(', undefined,', ', {},')
+          helper.write_text(text)
           PY
 
       - name: Validate
@@ -47,12 +51,12 @@ jobs:
           npm run typecheck
           npm run test
 
-      - name: Commit dependency and imports
+      - name: Commit dependency and exports
         shell: bash
         run: |
           git config user.name "DanielRochaOdo"
           git config user.email "daniel.rocha@odontoart.com"
-          git add package.json package-lock.json src/components/associados-card-list.tsx src/components/summary-analysis-dashboard.tsx
+          git add package.json package-lock.json src/lib/export-workbooks.ts src/components/associados-card-list.tsx src/components/summary-analysis-dashboard.tsx
           if git diff --cached --quiet; then
             exit 0
           fi
