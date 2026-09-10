@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
+import { buildAssociadosWorkbook } from "@/lib/export-workbooks";
 import type { AssociadoCardListItem } from "@/lib/associados-card-read";
 import { emitMetricsSync } from "@/lib/metrics-sync";
 import {
@@ -820,37 +821,46 @@ export function AssociadosCardList({
   function exportFilteredRows() {
     if (filteredRows.length === 0) return;
 
-    const worksheet = XLSX.utils.json_to_sheet(
-      filteredRows.map((row) => ({
-        Nome: row.name,
-        CodigoAssociadoEmpresa: row.associatedCode,
-        Parcela: row.installment,
-        Vencimento: row.dueDate || "",
-        CPF: row.cpf ? `***.***.***-${row.cpf.slice(-2)}` : "",
-        Campanha: row.campaign,
-        Lote: row.batch,
-        Status: row.missingInstallment
-          ? `Erro — ${INSTALLMENT_NOT_FOUND_LABEL}`
-          : statusLabel(row.status),
-        Pagamento: row.paidWithPending ? "Pago com pendência" : paymentLabel(row.payment),
-        "Tipo de Pagto": row.receiptDescription,
-        "Tipo Parcela": row.installmentType === "-" ? "" : row.installmentType,
-        "Data de Pagamento": row.paymentDate === "-" ? "" : row.paymentDate,
-        Valor: formatMoney(row.amount),
-        "Valor Pago": formatMoney(row.paidAmount),
-        Pendencia: formatMoney(row.pending)
+    const campaignLabels = new Map(options.campaign);
+    const batchLabels = new Map(options.batch);
+    const workbook = buildAssociadosWorkbook({
+      filters: [
+        { label: "Pesquisa geral", value: query.trim() || "Todos" },
+        { label: "Código associado", value: codeFilter.trim() || "Todos" },
+        { label: "Parcela", value: installmentFilter.trim() || "Todas" },
+        { label: "Data de vencimento", value: dateLabel },
+        { label: "Data de pagamento", value: paymentDateLabel },
+        { label: "Status", value: statusFilters.length ? statusFilters.map(statusLabel).join(", ") : "Todos" },
+        { label: "Pagamento", value: paymentFilters.length ? paymentFilters.map(paymentLabel).join(", ") : "Todos" },
+        { label: "Pago com pendência", value: paidPendingFilter === "yes" ? "Sim" : paidPendingFilter === "no" ? "Não" : "Todos" },
+        { label: "Tipo de pagamento", value: receiptFilters.length ? receiptFilters.join(", ") : "Todos" },
+        { label: "Tipo de parcela", value: installmentTypeFilters.length ? installmentTypeFilters.join(", ") : "Todos" },
+        { label: "Campanha", value: campaignFilters.length ? campaignFilters.map((id) => campaignLabels.get(id) ?? id).join(", ") : "Todas" },
+        { label: "Lote", value: batchFilters.length ? batchFilters.map((id) => batchLabels.get(id) ?? id).join(", ") : "Todos" }
+      ],
+      rows: filteredRows.map((row) => ({
+        name: row.name,
+        associatedCode: row.associatedCode,
+        installment: row.installment,
+        dueDate: row.dueDate || "",
+        cpf: row.cpf ? `***.***.***-${row.cpf.slice(-2)}` : "",
+        campaign: row.campaign,
+        batch: row.batch,
+        status: row.missingInstallment ? `Erro — ${INSTALLMENT_NOT_FOUND_LABEL}` : statusLabel(row.status),
+        payment: row.paidWithPending ? "Pago com pendência" : paymentLabel(row.payment),
+        receiptDescription: row.receiptDescription,
+        installmentType: row.installmentType === "-" ? "" : row.installmentType,
+        paymentDate: row.paymentDate === "-" ? "" : row.paymentDate,
+        amountCents: row.amount,
+        paidAmountCents: row.paidAmount,
+        pendingCents: row.pending
       }))
+    });
+    XLSX.writeFile(
+      workbook,
+      `associados-filtrados-${new Date().toISOString().slice(0, 10)}.xlsx`,
+      { cellStyles: true }
     );
-
-    worksheet["!cols"] = [
-      { wch: 32 }, { wch: 28 }, { wch: 18 }, { wch: 16 }, { wch: 18 }, { wch: 28 },
-      { wch: 28 }, { wch: 28 }, { wch: 22 }, { wch: 28 }, { wch: 18 }, { wch: 20 },
-      { wch: 16 }, { wch: 16 }, { wch: 16 }
-    ];
-
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Associados");
-    XLSX.writeFile(workbook, `associados-filtrados-${new Date().toISOString().slice(0, 10)}.xlsx`);
   }
 
   async function reprocessSelected() {
