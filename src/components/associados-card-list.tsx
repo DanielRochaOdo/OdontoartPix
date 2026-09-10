@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import * as XLSX from "xlsx";
+import * as XLSX from "xlsx-js-style";
 import { buildAssociadosWorkbook } from "@/lib/export-workbooks";
 import type { AssociadoCardListItem } from "@/lib/associados-card-read";
 import { emitMetricsSync } from "@/lib/metrics-sync";
