@@ -1,0 +1,60 @@
+name: Configure styled XLSX writer
+
+on:
+  push:
+    branches:
+      - feat/exportacoes-layout-e-valores
+    paths:
+      - .github/workflows/style-xlsx-writer.yml
+
+permissions:
+  contents: write
+
+jobs:
+  configure:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/exportacoes-layout-e-valores
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install styled XLSX writer
+        run: npm install xlsx-js-style@1.2.0 --save
+
+      - name: Use styled writer only in export screens
+        shell: bash
+        run: |
+          python <<'PY'
+          from pathlib import Path
+          for filename in [
+              'src/components/associados-card-list.tsx',
+              'src/components/summary-analysis-dashboard.tsx',
+          ]:
+              path = Path(filename)
+              text = path.read_text()
+              text = text.replace('import * as XLSX from "xlsx";', 'import * as XLSX from "xlsx-js-style";')
+              path.write_text(text)
+          PY
+
+      - name: Validate
+        run: |
+          npm run typecheck
+          npm run test
+
+      - name: Commit dependency and imports
+        shell: bash
+        run: |
+          git config user.name "DanielRochaOdo"
+          git config user.email "daniel.rocha@odontoart.com"
+          git add package.json package-lock.json src/components/associados-card-list.tsx src/components/summary-analysis-dashboard.tsx
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "feat: grava cores e bordas nos arquivos xlsx"
+          git push origin HEAD:feat/exportacoes-layout-e-valores
