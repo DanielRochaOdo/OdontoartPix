@@ -1,4 +1,4 @@
-import * as XLSX from "xlsx";
+import * as XLSX from "xlsx-js-style";
 
 export type ExportFilter = {
   label: string;
@@ -45,46 +45,132 @@ export type SummaryPixExportEntity = {
 
 const ACCOUNTING_FORMAT = '"R$" #,##0.00;[Red]-"R$" #,##0.00;"R$" -';
 const PERCENT_FORMAT = "0.00%";
+const BORDER_COLOR = "B8CCCC";
+const WHITE = "FFFFFF";
+const SURFACE = "F4FBFA";
+const SURFACE_ALT = "ECF7F5";
+const TEAL_DARK = "062B2B";
+const TEAL = "0F766E";
+const TEAL_SOFT = "CCFBF1";
+const TEXT = "102F35";
+const MUTED = "527B80";
+
+const thinBorder = {
+  top: { style: "thin", color: { rgb: BORDER_COLOR } },
+  bottom: { style: "thin", color: { rgb: BORDER_COLOR } },
+  left: { style: "thin", color: { rgb: BORDER_COLOR } },
+  right: { style: "thin", color: { rgb: BORDER_COLOR } }
+};
 
 const titleStyle = {
   font: { bold: true, color: { rgb: "E6FFFA" }, sz: 16 },
-  fill: { fgColor: { rgb: "062B2B" } },
-  alignment: { vertical: "center" }
+  fill: { patternType: "solid", fgColor: { rgb: TEAL_DARK } },
+  alignment: { vertical: "center", horizontal: "left" },
+  border: thinBorder
 };
 const subtitleStyle = {
-  font: { color: { rgb: "527B80" }, sz: 11 }
+  font: { color: { rgb: MUTED }, sz: 11 },
+  fill: { patternType: "solid", fgColor: { rgb: SURFACE } },
+  alignment: { vertical: "center" },
+  border: thinBorder
+};
+const infoStyle = {
+  font: { color: { rgb: MUTED }, italic: true, sz: 10 },
+  fill: { patternType: "solid", fgColor: { rgb: SURFACE } },
+  alignment: { vertical: "center" },
+  border: thinBorder
 };
 const sectionStyle = {
-  font: { bold: true, color: { rgb: "0F766E" } },
-  fill: { fgColor: { rgb: "CCFBF1" } }
+  font: { bold: true, color: { rgb: WHITE }, sz: 11 },
+  fill: { patternType: "solid", fgColor: { rgb: TEAL } },
+  alignment: { vertical: "center", horizontal: "left" },
+  border: thinBorder
+};
+const filterHeaderStyle = {
+  font: { bold: true, color: { rgb: WHITE }, sz: 9 },
+  fill: { patternType: "solid", fgColor: { rgb: TEAL_DARK } },
+  alignment: { vertical: "center", horizontal: "left" },
+  border: thinBorder
+};
+const filterLabelStyle = {
+  font: { bold: true, color: { rgb: TEAL }, sz: 9 },
+  fill: { patternType: "solid", fgColor: { rgb: TEAL_SOFT } },
+  alignment: { vertical: "center", wrapText: true },
+  border: thinBorder
+};
+const filterValueStyle = {
+  font: { color: { rgb: TEXT }, sz: 9 },
+  fill: { patternType: "solid", fgColor: { rgb: WHITE } },
+  alignment: { vertical: "center", wrapText: true },
+  border: thinBorder
 };
 const tableHeaderStyle = {
-  font: { bold: true, color: { rgb: "FFFFFF" } },
-  fill: { fgColor: { rgb: "0F766E" } },
-  alignment: { vertical: "center" }
+  font: { bold: true, color: { rgb: WHITE }, sz: 10 },
+  fill: { patternType: "solid", fgColor: { rgb: TEAL } },
+  alignment: { vertical: "center", horizontal: "center", wrapText: true },
+  border: thinBorder
+};
+const bodyStyle = {
+  font: { color: { rgb: TEXT }, sz: 10 },
+  fill: { patternType: "solid", fgColor: { rgb: WHITE } },
+  alignment: { vertical: "center" },
+  border: thinBorder
+};
+const bodyAltStyle = {
+  font: { color: { rgb: TEXT }, sz: 10 },
+  fill: { patternType: "solid", fgColor: { rgb: SURFACE_ALT } },
+  alignment: { vertical: "center" },
+  border: thinBorder
 };
 const cardHeaderStyle = {
-  font: { bold: true, color: { rgb: "FFFFFF" } },
-  fill: { fgColor: { rgb: "0F766E" } },
-  alignment: { vertical: "center", horizontal: "left" }
+  font: { bold: true, color: { rgb: WHITE }, sz: 11 },
+  fill: { patternType: "solid", fgColor: { rgb: TEAL } },
+  alignment: { vertical: "center", horizontal: "left" },
+  border: thinBorder
 };
 const cardLabelStyle = {
-  font: { color: { rgb: "527B80" }, sz: 10 },
-  fill: { fgColor: { rgb: "F4FBFA" } }
+  font: { bold: true, color: { rgb: MUTED }, sz: 9 },
+  fill: { patternType: "solid", fgColor: { rgb: SURFACE_ALT } },
+  alignment: { vertical: "center", wrapText: true },
+  border: thinBorder
 };
 const cardValueStyle = {
-  font: { bold: true, color: { rgb: "102F35" }, sz: 11 },
-  fill: { fgColor: { rgb: "F4FBFA" } }
+  font: { bold: true, color: { rgb: TEXT }, sz: 10 },
+  fill: { patternType: "solid", fgColor: { rgb: WHITE } },
+  alignment: { vertical: "center", horizontal: "right" },
+  border: thinBorder
 };
 
+function ensureCell(worksheet: XLSX.WorkSheet, ref: string) {
+  if (!worksheet[ref]) worksheet[ref] = { t: "s", v: "" };
+  return worksheet[ref];
+}
+
 function setStyle(worksheet: XLSX.WorkSheet, ref: string, style: unknown) {
-  const cell = worksheet[ref];
-  if (cell) cell.s = style;
+  ensureCell(worksheet, ref).s = style;
+}
+
+function styleRange(
+  worksheet: XLSX.WorkSheet,
+  startRow: number,
+  endRow: number,
+  startCol: number,
+  endCol: number,
+  style: unknown
+) {
+  for (let row = startRow; row <= endRow; row += 1) {
+    for (let col = startCol; col <= endCol; col += 1) {
+      setStyle(worksheet, XLSX.utils.encode_cell({ r: row, c: col }), style);
+    }
+  }
 }
 
 function setNumberFormat(worksheet: XLSX.WorkSheet, ref: string, format: string) {
   const cell = worksheet[ref];
-  if (cell && cell.t === "n") cell.z = format;
+  if (cell && cell.t === "n") {
+    cell.z = format;
+    cell.s = { ...(cell.s ?? {}), numFmt: format };
+  }
 }
 
 function generatedLabel(date: Date) {
@@ -92,6 +178,32 @@ function generatedLabel(date: Date) {
     dateStyle: "short",
     timeStyle: "short"
   }).format(date)}`;
+}
+
+function buildFilterRows(filters: ExportFilter[]) {
+  const rows: string[][] = [];
+  const rowCount = Math.max(1, Math.ceil(filters.length / 3));
+  for (let row = 0; row < rowCount; row += 1) {
+    const values: string[] = [];
+    for (let pair = 0; pair < 3; pair += 1) {
+      const filter = filters[row * 3 + pair];
+      values.push(filter?.label ?? "", filter?.value ?? "");
+    }
+    rows.push(values);
+  }
+  return rows;
+}
+
+function styleFilterGrid(worksheet: XLSX.WorkSheet, startRow: number, filterRows: string[][]) {
+  styleRange(worksheet, startRow, startRow, 0, 5, sectionStyle);
+  styleRange(worksheet, startRow + 1, startRow + 1, 0, 5, filterHeaderStyle);
+  for (let row = 0; row < filterRows.length; row += 1) {
+    const sheetRow = startRow + 2 + row;
+    for (let pair = 0; pair < 3; pair += 1) {
+      setStyle(worksheet, XLSX.utils.encode_cell({ r: sheetRow, c: pair * 2 }), filterLabelStyle);
+      setStyle(worksheet, XLSX.utils.encode_cell({ r: sheetRow, c: pair * 2 + 1 }), filterValueStyle);
+    }
+  }
 }
 
 export function buildAssociadosWorkbook({
@@ -120,13 +232,15 @@ export function buildAssociadosWorkbook({
     "Valor pago (R$)",
     "Pendência (R$)"
   ];
+  const filterRows = buildFilterRows(filters);
   const metadataRows: (string | number | null)[][] = [
     ["ODONTOPIX · ASSOCIADOS"],
     ["Exportação dos registros filtrados"],
     [generatedLabel(generatedAt)],
     [],
-    ["FILTROS APLICADOS", "CRITÉRIO"],
-    ...filters.map((filter) => [filter.label, filter.value]),
+    ["FILTROS APLICADOS"],
+    ["FILTRO", "CRITÉRIO", "FILTRO", "CRITÉRIO", "FILTRO", "CRITÉRIO"],
+    ...filterRows,
     [],
     [`${new Intl.NumberFormat("pt-BR").format(rows.length)} registro(s) exportado(s)`],
     [],
@@ -159,30 +273,42 @@ export function buildAssociadosWorkbook({
     { origin: `A${firstDataRow}` }
   );
 
+  const countRow = 7 + filterRows.length;
   worksheet["!merges"] = [
     { s: { r: 0, c: 0 }, e: { r: 0, c: 14 } },
     { s: { r: 1, c: 0 }, e: { r: 1, c: 14 } },
     { s: { r: 2, c: 0 }, e: { r: 2, c: 14 } },
-    { s: { r: headerRow - 3, c: 0 }, e: { r: headerRow - 3, c: 14 } }
+    { s: { r: 4, c: 0 }, e: { r: 4, c: 5 } },
+    { s: { r: countRow, c: 0 }, e: { r: countRow, c: 14 } }
   ];
   worksheet["!autofilter"] = { ref: `A${headerRow}:O${Math.max(headerRow, lastDataRow)}` };
   worksheet["!cols"] = [
-    { wch: 32 }, { wch: 20 }, { wch: 16 }, { wch: 16 }, { wch: 18 }, { wch: 26 },
+    { wch: 32 }, { wch: 24 }, { wch: 20 }, { wch: 24 }, { wch: 20 }, { wch: 28 },
     { wch: 26 }, { wch: 22 }, { wch: 22 }, { wch: 30 }, { wch: 18 }, { wch: 20 },
     { wch: 18 }, { wch: 18 }, { wch: 18 }
   ];
-  worksheet["!rows"] = [{ hpt: 28 }, { hpt: 22 }, { hpt: 18 }];
+  worksheet["!rows"] = [{ hpt: 30 }, { hpt: 22 }, { hpt: 20 }, undefined, { hpt: 22 }, { hpt: 20 }];
 
-  setStyle(worksheet, "A1", titleStyle);
-  setStyle(worksheet, "A2", subtitleStyle);
-  setStyle(worksheet, "A5", sectionStyle);
-  setStyle(worksheet, "B5", sectionStyle);
-  for (let column = 0; column < headers.length; column += 1) {
-    setStyle(worksheet, XLSX.utils.encode_cell({ r: headerRow - 1, c: column }), tableHeaderStyle);
-  }
-  for (const column of ["M", "N", "O"]) {
-    for (let row = firstDataRow; row <= lastDataRow; row += 1) {
-      setNumberFormat(worksheet, `${column}${row}`, ACCOUNTING_FORMAT);
+  styleRange(worksheet, 0, 0, 0, 14, titleStyle);
+  styleRange(worksheet, 1, 1, 0, 14, subtitleStyle);
+  styleRange(worksheet, 2, 2, 0, 14, infoStyle);
+  styleFilterGrid(worksheet, 4, filterRows);
+  styleRange(worksheet, countRow, countRow, 0, 14, infoStyle);
+  styleRange(worksheet, headerRow - 1, headerRow - 1, 0, headers.length - 1, tableHeaderStyle);
+
+  for (let row = firstDataRow; row <= lastDataRow; row += 1) {
+    const rowStyle = (row - firstDataRow) % 2 === 0 ? bodyStyle : bodyAltStyle;
+    styleRange(worksheet, row - 1, row - 1, 0, headers.length - 1, rowStyle);
+    for (const column of ["M", "N", "O"]) {
+      const ref = `${column}${row}`;
+      setNumberFormat(worksheet, ref, ACCOUNTING_FORMAT);
+      if (worksheet[ref]) {
+        worksheet[ref].s = {
+          ...(worksheet[ref].s ?? {}),
+          alignment: { vertical: "center", horizontal: "right" },
+          numFmt: ACCOUNTING_FORMAT
+        };
+      }
     }
   }
 
@@ -213,16 +339,15 @@ function addSummaryCard(
 
   XLSX.utils.sheet_add_aoa(worksheet, [[title]], { origin: { r: startRow, c: startCol } });
   worksheet["!merges"]!.push({ s: { r: startRow, c: startCol }, e: { r: startRow, c: startCol + 3 } });
-  setStyle(worksheet, XLSX.utils.encode_cell({ r: startRow, c: startCol }), cardHeaderStyle);
+  styleRange(worksheet, startRow, startRow, startCol, startCol + 3, cardHeaderStyle);
 
   metrics.forEach(([label, value, kind], index) => {
     const row = startRow + index + 1;
     XLSX.utils.sheet_add_aoa(worksheet, [[label, value]], { origin: { r: row, c: startCol } });
     worksheet["!merges"]!.push({ s: { r: row, c: startCol + 1 }, e: { r: row, c: startCol + 3 } });
-    const labelRef = XLSX.utils.encode_cell({ r: row, c: startCol });
+    setStyle(worksheet, XLSX.utils.encode_cell({ r: row, c: startCol }), cardLabelStyle);
+    styleRange(worksheet, row, row, startCol + 1, startCol + 3, cardValueStyle);
     const valueRef = XLSX.utils.encode_cell({ r: row, c: startCol + 1 });
-    setStyle(worksheet, labelRef, cardLabelStyle);
-    setStyle(worksheet, valueRef, cardValueStyle);
     if (kind === "currency") setNumberFormat(worksheet, valueRef, ACCOUNTING_FORMAT);
     if (kind === "percent") setNumberFormat(worksheet, valueRef, PERCENT_FORMAT);
   });
@@ -243,15 +368,14 @@ function addPixCard(
   ];
   XLSX.utils.sheet_add_aoa(worksheet, [[title]], { origin: { r: startRow, c: startCol } });
   worksheet["!merges"]!.push({ s: { r: startRow, c: startCol }, e: { r: startRow, c: startCol + 7 } });
-  setStyle(worksheet, XLSX.utils.encode_cell({ r: startRow, c: startCol }), cardHeaderStyle);
+  styleRange(worksheet, startRow, startRow, startCol, startCol + 7, cardHeaderStyle);
   metrics.forEach(([label, value, kind], index) => {
     const row = startRow + index + 1;
     XLSX.utils.sheet_add_aoa(worksheet, [[label, value]], { origin: { r: row, c: startCol } });
     worksheet["!merges"]!.push({ s: { r: row, c: startCol + 1 }, e: { r: row, c: startCol + 7 } });
-    const labelRef = XLSX.utils.encode_cell({ r: row, c: startCol });
+    setStyle(worksheet, XLSX.utils.encode_cell({ r: row, c: startCol }), cardLabelStyle);
+    styleRange(worksheet, row, row, startCol + 1, startCol + 7, cardValueStyle);
     const valueRef = XLSX.utils.encode_cell({ r: row, c: startCol + 1 });
-    setStyle(worksheet, labelRef, cardLabelStyle);
-    setStyle(worksheet, valueRef, cardValueStyle);
     if (kind === "currency") setNumberFormat(worksheet, valueRef, ACCOUNTING_FORMAT);
   });
 }
@@ -275,27 +399,34 @@ export function buildSummaryAnalysisWorkbook({
   roboOrto: SummaryPixExportEntity;
   generatedAt?: Date;
 }) {
+  const filterRows = buildFilterRows(filters);
   const worksheet = XLSX.utils.aoa_to_sheet([
     ["ODONTOPIX · RESUMO E ANÁLISE"],
     ["Visão consolidada dos resultados operacionais"],
     [generatedLabel(generatedAt)],
     [],
-    ["FILTROS APLICADOS", "CRITÉRIO"],
-    ...filters.map((filter) => [filter.label, filter.value])
+    ["FILTROS APLICADOS"],
+    ["FILTRO", "CRITÉRIO", "FILTRO", "CRITÉRIO", "FILTRO", "CRITÉRIO"],
+    ...filterRows
   ]);
   worksheet["!merges"] = [
     { s: { r: 0, c: 0 }, e: { r: 0, c: 15 } },
     { s: { r: 1, c: 0 }, e: { r: 1, c: 15 } },
-    { s: { r: 2, c: 0 }, e: { r: 2, c: 15 } }
+    { s: { r: 2, c: 0 }, e: { r: 2, c: 15 } },
+    { s: { r: 4, c: 0 }, e: { r: 4, c: 5 } }
   ];
-  worksheet["!cols"] = Array.from({ length: 16 }, (_, index) => ({ wch: index % 4 === 0 ? 20 : 11 }));
-  worksheet["!rows"] = [{ hpt: 28 }, { hpt: 22 }, { hpt: 18 }];
-  setStyle(worksheet, "A1", titleStyle);
-  setStyle(worksheet, "A2", subtitleStyle);
-  setStyle(worksheet, "A5", sectionStyle);
-  setStyle(worksheet, "B5", sectionStyle);
+  worksheet["!cols"] = [
+    { wch: 20 }, { wch: 24 }, { wch: 20 }, { wch: 24 }, { wch: 20 }, { wch: 24 },
+    { wch: 14 }, { wch: 14 }, { wch: 20 }, { wch: 14 }, { wch: 14 }, { wch: 14 },
+    { wch: 20 }, { wch: 14 }, { wch: 14 }, { wch: 14 }
+  ];
+  worksheet["!rows"] = [{ hpt: 30 }, { hpt: 22 }, { hpt: 20 }, undefined, { hpt: 22 }, { hpt: 20 }];
+  styleRange(worksheet, 0, 0, 0, 15, titleStyle);
+  styleRange(worksheet, 1, 1, 0, 15, subtitleStyle);
+  styleRange(worksheet, 2, 2, 0, 15, infoStyle);
+  styleFilterGrid(worksheet, 4, filterRows);
 
-  const cardRow = filters.length + 7;
+  const cardRow = Math.max(11, 8 + filterRows.length);
   addSummaryCard(worksheet, 0, cardRow, "CLÍNICO", clinico);
   addSummaryCard(worksheet, 4, cardRow, "ORTO", orto);
   addSummaryCard(worksheet, 8, cardRow, "CLÍNICO + ORTO", combined);
@@ -304,7 +435,7 @@ export function buildSummaryAnalysisWorkbook({
   const pixHeaderRow = cardRow + 13;
   XLSX.utils.sheet_add_aoa(worksheet, [["ROBÔ · PIX POR TIPO DE PARCELA"]], { origin: { r: pixHeaderRow, c: 0 } });
   worksheet["!merges"].push({ s: { r: pixHeaderRow, c: 0 }, e: { r: pixHeaderRow, c: 15 } });
-  setStyle(worksheet, XLSX.utils.encode_cell({ r: pixHeaderRow, c: 0 }), sectionStyle);
+  styleRange(worksheet, pixHeaderRow, pixHeaderRow, 0, 15, sectionStyle);
   addPixCard(worksheet, 0, pixHeaderRow + 2, "CLÍNICO · PIX", roboClinico);
   addPixCard(worksheet, 8, pixHeaderRow + 2, "ORTO · PIX", roboOrto);
 
