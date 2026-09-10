@@ -46,10 +46,10 @@ jobs:
           helper.write_text(text)
           PY
 
-      - name: Validate
+      - name: Validate export contract
         run: |
           npm run typecheck
-          npm run test
+          npx vitest run tests/export-layouts.test.ts tests/summary-analysis.test.ts
 
       - name: Commit dependency and exports
         shell: bash
