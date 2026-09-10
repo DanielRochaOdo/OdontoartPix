@@ -120,6 +120,7 @@ describe("Resumo e Analise", () => {
   it("oferece exportacao PDF e XLSX com os filtros atuais", () => {
     const dashboard = source("src/components/summary-analysis-dashboard.tsx");
     const pdfRoute = source("src/app/api/resumo-analise/exportar-pdf/route.ts");
+    const pdfLayout = source("src/lib/summary-analysis-pdf.ts");
 
     expect(dashboard).toContain("Exportar PDF");
     expect(dashboard).toContain("Exportar XLSX");
@@ -127,7 +128,9 @@ describe("Resumo e Analise", () => {
     expect(dashboard).toContain("selectedBatchNames");
     expect(dashboard).toContain("paymentDateFrom");
     expect(dashboard).toContain("paymentDateTo");
-    expect(pdfRoute).toContain("Data pagamento:");
+    expect(dashboard).toContain("filters: exportFilters");
+    expect(pdfRoute).toContain("buildSummaryAnalysisPdf");
+    expect(pdfLayout).toContain("Data de pagamento");
     expect(pdfRoute).toContain('"Content-Type": "application/pdf"');
   });
 
