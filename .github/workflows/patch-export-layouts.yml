@@ -1,0 +1,581 @@
+name: Patch export layouts
+
+on:
+  push:
+    branches:
+      - feat/exportacoes-layout-e-valores
+    paths:
+      - .github/workflows/patch-export-layouts.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/exportacoes-layout-e-valores
+          fetch-depth: 0
+
+      - name: Apply export improvements
+        shell: bash
+        run: |
+          python <<'PY'
+          from pathlib import Path
+
+          path = Path('src/components/associados-card-list.tsx')
+          text = path.read_text()
+          start = text.index('  function exportFilteredRows() {')
+          end = text.index('\n  async function reprocessSelected()', start)
+          new_block = r'''  function exportFilteredRows() {
+    if (filteredRows.length === 0) return;
+
+    const campaignLabels = new Map(options.campaign);
+    const batchLabels = new Map(options.batch);
+    const appliedFilters: Array<[string, string]> = [
+      ["Pesquisa geral", query.trim() || "Todos"],
+      ["Código associado", codeFilter.trim() || "Todos"],
+      ["Parcela", installmentFilter.trim() || "Todas"],
+      ["Data de vencimento", dateLabel],
+      ["Data de pagamento", paymentDateLabel],
+      ["Status", statusFilters.length ? statusFilters.map(statusLabel).join(", ") : "Todos"],
+      ["Pagamento", paymentFilters.length ? paymentFilters.map(paymentLabel).join(", ") : "Todos"],
+      ["Pago com pendência", paidPendingFilter === "yes" ? "Sim" : paidPendingFilter === "no" ? "Não" : "Todos"],
+      ["Tipo de pagamento", receiptFilters.length ? receiptFilters.join(", ") : "Todos"],
+      ["Tipo de parcela", installmentTypeFilters.length ? installmentTypeFilters.join(", ") : "Todos"],
+      ["Campanha", campaignFilters.length ? campaignFilters.map((id) => campaignLabels.get(id) ?? id).join(", ") : "Todas"],
+      ["Lote", batchFilters.length ? batchFilters.map((id) => batchLabels.get(id) ?? id).join(", ") : "Todos"]
+    ];
+
+    const headers = [
+      "Nome",
+      "Código associado",
+      "Parcela",
+      "Vencimento",
+      "CPF",
+      "Campanha",
+      "Lote",
+      "Status",
+      "Pagamento",
+      "Tipo de pagamento",
+      "Tipo de parcela",
+      "Data de pagamento",
+      "Valor (R$)",
+      "Valor pago (R$)",
+      "Pendência (R$)"
+    ];
+    const metadataRows: (string | number | null)[][] = [
+      ["ODONTOPIX · ASSOCIADOS"],
+      ["Exportação dos registros filtrados"],
+      [`Gerado em ${new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date())}`],
+      [],
+      ["FILTROS APLICADOS", "CRITÉRIO"],
+      ...appliedFilters,
+      [],
+      [`${new Intl.NumberFormat("pt-BR").format(filteredRows.length)} registro(s) exportado(s)`],
+      [],
+      headers
+    ];
+    const dataStartRow = metadataRows.length;
+    const worksheet = XLSX.utils.aoa_to_sheet(metadataRows);
+    XLSX.utils.sheet_add_aoa(
+      worksheet,
+      filteredRows.map((row) => [
+        row.name,
+        row.associatedCode,
+        row.installment,
+        row.dueDate || "",
+        row.cpf ? `***.***.***-${row.cpf.slice(-2)}` : "",
+        row.campaign,
+        row.batch,
+        row.missingInstallment ? `Erro — ${INSTALLMENT_NOT_FOUND_LABEL}` : statusLabel(row.status),
+        row.paidWithPending ? "Pago com pendência" : paymentLabel(row.payment),
+        row.receiptDescription,
+        row.installmentType === "-" ? "" : row.installmentType,
+        row.paymentDate === "-" ? "" : row.paymentDate,
+        row.amount / 100,
+        row.paidAmount == null ? null : row.paidAmount / 100,
+        row.pending / 100
+      ]),
+      { origin: `A${dataStartRow + 1}` }
+    );
+
+    const lastDataRow = dataStartRow + filteredRows.length;
+    const accountingFormat = '"R$" #,##0.00;[Red]-"R$" #,##0.00;"R$" -';
+    for (const column of ["M", "N", "O"]) {
+      for (let row = dataStartRow + 1; row <= lastDataRow; row += 1) {
+        const cell = worksheet[`${column}${row}`];
+        if (cell && cell.t === "n") cell.z = accountingFormat;
+      }
+    }
+
+    worksheet["!merges"] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 14 } },
+      { s: { r: 1, c: 0 }, e: { r: 1, c: 14 } },
+      { s: { r: 2, c: 0 }, e: { r: 2, c: 14 } },
+      { s: { r: metadataRows.length - 3, c: 0 }, e: { r: metadataRows.length - 3, c: 14 } }
+    ];
+    worksheet["!autofilter"] = { ref: `A${dataStartRow}:O${lastDataRow}` };
+    worksheet["!cols"] = [
+      { wch: 32 }, { wch: 20 }, { wch: 16 }, { wch: 16 }, { wch: 18 }, { wch: 26 },
+      { wch: 26 }, { wch: 22 }, { wch: 22 }, { wch: 30 }, { wch: 18 }, { wch: 20 },
+      { wch: 18 }, { wch: 18 }, { wch: 18 }
+    ];
+    worksheet["!rows"] = [{ hpt: 26 }, { hpt: 22 }, { hpt: 18 }];
+
+    const titleStyle = { font: { bold: true, color: { rgb: "E6FFFA" }, sz: 16 }, fill: { fgColor: { rgb: "062B2B" } }, alignment: { vertical: "center" } };
+    const sectionStyle = { font: { bold: true, color: { rgb: "0F766E" } }, fill: { fgColor: { rgb: "CCFBF1" } } };
+    const headerStyle = { font: { bold: true, color: { rgb: "FFFFFF" } }, fill: { fgColor: { rgb: "0F766E" } }, alignment: { vertical: "center" } };
+    if (worksheet.A1) worksheet.A1.s = titleStyle;
+    for (const ref of ["A5", "B5"]) if (worksheet[ref]) worksheet[ref].s = sectionStyle;
+    for (let col = 0; col < headers.length; col += 1) {
+      const ref = XLSX.utils.encode_cell({ r: dataStartRow - 1, c: col });
+      if (worksheet[ref]) worksheet[ref].s = headerStyle;
+    }
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Associados");
+    XLSX.writeFile(workbook, `associados-filtrados-${new Date().toISOString().slice(0, 10)}.xlsx`, { cellStyles: true });
+  }
+'''
+          path.write_text(text[:start] + new_block + text[end:])
+
+          path = Path('src/components/summary-analysis-dashboard.tsx')
+          text = path.read_text()
+          start = text.index('  function exportXlsx() {')
+          end = text.index('\n  async function exportPdf()', start)
+          new_export = r'''  function exportXlsx() {
+    const filters = [
+      ["Campanha", selectedCampaignNames.length ? selectedCampaignNames.join(", ") : "Todas"],
+      ["Lote", selectedBatchNames.length ? selectedBatchNames.join(", ") : "Todos"],
+      ["Data de vencimento", periodLabel],
+      ["Data de pagamento", paymentPeriodLabel]
+    ];
+    const cards = [
+      { title: "CLÍNICO", entity: clinico },
+      { title: "ORTO", entity: orto },
+      { title: "CLÍNICO + ORTO", entity: combined },
+      { title: "ROBÔ · PIX", entity: robo }
+    ];
+    const worksheet = XLSX.utils.aoa_to_sheet([
+      ["ODONTOPIX · RESUMO E ANÁLISE"],
+      ["Visão consolidada dos resultados operacionais"],
+      [`Gerado em ${new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date())}`],
+      [],
+      ["FILTROS APLICADOS", "CRITÉRIO"],
+      ...filters
+    ]);
+    worksheet["!merges"] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 15 } },
+      { s: { r: 1, c: 0 }, e: { r: 1, c: 15 } },
+      { s: { r: 2, c: 0 }, e: { r: 2, c: 15 } }
+    ];
+
+    const cardWidth = 4;
+    const cardStartRow = 11;
+    const cardMetrics: Array<[string, (entity: CalculatedEntity) => string | number]> = [
+      ["Qtde disparos", (entity) => entity.dispatchCount],
+      ["Valor disparos", (entity) => entity.dispatchValueCents / 100],
+      ["Custo ação", (entity) => entity.actionCostCents / 100],
+      ["Assoc. pagos", (entity) => entity.paidAssociateCount],
+      ["Parcelas pagas", (entity) => entity.paidInstallmentCount],
+      ["Pago", (entity) => entity.paidAmountCents / 100],
+      ["% pago", (entity) => entity.paidPercentage / 100],
+      ["Líquido", (entity) => entity.netAmountCents / 100]
+    ];
+    cards.forEach((card, index) => {
+      const startCol = index * cardWidth;
+      XLSX.utils.sheet_add_aoa(worksheet, [[card.title]], { origin: { r: cardStartRow - 1, c: startCol } });
+      worksheet["!merges"]!.push({ s: { r: cardStartRow - 1, c: startCol }, e: { r: cardStartRow - 1, c: startCol + cardWidth - 1 } });
+      cardMetrics.forEach(([label, read], metricIndex) => {
+        const row = cardStartRow + metricIndex;
+        XLSX.utils.sheet_add_aoa(worksheet, [[label, read(card.entity)]], { origin: { r: row, c: startCol } });
+        worksheet["!merges"]!.push({ s: { r: row, c: startCol + 1 }, e: { r: row, c: startCol + cardWidth - 1 } });
+      });
+    });
+
+    const pixRow = cardStartRow + cardMetrics.length + 3;
+    XLSX.utils.sheet_add_aoa(worksheet, [["ROBÔ · PIX POR TIPO DE PARCELA"]], { origin: { r: pixRow, c: 0 } });
+    worksheet["!merges"]!.push({ s: { r: pixRow, c: 0 }, e: { r: pixRow, c: 15 } });
+    const pixCards = [
+      { title: "CLÍNICO", values: metricsFromPix(metrics.roboClinico) },
+      { title: "ORTO", values: metricsFromPix(metrics.roboOrto) }
+    ];
+    pixCards.forEach((card, index) => {
+      const startCol = index * 8;
+      const row = pixRow + 2;
+      XLSX.utils.sheet_add_aoa(worksheet, [[card.title]], { origin: { r: row, c: startCol } });
+      worksheet["!merges"]!.push({ s: { r: row, c: startCol }, e: { r: row, c: startCol + 7 } });
+      card.values.forEach(([label, value], metricIndex) => {
+        XLSX.utils.sheet_add_aoa(worksheet, [[label, value]], { origin: { r: row + metricIndex + 1, c: startCol } });
+        worksheet["!merges"]!.push({ s: { r: row + metricIndex + 1, c: startCol + 1 }, e: { r: row + metricIndex + 1, c: startCol + 7 } });
+      });
+    });
+
+    const accountingFormat = '"R$" #,##0.00;[Red]-"R$" #,##0.00;"R$" -';
+    const percentFormat = "0.00%";
+    for (const ref of Object.keys(worksheet)) {
+      if (ref.startsWith("!")) continue;
+      const cell = worksheet[ref];
+      if (!cell || cell.t !== "n") continue;
+      const decoded = XLSX.utils.decode_cell(ref);
+      if (decoded.r < cardStartRow) continue;
+      const labelColumns = decoded.c < 8 ? [0, 4] : [8, 12];
+      const labelCol = labelColumns.reduce((best, value) => value <= decoded.c ? value : best, labelColumns[0]);
+      const labelRef = XLSX.utils.encode_cell({ r: decoded.r, c: labelCol });
+      const label = String(worksheet[labelRef]?.v ?? "");
+      if (["Valor disparos", "Custo ação", "Pago", "Líquido", "Valor das parcelas", "Recebido"].includes(label)) cell.z = accountingFormat;
+      if (label === "% pago") cell.z = percentFormat;
+    }
+
+    worksheet["!cols"] = Array.from({ length: 16 }, (_, index) => ({ wch: index % 4 === 0 ? 20 : 11 }));
+    worksheet["!rows"] = [{ hpt: 28 }, { hpt: 22 }, { hpt: 18 }];
+    const titleStyle = { font: { bold: true, color: { rgb: "E6FFFA" }, sz: 16 }, fill: { fgColor: { rgb: "062B2B" } } };
+    const sectionStyle = { font: { bold: true, color: { rgb: "0F766E" } }, fill: { fgColor: { rgb: "CCFBF1" } } };
+    const cardStyle = { font: { bold: true, color: { rgb: "FFFFFF" } }, fill: { fgColor: { rgb: "0F766E" } } };
+    if (worksheet.A1) worksheet.A1.s = titleStyle;
+    for (const ref of ["A5", "B5"]) if (worksheet[ref]) worksheet[ref].s = sectionStyle;
+    cards.forEach((_, index) => {
+      const ref = XLSX.utils.encode_cell({ r: cardStartRow - 1, c: index * cardWidth });
+      if (worksheet[ref]) worksheet[ref].s = cardStyle;
+    });
+    const pixHeader = XLSX.utils.encode_cell({ r: pixRow, c: 0 });
+    if (worksheet[pixHeader]) worksheet[pixHeader].s = sectionStyle;
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Resumo e Análise");
+    XLSX.writeFile(workbook, "resumo-analise.xlsx", { cellStyles: true });
+  }
+
+  function metricsFromPix(value: SummaryAnalysisEntityMetrics): Array<[string, number]> {
+    return [
+      ["Valor das parcelas", value.dispatchValueCents / 100],
+      ["Associados pagos", value.paidAssociateCount],
+      ["Parcelas pagas", value.paidInstallmentCount],
+      ["Recebido", value.paidAmountCents / 100]
+    ];
+  }
+'''
+          text = text[:start] + new_export + text[end:]
+          old_payload = '''          paymentDateFrom,\n          paymentDateTo,\n          dispatchUnitCostCents,\n          clinico,\n          orto,\n          combined,\n          robo\n'''
+          new_payload = '''          paymentDateFrom,\n          paymentDateTo,\n          campaignNames: selectedCampaignNames,\n          batchNames: selectedBatchNames,\n          dispatchUnitCostCents,\n          clinico,\n          orto,\n          combined,\n          robo,\n          roboClinico: metrics.roboClinico,\n          roboOrto: metrics.roboOrto\n'''
+          if old_payload not in text:
+              raise SystemExit('summary PDF payload anchor not found')
+          path.write_text(text.replace(old_payload, new_payload, 1))
+
+          path = Path('src/app/api/resumo-analise/exportar-pdf/route.ts')
+          path.write_text(r'''import { z } from "zod";
+import { requireApiUser } from "@/lib/auth/require-api-user";
+import { fail } from "@/lib/http/api-response";
+import { validateSummaryAnalysisRange } from "@/lib/summary-analysis";
+
+export const runtime = "nodejs";
+
+const EntitySchema = z.object({
+  dispatchCount: z.number().finite(),
+  dispatchValueCents: z.number().finite(),
+  actionCostCents: z.number().finite(),
+  paidAssociateCount: z.number().finite(),
+  paidInstallmentCount: z.number().finite(),
+  paidAmountCents: z.number().finite(),
+  paidAssociatePercentage: z.number().finite(),
+  paidInstallmentPercentage: z.number().finite(),
+  paidPercentage: z.number().finite(),
+  netAmountCents: z.number().finite()
+});
+
+const PixEntitySchema = z.object({
+  dispatchValueCents: z.number().finite(),
+  paidAssociateCount: z.number().finite(),
+  paidInstallmentCount: z.number().finite(),
+  paidAmountCents: z.number().finite()
+});
+
+const BodySchema = z.object({
+  from: z.string(),
+  to: z.string(),
+  paymentDateFrom: z.string(),
+  paymentDateTo: z.string(),
+  campaignNames: z.array(z.string()).max(100),
+  batchNames: z.array(z.string()).max(100),
+  dispatchUnitCostCents: z.number().int().min(0),
+  clinico: EntitySchema,
+  orto: EntitySchema,
+  combined: EntitySchema,
+  robo: EntitySchema,
+  roboClinico: PixEntitySchema,
+  roboOrto: PixEntitySchema
+});
+
+type Entity = z.infer<typeof EntitySchema>;
+type PixEntity = z.infer<typeof PixEntitySchema>;
+type PdfColor = [number, number, number];
+type PdfPage = string[];
+
+const COLORS = {
+  page: [0.025, 0.09, 0.12] as PdfColor,
+  panel: [0.035, 0.14, 0.18] as PdfColor,
+  panel2: [0.045, 0.18, 0.22] as PdfColor,
+  border: [0.08, 0.45, 0.43] as PdfColor,
+  brand: [0.05, 0.78, 0.69] as PdfColor,
+  text: [0.93, 0.98, 0.98] as PdfColor,
+  muted: [0.61, 0.75, 0.76] as PdfColor,
+  success: [0.23, 0.82, 0.56] as PdfColor
+};
+
+function ascii(value: string) {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\x20-\x7E]/g, "?");
+}
+
+function escapePdf(value: string) {
+  return ascii(value).replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
+}
+
+function currency(cents: number) {
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(cents / 100);
+}
+
+function count(value: number) {
+  return new Intl.NumberFormat("pt-BR").format(value);
+}
+
+function percentage(value: number) {
+  return `${new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value)}%`;
+}
+
+function displayDate(value: string) {
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return match ? `${match[3]}/${match[2]}/${match[1]}` : value;
+}
+
+function periodLabel(from: string, to: string, empty: string) {
+  if (!from && !to) return empty;
+  return `${from ? displayDate(from) : "inicio"} a ${to ? displayDate(to) : "hoje"}`;
+}
+
+function color([r, g, b]: PdfColor) {
+  return `${r} ${g} ${b}`;
+}
+
+function rect(page: PdfPage, x: number, y: number, width: number, height: number, fill: PdfColor, stroke?: PdfColor) {
+  page.push(`${color(fill)} rg`);
+  if (stroke) page.push(`${color(stroke)} RG 0.8 w`);
+  page.push(`${x} ${y} ${width} ${height} re ${stroke ? "B" : "f"}`);
+}
+
+function text(page: PdfPage, value: string, x: number, y: number, size = 10, fill: PdfColor = COLORS.text, bold = false) {
+  page.push("BT");
+  page.push(`${color(fill)} rg`);
+  page.push(`/${bold ? "F2" : "F1"} ${size} Tf`);
+  page.push(`1 0 0 1 ${x} ${y} Tm`);
+  page.push(`(${escapePdf(value)}) Tj`);
+  page.push("ET");
+}
+
+function truncate(value: string, max = 78) {
+  return value.length <= max ? value : `${value.slice(0, max - 3)}...`;
+}
+
+function metricCard(page: PdfPage, x: number, y: number, width: number, height: number, title: string, entity: Entity) {
+  rect(page, x, y, width, height, COLORS.panel, COLORS.border);
+  rect(page, x, y + height - 34, width, 34, COLORS.panel2);
+  text(page, title, x + 14, y + height - 22, 12, COLORS.brand, true);
+  const left = [
+    ["Qtde disparos", count(entity.dispatchCount)],
+    ["Valor disparos", currency(entity.dispatchValueCents)],
+    ["Custo acao", currency(entity.actionCostCents)],
+    ["Assoc. pagos", count(entity.paidAssociateCount)]
+  ];
+  const right = [
+    ["Parcelas pagas", count(entity.paidInstallmentCount)],
+    ["Pago", currency(entity.paidAmountCents)],
+    ["% pago", percentage(entity.paidPercentage)],
+    ["Liquido", currency(entity.netAmountCents)]
+  ];
+  [left, right].forEach((items, column) => {
+    const columnX = x + 14 + column * (width / 2);
+    items.forEach(([label, value], index) => {
+      const lineY = y + height - 57 - index * 27;
+      text(page, label, columnX, lineY, 7.5, COLORS.muted);
+      text(page, value, columnX, lineY - 12, 9.5, label === "Liquido" ? COLORS.success : COLORS.text, true);
+    });
+  });
+}
+
+function pixCard(page: PdfPage, x: number, y: number, width: number, title: string, entity: PixEntity) {
+  rect(page, x, y, width, 118, COLORS.panel, COLORS.border);
+  rect(page, x, y + 84, width, 34, COLORS.panel2);
+  text(page, title, x + 14, y + 96, 12, COLORS.brand, true);
+  const cardMetrics = [
+    ["Valor das parcelas", currency(entity.dispatchValueCents)],
+    ["Associados pagos", count(entity.paidAssociateCount)],
+    ["Parcelas pagas", count(entity.paidInstallmentCount)],
+    ["Recebido via PIX", currency(entity.paidAmountCents)]
+  ];
+  cardMetrics.forEach(([label, value], index) => {
+    const col = index % 2;
+    const row = Math.floor(index / 2);
+    const metricX = x + 14 + col * (width / 2);
+    const metricY = y + 62 - row * 37;
+    text(page, label, metricX, metricY, 7.5, COLORS.muted);
+    text(page, value, metricX, metricY - 13, 10, index === 3 ? COLORS.success : COLORS.text, true);
+  });
+}
+
+function pageHeader(page: PdfPage, subtitle: string) {
+  rect(page, 0, 0, 595, 842, COLORS.page);
+  rect(page, 32, 777, 531, 42, COLORS.panel2, COLORS.border);
+  text(page, "ODONTOPIX", 48, 798, 10, COLORS.brand, true);
+  text(page, "Resumo e Analise", 48, 782, 17, COLORS.text, true);
+  text(page, subtitle, 365, 790, 8, COLORS.muted);
+}
+
+function buildPdf(data: z.infer<typeof BodySchema>) {
+  const pages: PdfPage[] = [[], []];
+  const [page1, page2] = pages;
+  pageHeader(page1, "Relatorio operacional");
+  text(page1, "FILTROS APLICADOS", 36, 750, 9, COLORS.brand, true);
+  rect(page1, 32, 652, 531, 84, COLORS.panel, COLORS.border);
+  const filters = [
+    ["Campanha", data.campaignNames.length ? data.campaignNames.join(", ") : "Todas"],
+    ["Lote", data.batchNames.length ? data.batchNames.join(", ") : "Todos"],
+    ["Vencimento", periodLabel(data.from, data.to, "Todos os vencimentos")],
+    ["Data pagamento", periodLabel(data.paymentDateFrom, data.paymentDateTo, "Todas as datas")]
+  ];
+  filters.forEach(([label, value], index) => {
+    const col = index % 2;
+    const row = Math.floor(index / 2);
+    const x = 48 + col * 260;
+    const y = 708 - row * 36;
+    text(page1, label, x, y, 7.5, COLORS.muted);
+    text(page1, truncate(value, 54), x, y - 13, 9, COLORS.text, true);
+  });
+
+  text(page1, "RESULTADOS", 36, 626, 9, COLORS.brand, true);
+  metricCard(page1, 32, 427, 255, 183, "CLINICO", data.clinico);
+  metricCard(page1, 308, 427, 255, 183, "ORTO", data.orto);
+  metricCard(page1, 32, 218, 255, 183, "CLINICO + ORTO", data.combined);
+  metricCard(page1, 308, 218, 255, 183, "ROBO · PIX", data.robo);
+  text(page1, `Custo unitario por disparo: ${currency(data.dispatchUnitCostCents)}`, 36, 190, 8, COLORS.muted);
+
+  pageHeader(page2, "Detalhamento do Robo");
+  text(page2, "ROBO · PIX POR TIPO DE PARCELA", 36, 748, 10, COLORS.brand, true);
+  text(page2, "Mesma leitura dos cards do sistema, separada entre Clinico e Orto.", 36, 731, 8.5, COLORS.muted);
+  pixCard(page2, 32, 585, 255, "CLINICO · PIX", data.roboClinico);
+  pixCard(page2, 308, 585, 255, "ORTO · PIX", data.roboOrto);
+  rect(page2, 32, 458, 531, 94, COLORS.panel, COLORS.border);
+  text(page2, "LEITURA DO RELATORIO", 48, 528, 9, COLORS.brand, true);
+  text(page2, "Os valores e contagens refletem exatamente os filtros exibidos na primeira pagina.", 48, 505, 9, COLORS.text);
+  text(page2, "Vencimento e Data de pagamento, quando preenchidos juntos, sao criterios cumulativos.", 48, 488, 9, COLORS.text);
+  text(page2, `Gerado em ${new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date())}`, 48, 471, 8, COLORS.muted);
+
+  const objects: string[] = [];
+  objects.push("<< /Type /Catalog /Pages 2 0 R >>");
+  objects.push("<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>");
+  objects.push("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> /Contents 7 0 R >>");
+  objects.push("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> /Contents 8 0 R >>");
+  objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
+  objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>");
+  pages.forEach((page) => {
+    const stream = page.join("\n") + "\n";
+    objects.push(`<< /Length ${Buffer.byteLength(stream, "ascii")} >>\nstream\n${stream}endstream`);
+  });
+
+  let pdf = "%PDF-1.4\n";
+  const offsets: number[] = [0];
+  objects.forEach((object, index) => {
+    offsets[index + 1] = Buffer.byteLength(pdf, "ascii");
+    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  });
+  const xrefOffset = Buffer.byteLength(pdf, "ascii");
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (let index = 1; index <= objects.length; index += 1) {
+    pdf += `${String(offsets[index]).padStart(10, "0")} 00000 n \n`;
+  }
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
+  return Buffer.from(pdf, "ascii");
+}
+
+export async function POST(request: Request) {
+  const auth = await requireApiUser(["administrador", "operador", "visualizador"]);
+  if (!auth.ok) return auth.response;
+
+  const parsed = BodySchema.safeParse(await request.json().catch(() => null));
+  if (!parsed.success) return fail("VALIDATION_ERROR", "Dados invalidos para exportacao do PDF.", 400);
+
+  try {
+    validateSummaryAnalysisRange(parsed.data.from, parsed.data.to);
+    validateSummaryAnalysisRange(parsed.data.paymentDateFrom, parsed.data.paymentDateTo);
+    const pdf = buildPdf(parsed.data);
+    return new Response(pdf, {
+      status: 200,
+      headers: {
+        "Content-Type": "application/pdf",
+        "Content-Disposition": 'attachment; filename="resumo-analise.pdf"',
+        "Cache-Control": "no-store"
+      }
+    });
+  } catch (error) {
+    return fail("INTERNAL_ERROR", error instanceof Error ? error.message : "Nao foi possivel gerar o PDF.", 500);
+  }
+}
+''')
+
+          Path('tests/export-layouts.test.ts').write_text(r'''import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { describe, expect, it } from "vitest";
+
+function source(path: string) {
+  return readFileSync(resolve(process.cwd(), path), "utf8");
+}
+
+describe("Exportacoes do sistema", () => {
+  it("exporta valores de Associados como numeros somaveis com formato contabil", () => {
+    const associados = source("src/components/associados-card-list.tsx");
+    expect(associados).toContain("row.amount / 100");
+    expect(associados).toContain("row.paidAmount / 100");
+    expect(associados).toContain("row.pending / 100");
+    expect(associados).toContain("accountingFormat");
+    expect(associados).toContain('cell.t === "n"');
+    expect(associados).toContain("FILTROS APLICADOS");
+    expect(associados).toContain("Data de vencimento");
+    expect(associados).toContain("Data de pagamento");
+    expect(associados).toContain("Tipo de pagamento");
+  });
+
+  it("organiza o XLSX de Resumo e Analise em cards e explicita os filtros", () => {
+    const dashboard = source("src/components/summary-analysis-dashboard.tsx");
+    expect(dashboard).toContain("ODONTOPIX · RESUMO E ANÁLISE");
+    expect(dashboard).toContain("FILTROS APLICADOS");
+    expect(dashboard).toContain("ROBÔ · PIX POR TIPO DE PARCELA");
+    expect(dashboard).toContain("worksheet[\"!merges\"]");
+    expect(dashboard).toContain("accountingFormat");
+    expect(dashboard).toContain("campaignNames: selectedCampaignNames");
+    expect(dashboard).toContain("roboClinico: metrics.roboClinico");
+  });
+
+  it("gera PDF de Resumo e Analise com painel de filtros e cards", () => {
+    const pdf = source("src/app/api/resumo-analise/exportar-pdf/route.ts");
+    expect(pdf).toContain("FILTROS APLICADOS");
+    expect(pdf).toContain("metricCard");
+    expect(pdf).toContain("pixCard");
+    expect(pdf).toContain("CLINICO + ORTO");
+    expect(pdf).toContain("ROBO · PIX");
+    expect(pdf).toContain("campaignNames");
+    expect(pdf).toContain("batchNames");
+    expect(pdf).toContain("/Helvetica-Bold");
+  });
+});
+''')
+          PY
+
+      - name: Commit changes
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/components/associados-card-list.tsx src/components/summary-analysis-dashboard.tsx src/app/api/resumo-analise/exportar-pdf/route.ts tests/export-layouts.test.ts
+          git commit -m "feat: melhora layout e dados das exportacoes"
+          git push origin HEAD:feat/exportacoes-layout-e-valores
