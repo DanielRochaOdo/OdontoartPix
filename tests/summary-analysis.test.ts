@@ -42,6 +42,22 @@ describe("Resumo e Analise", () => {
     expect(metrics).not.toContain("payment_date between");
   });
 
+  it("adiciona Data de pagamento com o mesmo criterio opcional e inclusivo de Associados", () => {
+    const metrics = source("src/lib/summary-analysis.ts");
+    const route = source("src/app/api/resumo-analise/route.ts");
+    const dashboard = source("src/components/summary-analysis-dashboard.tsx");
+
+    expect(metrics).toContain("mti.payment_date_text");
+    expect(metrics).toContain("end as payment_date");
+    expect(metrics).toContain("($5::date is null or payment_date >= $5::date)");
+    expect(metrics).toContain("($6::date is null or payment_date <= $6::date)");
+    expect(route).toContain('url.searchParams.get("paymentDateFrom")');
+    expect(route).toContain('url.searchParams.get("paymentDateTo")');
+    expect(dashboard).toContain("Data de pagamento: {paymentPeriodLabel}");
+    expect(dashboard).toContain("paymentDatePopoverOpen");
+    expect(dashboard).toContain('paymentDateFrom: "", paymentDateTo: ""');
+  });
+
   it("filtra os numeros por campanha e lote usando a mesma relacao canonica", () => {
     const metrics = source("src/lib/summary-analysis.ts");
     const route = source("src/app/api/resumo-analise/route.ts");
@@ -109,6 +125,9 @@ describe("Resumo e Analise", () => {
     expect(dashboard).toContain("Exportar XLSX");
     expect(dashboard).toContain("selectedCampaignNames");
     expect(dashboard).toContain("selectedBatchNames");
+    expect(dashboard).toContain("paymentDateFrom");
+    expect(dashboard).toContain("paymentDateTo");
+    expect(pdfRoute).toContain("Data pagamento:");
     expect(pdfRoute).toContain('"Content-Type": "application/pdf"');
   });
 

@@ -12,6 +12,8 @@ export type SummaryAnalysisPixMetrics = SummaryAnalysisEntityMetrics;
 export type SummaryAnalysisMetrics = {
   from: string;
   to: string;
+  paymentDateFrom: string;
+  paymentDateTo: string;
   campaignIds: string[];
   batchIds: string[];
   clinico: SummaryAnalysisEntityMetrics;
@@ -29,6 +31,8 @@ export type SummaryAnalysisFilterOptions = {
 type SummaryAnalysisFilters = {
   from?: string;
   to?: string;
+  paymentDateFrom?: string;
+  paymentDateTo?: string;
   campaignIds?: string[];
   batchIds?: string[];
 };
@@ -108,9 +112,12 @@ export async function getSummaryAnalysisMetrics(
 ): Promise<SummaryAnalysisMetrics> {
   const from = filters.from?.trim() ?? "";
   const to = filters.to?.trim() ?? "";
+  const paymentDateFrom = filters.paymentDateFrom?.trim() ?? "";
+  const paymentDateTo = filters.paymentDateTo?.trim() ?? "";
   const campaignIds = sanitizeIds(filters.campaignIds);
   const batchIds = sanitizeIds(filters.batchIds);
   validateSummaryAnalysisRange(from, to);
+  validateSummaryAnalysisRange(paymentDateFrom, paymentDateTo);
 
   const result = await dbQuery<MetricsRow>(
     `with scoped_targets as (
@@ -141,7 +148,16 @@ export async function getSummaryAnalysisMetrics(
            when trim(coalesce(mti.due_date_text, '')) ~ '^\\d{1,2}/\\d{1,2}/\\d{2}$'
              then to_date(trim(mti.due_date_text), 'MM/DD/YY')
            else null
-         end as due_date
+         end as due_date,
+         case
+           when trim(coalesce(mti.payment_date_text, '')) ~ '^\\d{1,2}/\\d{1,2}/\\d{4}$'
+             then to_date(trim(mti.payment_date_text), 'DD/MM/YYYY')
+           when trim(coalesce(mti.payment_date_text, '')) ~ '^\\d{4}-\\d{2}-\\d{2}'
+             then to_date(substring(trim(mti.payment_date_text) from 1 for 10), 'YYYY-MM-DD')
+           when trim(coalesce(mti.payment_date_text, '')) ~ '^\\d{1,2}/\\d{1,2}/\\d{2}$'
+             then to_date(trim(mti.payment_date_text), 'MM/DD/YY')
+           else null
+         end as payment_date
        from scoped_targets
        join member_target_installments mti
          on mti.id = scoped_targets.target_installment_ref_id
@@ -170,6 +186,8 @@ export async function getSummaryAnalysisMetrics(
        from canonical
        where ($3::date is null or due_date >= $3::date)
          and ($4::date is null or due_date <= $4::date)
+         and ($5::date is null or payment_date >= $5::date)
+         and ($6::date is null or payment_date <= $6::date)
      )
      select
        coalesce(sum(amount_cents) filter (
@@ -237,7 +255,7 @@ export async function getSummaryAnalysisMetrics(
          where is_paid and is_pix and installment_type = 'orto'
        ), 0)::float8 as pix_orto_paid_amount_cents
      from ranged`,
-    [campaignIds, batchIds, from || null, to || null]
+    [campaignIds, batchIds, from || null, to || null, paymentDateFrom || null, paymentDateTo || null]
   );
 
   const row = result.rows[0];
@@ -256,6 +274,8 @@ export async function getSummaryAnalysisMetrics(
   return {
     from,
     to,
+    paymentDateFrom,
+    paymentDateTo,
     campaignIds,
     batchIds,
     clinico: entity(
