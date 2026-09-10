@@ -128,9 +128,10 @@ describe("Resumo e Analise", () => {
     expect(dashboard).toContain("selectedBatchNames");
     expect(dashboard).toContain("paymentDateFrom");
     expect(dashboard).toContain("paymentDateTo");
+    expect(dashboard).toContain('label: "Data de pagamento"');
     expect(dashboard).toContain("filters: exportFilters");
     expect(pdfRoute).toContain("buildSummaryAnalysisPdf");
-    expect(pdfLayout).toContain("Data de pagamento");
+    expect(pdfLayout).toContain("FILTROS APLICADOS");
     expect(pdfRoute).toContain('"Content-Type": "application/pdf"');
   });
 
