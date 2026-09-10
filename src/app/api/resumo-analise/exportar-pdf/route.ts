@@ -21,6 +21,8 @@ const EntitySchema = z.object({
 const BodySchema = z.object({
   from: z.string(),
   to: z.string(),
+  paymentDateFrom: z.string(),
+  paymentDateTo: z.string(),
   dispatchUnitCostCents: z.number().int().min(0),
   clinico: EntitySchema,
   orto: EntitySchema,
@@ -116,9 +118,11 @@ export async function POST(request: Request) {
 
   try {
     validateSummaryAnalysisRange(parsed.data.from, parsed.data.to);
+    validateSummaryAnalysisRange(parsed.data.paymentDateFrom, parsed.data.paymentDateTo);
     const lines = [
       { text: "Resumo e Analise", size: 18, gap: 28 },
       { text: `Vencimento: ${periodLabel(parsed.data.from, parsed.data.to)}` },
+      { text: `Data pagamento: ${parsed.data.paymentDateFrom || parsed.data.paymentDateTo ? periodLabel(parsed.data.paymentDateFrom, parsed.data.paymentDateTo) : "Todas as datas"}` },
       { text: `Custo unitario por disparo: ${currency(parsed.data.dispatchUnitCostCents)}`, gap: 24 },
       ...entityLines("Clinico", parsed.data.clinico),
       ...entityLines("Orto", parsed.data.orto),

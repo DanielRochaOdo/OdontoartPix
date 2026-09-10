@@ -16,6 +16,8 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const from = url.searchParams.get("from")?.trim() ?? "";
   const to = url.searchParams.get("to")?.trim() ?? "";
+  const paymentDateFrom = url.searchParams.get("paymentDateFrom")?.trim() ?? "";
+  const paymentDateTo = url.searchParams.get("paymentDateTo")?.trim() ?? "";
   const campaignIds = readIds(url.searchParams.get("campaignIds"));
   const batchIds = readIds(url.searchParams.get("batchIds"));
 
@@ -27,6 +29,8 @@ export async function GET(request: Request) {
     return ok(await getSummaryAnalysisMetrics({
       from,
       to,
+      paymentDateFrom,
+      paymentDateTo,
       campaignIds: campaignIds.data,
       batchIds: batchIds.data
     }));

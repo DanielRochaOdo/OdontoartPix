@@ -201,6 +201,9 @@ export function SummaryAnalysisDashboard({
 }) {
   const [from, setFrom] = useState(initialFrom);
   const [to, setTo] = useState(initialTo);
+  const [paymentDateFrom, setPaymentDateFrom] = useState(initialMetrics.paymentDateFrom);
+  const [paymentDateTo, setPaymentDateTo] = useState(initialMetrics.paymentDateTo);
+  const [paymentDatePopoverOpen, setPaymentDatePopoverOpen] = useState(false);
   const [campaignIds, setCampaignIds] = useState<string[]>(initialMetrics.campaignIds);
   const [batchIds, setBatchIds] = useState<string[]>(initialMetrics.batchIds);
   const [metrics, setMetrics] = useState(initialMetrics);
@@ -262,6 +265,9 @@ export function SummaryAnalysisDashboard({
   const periodLabel = from || to
     ? `${from ? displayDate(from) : "início"} a ${to ? displayDate(to) : "hoje"}`
     : "Todos os vencimentos";
+  const paymentPeriodLabel = paymentDateFrom || paymentDateTo
+    ? `${paymentDateFrom ? displayDate(paymentDateFrom) : "início"} a ${paymentDateTo ? displayDate(paymentDateTo) : "hoje"}`
+    : "Todas as datas";
 
   const selectedCampaignNames = filterOptions.campaigns.filter((item) => campaignIds.includes(item.id)).map((item) => item.name);
   const selectedBatchNames = filterOptions.batches.filter((item) => batchIds.includes(item.id)).map((item) => item.name);
@@ -269,11 +275,15 @@ export function SummaryAnalysisDashboard({
   async function loadFilters(next: {
     from: string;
     to: string;
+    paymentDateFrom: string;
+    paymentDateTo: string;
     campaignIds: string[];
     batchIds: string[];
   }) {
     setFrom(next.from);
     setTo(next.to);
+    setPaymentDateFrom(next.paymentDateFrom);
+    setPaymentDateTo(next.paymentDateTo);
     setCampaignIds(next.campaignIds);
     setBatchIds(next.batchIds);
     setManual(emptyInputs());
@@ -282,10 +292,16 @@ export function SummaryAnalysisDashboard({
       setError("Selecione um período de vencimento válido.");
       return;
     }
+    if (next.paymentDateFrom && next.paymentDateTo && next.paymentDateFrom > next.paymentDateTo) {
+      setError("Selecione um período de pagamento válido.");
+      return;
+    }
 
     const params = new URLSearchParams();
     if (next.from) params.set("from", next.from);
     if (next.to) params.set("to", next.to);
+    if (next.paymentDateFrom) params.set("paymentDateFrom", next.paymentDateFrom);
+    if (next.paymentDateTo) params.set("paymentDateTo", next.paymentDateTo);
     if (next.campaignIds.length) params.set("campaignIds", next.campaignIds.join(","));
     if (next.batchIds.length) params.set("batchIds", next.batchIds.join(","));
 
@@ -315,11 +331,11 @@ export function SummaryAnalysisDashboard({
         .map((batch) => batch.id)
     );
     const nextBatchIds = batchIds.filter((id) => allowedBatches.has(id));
-    void loadFilters({ from, to, campaignIds: values, batchIds: nextBatchIds });
+    void loadFilters({ from, to, paymentDateFrom, paymentDateTo, campaignIds: values, batchIds: nextBatchIds });
   }
 
   function updateBatches(values: string[]) {
-    void loadFilters({ from, to, campaignIds, batchIds: values });
+    void loadFilters({ from, to, paymentDateFrom, paymentDateTo, campaignIds, batchIds: values });
   }
 
   function updateDispatchCount(entity: ManualEntityKey, value: string) {
@@ -330,12 +346,14 @@ export function SummaryAnalysisDashboard({
   }
 
   function clearFilters() {
-    void loadFilters({ from: "", to: "", campaignIds: [], batchIds: [] });
+    setPaymentDatePopoverOpen(false);
+    void loadFilters({ from: "", to: "", paymentDateFrom: "", paymentDateTo: "", campaignIds: [], batchIds: [] });
   }
 
   function exportXlsx() {
     const rows = [
       ["Resumo e Análise", periodLabel],
+      ["Data de pagamento", paymentPeriodLabel],
       ["Campanhas", selectedCampaignNames.length ? selectedCampaignNames.join(", ") : "Todas"],
       ["Lotes", selectedBatchNames.length ? selectedBatchNames.join(", ") : "Todos"],
       ["Custo unitário por disparo", formatCurrencyBR(dispatchUnitCostCents)],
@@ -372,6 +390,8 @@ export function SummaryAnalysisDashboard({
         body: JSON.stringify({
           from,
           to,
+          paymentDateFrom,
+          paymentDateTo,
           dispatchUnitCostCents,
           clinico,
           orto,
@@ -424,11 +444,11 @@ export function SummaryAnalysisDashboard({
             Exportar XLSX
           </button>
         </div>
-        <p className="text-xs text-muted">Os resultados seguem campanha, lote e DataVencimento.</p>
+        <p className="text-xs text-muted">Os resultados seguem campanha, lote, DataVencimento e, quando informado, Data de pagamento.</p>
       </div>
 
       <section className="mt-4 rounded-2xl border border-default bg-surface-primary p-4 shadow-sm">
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5 xl:items-end">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6 xl:items-end">
           <MultiSelectFilter label="Campanha" values={campaignIds} options={campaignOptions} onChange={updateCampaigns} />
           <MultiSelectFilter label="Lote" values={batchIds} options={batchOptions} onChange={updateBatches} />
           <label className="text-xs font-medium text-secondary">
@@ -437,7 +457,7 @@ export function SummaryAnalysisDashboard({
               type="date"
               value={from}
               max={to || undefined}
-              onChange={(event) => void loadFilters({ from: event.target.value, to, campaignIds, batchIds })}
+              onChange={(event) => void loadFilters({ from: event.target.value, to, paymentDateFrom, paymentDateTo, campaignIds, batchIds })}
               className="mt-1 w-full rounded-lg border border-default bg-surface-secondary px-3 py-2.5 text-sm text-primary outline-none focus:border-focus focus:ring-2 focus:ring-brand"
             />
           </label>
@@ -447,15 +467,62 @@ export function SummaryAnalysisDashboard({
               type="date"
               value={to}
               min={from || undefined}
-              onChange={(event) => void loadFilters({ from, to: event.target.value, campaignIds, batchIds })}
+              onChange={(event) => void loadFilters({ from, to: event.target.value, paymentDateFrom, paymentDateTo, campaignIds, batchIds })}
               className="mt-1 w-full rounded-lg border border-default bg-surface-secondary px-3 py-2.5 text-sm text-primary outline-none focus:border-focus focus:ring-2 focus:ring-brand"
             />
           </label>
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setPaymentDatePopoverOpen((value) => !value)}
+              className="flex min-h-[42px] w-full items-center justify-between gap-2 rounded-lg border border-default bg-surface-secondary px-3 py-2.5 text-left text-sm text-primary outline-none transition hover:bg-surface-hover focus:border-focus focus:ring-2 focus:ring-brand"
+              aria-expanded={paymentDatePopoverOpen}
+            >
+              <span className="truncate">Data de pagamento: {paymentPeriodLabel}</span>
+              <span className="shrink-0 text-muted">▾</span>
+            </button>
+            {paymentDatePopoverOpen ? (
+              <div className="absolute right-0 top-full z-50 mt-2 w-full min-w-[300px] rounded-xl border border-default bg-surface-elevated p-3 shadow-xl">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="text-xs text-secondary">
+                    De
+                    <input
+                      type="date"
+                      value={paymentDateFrom}
+                      max={paymentDateTo || undefined}
+                      onChange={(event) => void loadFilters({ from, to, paymentDateFrom: event.target.value, paymentDateTo, campaignIds, batchIds })}
+                      className="mt-1 w-full rounded-lg border border-default bg-surface-secondary px-3 py-2.5 text-sm text-primary outline-none focus:border-focus focus:ring-2 focus:ring-brand"
+                    />
+                  </label>
+                  <label className="text-xs text-secondary">
+                    Até
+                    <input
+                      type="date"
+                      value={paymentDateTo}
+                      min={paymentDateFrom || undefined}
+                      onChange={(event) => void loadFilters({ from, to, paymentDateFrom, paymentDateTo: event.target.value, campaignIds, batchIds })}
+                      className="mt-1 w-full rounded-lg border border-default bg-surface-secondary px-3 py-2.5 text-sm text-primary outline-none focus:border-focus focus:ring-2 focus:ring-brand"
+                    />
+                  </label>
+                </div>
+                <div className="mt-3 flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void loadFilters({ from, to, paymentDateFrom: "", paymentDateTo: "", campaignIds, batchIds })}
+                    className="rounded-lg px-3 py-2 text-xs font-medium text-secondary hover:bg-surface-hover"
+                  >
+                    Limpar
+                  </button>
+                  <button type="button" onClick={() => setPaymentDatePopoverOpen(false)} className="rounded-lg bg-brand px-3 py-2 text-xs font-semibold text-inverse">OK</button>
+                </div>
+              </div>
+            ) : null}
+          </div>
           <button type="button" onClick={clearFilters} className="rounded-lg border border-default bg-surface-secondary px-3 py-2.5 text-sm font-semibold text-secondary transition hover:bg-surface-hover hover:text-primary">
             Limpar filtros
           </button>
         </div>
-        <p className="mt-3 text-xs text-muted">As datas são opcionais e filtram a DataVencimento das parcelas. Sem período definido, entram todos os vencimentos do escopo selecionado.</p>
+        <p className="mt-3 text-xs text-muted">Os períodos são opcionais. Vencimento filtra a DataVencimento; Data de pagamento filtra a DataPagamento. Sem um período definido, esse critério não restringe o resultado.</p>
         {loading ? <p className="mt-3 text-xs font-medium text-brand">Atualizando resultados...</p> : null}
         {error ? <p className="mt-3 rounded-lg border border-danger bg-danger-soft px-3 py-2 text-sm text-danger">{error}</p> : null}
       </section>
@@ -477,7 +544,7 @@ export function SummaryAnalysisDashboard({
                   <div className="mb-4 rounded-xl border border-brand bg-brand-soft p-4">
                     <p className="text-xs font-semibold uppercase tracking-wide text-brand">Robô</p>
                     <h2 className="mt-1 text-lg font-semibold text-primary">Resultados via PIX</h2>
-                    <p className="mt-2 text-sm text-secondary">Os recebimentos PIX são separados pelo Tipo de Parcela e respeitam campanha, lote e DataVencimento.</p>
+                    <p className="mt-2 text-sm text-secondary">Os recebimentos PIX são separados pelo Tipo de Parcela e respeitam campanha, lote, DataVencimento e Data de pagamento.</p>
                   </div>
                 ) : null}
 
