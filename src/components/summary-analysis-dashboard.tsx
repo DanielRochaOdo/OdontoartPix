@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import * as XLSX from "xlsx";
+import { buildSummaryAnalysisWorkbook } from "@/lib/export-workbooks";
 import { formatCurrencyBR } from "@/lib/money";
 import type {
   SummaryAnalysisEntityMetrics,
@@ -272,6 +273,13 @@ export function SummaryAnalysisDashboard({
   const selectedCampaignNames = filterOptions.campaigns.filter((item) => campaignIds.includes(item.id)).map((item) => item.name);
   const selectedBatchNames = filterOptions.batches.filter((item) => batchIds.includes(item.id)).map((item) => item.name);
 
+  const exportFilters = [
+    { label: "Campanha", value: selectedCampaignNames.length ? selectedCampaignNames.join(", ") : "Todas" },
+    { label: "Lote", value: selectedBatchNames.length ? selectedBatchNames.join(", ") : "Todos" },
+    { label: "Data de vencimento", value: periodLabel },
+    { label: "Data de pagamento", value: paymentPeriodLabel }
+  ];
+
   async function loadFilters(next: {
     from: string;
     to: string;
@@ -351,33 +359,16 @@ export function SummaryAnalysisDashboard({
   }
 
   function exportXlsx() {
-    const rows = [
-      ["Resumo e Análise", periodLabel],
-      ["Data de pagamento", paymentPeriodLabel],
-      ["Campanhas", selectedCampaignNames.length ? selectedCampaignNames.join(", ") : "Todas"],
-      ["Lotes", selectedBatchNames.length ? selectedBatchNames.join(", ") : "Todos"],
-      ["Custo unitário por disparo", formatCurrencyBR(dispatchUnitCostCents)],
-      [],
-      ["Indicador", "Clínico", "Orto", "Clínico + Orto", "Robô"],
-      ["Qtde disparos", clinico.dispatchCount, orto.dispatchCount, combined.dispatchCount, robo.dispatchCount],
-      ["Valor disparos", formatCurrencyBR(clinico.dispatchValueCents), formatCurrencyBR(orto.dispatchValueCents), formatCurrencyBR(combined.dispatchValueCents), formatCurrencyBR(robo.dispatchValueCents)],
-      ["Custo ação", formatCurrencyBR(clinico.actionCostCents), formatCurrencyBR(orto.actionCostCents), formatCurrencyBR(combined.actionCostCents), formatCurrencyBR(robo.actionCostCents)],
-      ["Qtde assoc. pagos", clinico.paidAssociateCount, orto.paidAssociateCount, combined.paidAssociateCount, robo.paidAssociateCount],
-      ["Qtde parcelas pagas", clinico.paidInstallmentCount, orto.paidInstallmentCount, combined.paidInstallmentCount, robo.paidInstallmentCount],
-      ["Pago", formatCurrencyBR(clinico.paidAmountCents), formatCurrencyBR(orto.paidAmountCents), formatCurrencyBR(combined.paidAmountCents), formatCurrencyBR(robo.paidAmountCents)],
-      ["% pago", formatPercent(clinico.paidPercentage), formatPercent(orto.paidPercentage), formatPercent(combined.paidPercentage), formatPercent(robo.paidPercentage)],
-      ["Líquido", formatCurrencyBR(clinico.netAmountCents), formatCurrencyBR(orto.netAmountCents), formatCurrencyBR(combined.netAmountCents), formatCurrencyBR(robo.netAmountCents)],
-      [],
-      ["Robô por tipo de parcela", "Clínico", "Orto"],
-      ["Parcelas PIX", metrics.roboClinico.paidInstallmentCount, metrics.roboOrto.paidInstallmentCount],
-      ["Associados PIX", metrics.roboClinico.paidAssociateCount, metrics.roboOrto.paidAssociateCount],
-      ["Recebido via PIX", formatCurrencyBR(metrics.roboClinico.paidAmountCents), formatCurrencyBR(metrics.roboOrto.paidAmountCents)]
-    ];
-    const worksheet = XLSX.utils.aoa_to_sheet(rows);
-    worksheet["!cols"] = [{ wch: 28 }, { wch: 24 }, { wch: 24 }, { wch: 24 }, { wch: 24 }];
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Resumo");
-    XLSX.writeFile(workbook, "resumo-analise.xlsx");
+    const workbook = buildSummaryAnalysisWorkbook({
+      filters: exportFilters,
+      clinico,
+      orto,
+      combined,
+      robo,
+      roboClinico: metrics.roboClinico,
+      roboOrto: metrics.roboOrto
+    });
+    XLSX.writeFile(workbook, "resumo-analise.xlsx", { cellStyles: true });
   }
 
   async function exportPdf() {
@@ -392,11 +383,14 @@ export function SummaryAnalysisDashboard({
           to,
           paymentDateFrom,
           paymentDateTo,
+          filters: exportFilters,
           dispatchUnitCostCents,
           clinico,
           orto,
           combined,
-          robo
+          robo,
+          roboClinico: metrics.roboClinico,
+          roboOrto: metrics.roboOrto
         })
       });
       if (!response.ok) {
