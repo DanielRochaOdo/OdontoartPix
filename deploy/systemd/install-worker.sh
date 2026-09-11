@@ -13,9 +13,9 @@ SERVICE_NAME="${SERVICE_NAME:-odontoart-pix-worker}"
 TIMER_SECONDS="${TIMER_SECONDS:-30}"
 ENABLE_TIMER="${ENABLE_TIMER:-false}"
 WORKER_LIMIT="${WORKER_LIMIT:-60}"
-WORKER_CONCURRENCY="${WORKER_CONCURRENCY:-50}"
+WORKER_CONCURRENCY="${WORKER_CONCURRENCY:-60}"
 WORKER_DELAY_MS="${WORKER_DELAY_MS:-0}"
-WORKER_DATABASE_POOL_MAX="${WORKER_DATABASE_POOL_MAX:-30}"
+WORKER_DATABASE_POOL_MAX="${WORKER_DATABASE_POOL_MAX:-80}"
 
 if [ ! -f "${APP_DIR}/package.json" ]; then
   echo "package.json nao encontrado em ${APP_DIR}. Ajuste APP_DIR." >&2
@@ -67,7 +67,8 @@ EnvironmentFile=${ENV_FILE}
 Environment=DATABASE_POOL_MAX=${WORKER_DATABASE_POOL_MAX}
 ExecStart=/usr/bin/npx tsx scripts/process-local-worker.ts --limit=${WORKER_LIMIT} --concurrency=${WORKER_CONCURRENCY} --drain --delay-ms=${WORKER_DELAY_MS}
 TimeoutStartSec=infinity
-Nice=5
+Nice=-5
+CPUWeight=10000
 
 [Install]
 WantedBy=multi-user.target

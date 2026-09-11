@@ -54,19 +54,21 @@ sudo systemctl enable odontoartpix-app.service
 
 O worker roda no ambiente que acessa o PostgreSQL próprio e o ERP.
 
-O perfil **Agressivo** abaixo foi validado em produção em 25/08/2026 com throughput de aproximadamente `5,35 associados/s` em um lote real de 732 itens:
+O perfil **Agressivo** validado em produção usa os seguintes limites:
 
 ```text
 WORKER_LIMIT=60
-WORKER_CONCURRENCY=50
+WORKER_CONCURRENCY=60
 WORKER_DELAY_MS=0
-WORKER_DATABASE_POOL_MAX=30
+WORKER_DATABASE_POOL_MAX=80
 PROCESSING_BLOCK_SIZE=60
-PROCESSING_CONCURRENCY=50
-PROCESSING_ERP_CONCURRENCY=50
+PROCESSING_CONCURRENCY=60
+PROCESSING_ERP_CONCURRENCY=60
 PROCESSING_MAX_BUFFERED_RESULTS=60
 PROCESSING_PRODUCTIVE_DELAY_MS=0
 ```
+
+A unit do worker usa `Nice=-5` e `CPUWeight=10000` como prioridades padrão do perfil Agressivo.
 
 Os argumentos da unit são limites máximos. O worker também respeita os valores do preset salvo no banco, portanto perfis mais conservadores continuam reduzindo bloco e concorrência sem reinstalar a unit.
 
@@ -79,9 +81,9 @@ sudo APP_DIR=/opt/odontoart-pix \
   SERVICE_NAME=odontoart-pix-worker \
   TIMER_SECONDS=30 \
   WORKER_LIMIT=60 \
-  WORKER_CONCURRENCY=50 \
+  WORKER_CONCURRENCY=60 \
   WORKER_DELAY_MS=0 \
-  WORKER_DATABASE_POOL_MAX=30 \
+  WORKER_DATABASE_POOL_MAX=80 \
   ENABLE_TIMER=false \
   bash deploy/systemd/install-worker.sh
 ```
