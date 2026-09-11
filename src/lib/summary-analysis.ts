@@ -1,6 +1,7 @@
 import { dbQuery } from "@/lib/db/pool";
 
 export type SummaryAnalysisEntityMetrics = {
+  dispatchCount: number;
   dispatchValueCents: number;
   paidAssociateCount: number;
   paidInstallmentCount: number;
@@ -58,6 +59,12 @@ type MetricsRow = {
   pix_orto_paid_associates: number;
   pix_orto_paid_installments: number;
   pix_orto_paid_amount_cents: number;
+};
+
+type DispatchCountRow = {
+  clinico_dispatch_count: number;
+  orto_dispatch_count: number;
+  total_dispatch_count: number;
 };
 
 const DATE_KEY = /^\d{4}-\d{2}-\d{2}$/;
@@ -119,152 +126,170 @@ export async function getSummaryAnalysisMetrics(
   validateSummaryAnalysisRange(from, to);
   validateSummaryAnalysisRange(paymentDateFrom, paymentDateTo);
 
-  const result = await dbQuery<MetricsRow>(
-    `with scoped_targets as (
-       select distinct cbm.target_installment_ref_id
-         from campaign_batch_members cbm
-         join campaigns c
-           on c.id = cbm.campaign_id
-          and c.deleted_at is null
-         join campaign_batches cb
-           on cb.id = cbm.batch_id
-          and cb.deleted_at is null
-        where cbm.deleted_at is null
-          and cbm.target_installment_ref_id is not null
-          and (cardinality($1::uuid[]) = 0 or cbm.campaign_id = any($1::uuid[]))
-          and (cardinality($2::uuid[]) = 0 or cbm.batch_id = any($2::uuid[]))
-     ), canonical as (
+  const values = [campaignIds, batchIds, from || null, to || null, paymentDateFrom || null, paymentDateTo || null];
+
+  const [result, dispatchResult] = await Promise.all([
+    dbQuery<MetricsRow>(
+      `with scoped_targets as (
+         select distinct cbm.target_installment_ref_id
+           from campaign_batch_members cbm
+           join campaigns c
+             on c.id = cbm.campaign_id
+            and c.deleted_at is null
+           join campaign_batches cb
+             on cb.id = cbm.batch_id
+            and cb.deleted_at is null
+          where cbm.deleted_at is null
+            and cbm.target_installment_ref_id is not null
+            and (cardinality($1::uuid[]) = 0 or cbm.campaign_id = any($1::uuid[]))
+            and (cardinality($2::uuid[]) = 0 or cbm.batch_id = any($2::uuid[]))
+       ), canonical as (
+         select
+           mti.id as target_installment_ref_id,
+           mti.member_id,
+           mti.installment_type,
+           mti.amount_cents,
+           mti.paid_amount_cents,
+           nullif(trim(mti.payment_description), '') as payment_description,
+           case
+             when trim(coalesce(mti.due_date_text, '')) ~ '^\\d{1,2}/\\d{1,2}/\\d{4}$'
+               then to_date(trim(mti.due_date_text), 'DD/MM/YYYY')
+             when trim(coalesce(mti.due_date_text, '')) ~ '^\\d{4}-\\d{2}-\\d{2}'
+               then to_date(substring(trim(mti.due_date_text) from 1 for 10), 'YYYY-MM-DD')
+             when trim(coalesce(mti.due_date_text, '')) ~ '^\\d{1,2}/\\d{1,2}/\\d{2}$'
+               then to_date(trim(mti.due_date_text), 'MM/DD/YY')
+             else null
+           end as due_date,
+           case
+             when trim(coalesce(mti.payment_date_text, '')) ~ '^\\d{1,2}/\\d{1,2}/\\d{4}$'
+               then to_date(trim(mti.payment_date_text), 'DD/MM/YYYY')
+             when trim(coalesce(mti.payment_date_text, '')) ~ '^\\d{4}-\\d{2}-\\d{2}'
+               then to_date(substring(trim(mti.payment_date_text) from 1 for 10), 'YYYY-MM-DD')
+             when trim(coalesce(mti.payment_date_text, '')) ~ '^\\d{1,2}/\\d{1,2}/\\d{2}$'
+               then to_date(trim(mti.payment_date_text), 'MM/DD/YY')
+             else null
+           end as payment_date
+         from scoped_targets
+         join member_target_installments mti
+           on mti.id = scoped_targets.target_installment_ref_id
+         join members m
+           on m.id = mti.member_id
+          and m.deleted_at is null
+       ), ranged as (
+         select
+           *,
+           (
+             paid_amount_cents is not null
+             and payment_description is not null
+             and upper(payment_description) <> 'ABERTO'
+             and upper(payment_description) <> 'ACORDADO'
+             and upper(payment_description) <> 'EXCLUIDA'
+           ) as is_paid,
+           upper(trim(payment_description)) in (
+             'PIX',
+             'PIX - CLINICO',
+             'PIX - ORTODONTIA',
+             'PIX NEW ODONTO - P4X',
+             'PIX NEW ODONTOLOGIA - P4X',
+             'PIX ODONTOART - P4X',
+             'PIX RECORRENTE ODONTOART - P4X'
+           ) as is_pix
+         from canonical
+         where ($3::date is null or due_date >= $3::date)
+           and ($4::date is null or due_date <= $4::date)
+           and ($5::date is null or payment_date >= $5::date)
+           and ($6::date is null or payment_date <= $6::date)
+       )
        select
-         mti.member_id,
-         mti.installment_type,
-         mti.amount_cents,
-         mti.paid_amount_cents,
-         nullif(trim(mti.payment_description), '') as payment_description,
-         case
-           when trim(coalesce(mti.due_date_text, '')) ~ '^\\d{1,2}/\\d{1,2}/\\d{4}$'
-             then to_date(trim(mti.due_date_text), 'DD/MM/YYYY')
-           when trim(coalesce(mti.due_date_text, '')) ~ '^\\d{4}-\\d{2}-\\d{2}'
-             then to_date(substring(trim(mti.due_date_text) from 1 for 10), 'YYYY-MM-DD')
-           when trim(coalesce(mti.due_date_text, '')) ~ '^\\d{1,2}/\\d{1,2}/\\d{2}$'
-             then to_date(trim(mti.due_date_text), 'MM/DD/YY')
-           else null
-         end as due_date,
-         case
-           when trim(coalesce(mti.payment_date_text, '')) ~ '^\\d{1,2}/\\d{1,2}/\\d{4}$'
-             then to_date(trim(mti.payment_date_text), 'DD/MM/YYYY')
-           when trim(coalesce(mti.payment_date_text, '')) ~ '^\\d{4}-\\d{2}-\\d{2}'
-             then to_date(substring(trim(mti.payment_date_text) from 1 for 10), 'YYYY-MM-DD')
-           when trim(coalesce(mti.payment_date_text, '')) ~ '^\\d{1,2}/\\d{1,2}/\\d{2}$'
-             then to_date(trim(mti.payment_date_text), 'MM/DD/YY')
-           else null
-         end as payment_date
-       from scoped_targets
-       join member_target_installments mti
-         on mti.id = scoped_targets.target_installment_ref_id
-       join members m
-         on m.id = mti.member_id
-        and m.deleted_at is null
-     ), ranged as (
+         coalesce(sum(amount_cents) filter (where installment_type = 'clinico'), 0)::float8 as clinico_dispatch_value_cents,
+         count(distinct member_id) filter (where is_paid and installment_type = 'clinico')::int as clinico_paid_associates,
+         count(*) filter (where is_paid and installment_type = 'clinico')::int as clinico_paid_installments,
+         coalesce(sum(paid_amount_cents) filter (where is_paid and installment_type = 'clinico'), 0)::float8 as clinico_paid_amount_cents,
+
+         coalesce(sum(amount_cents) filter (where installment_type = 'orto'), 0)::float8 as orto_dispatch_value_cents,
+         count(distinct member_id) filter (where is_paid and installment_type = 'orto')::int as orto_paid_associates,
+         count(*) filter (where is_paid and installment_type = 'orto')::int as orto_paid_installments,
+         coalesce(sum(paid_amount_cents) filter (where is_paid and installment_type = 'orto'), 0)::float8 as orto_paid_amount_cents,
+
+         coalesce(sum(amount_cents) filter (where installment_type in ('clinico', 'orto')), 0)::float8 as pix_dispatch_value_cents,
+         count(distinct member_id) filter (where is_paid and is_pix and installment_type in ('clinico', 'orto'))::int as pix_paid_associates,
+         count(*) filter (where is_paid and is_pix and installment_type in ('clinico', 'orto'))::int as pix_paid_installments,
+         coalesce(sum(paid_amount_cents) filter (where is_paid and is_pix and installment_type in ('clinico', 'orto')), 0)::float8 as pix_paid_amount_cents,
+
+         coalesce(sum(amount_cents) filter (where installment_type = 'clinico'), 0)::float8 as pix_clinico_dispatch_value_cents,
+         count(distinct member_id) filter (where is_paid and is_pix and installment_type = 'clinico')::int as pix_clinico_paid_associates,
+         count(*) filter (where is_paid and is_pix and installment_type = 'clinico')::int as pix_clinico_paid_installments,
+         coalesce(sum(paid_amount_cents) filter (where is_paid and is_pix and installment_type = 'clinico'), 0)::float8 as pix_clinico_paid_amount_cents,
+
+         coalesce(sum(amount_cents) filter (where installment_type = 'orto'), 0)::float8 as pix_orto_dispatch_value_cents,
+         count(distinct member_id) filter (where is_paid and is_pix and installment_type = 'orto')::int as pix_orto_paid_associates,
+         count(*) filter (where is_paid and is_pix and installment_type = 'orto')::int as pix_orto_paid_installments,
+         coalesce(sum(paid_amount_cents) filter (where is_paid and is_pix and installment_type = 'orto'), 0)::float8 as pix_orto_paid_amount_cents
+       from ranged`,
+      values
+    ),
+    dbQuery<DispatchCountRow>(
+      `with scoped_targets as (
+         select distinct cbm.target_installment_ref_id
+           from campaign_batch_members cbm
+           join campaigns c on c.id = cbm.campaign_id and c.deleted_at is null
+           join campaign_batches cb on cb.id = cbm.batch_id and cb.deleted_at is null
+          where cbm.deleted_at is null
+            and cbm.target_installment_ref_id is not null
+            and (cardinality($1::uuid[]) = 0 or cbm.campaign_id = any($1::uuid[]))
+            and (cardinality($2::uuid[]) = 0 or cbm.batch_id = any($2::uuid[]))
+       ), canonical as (
+         select
+           mti.id as target_installment_ref_id,
+           mti.installment_type,
+           case
+             when trim(coalesce(mti.due_date_text, '')) ~ '^\\d{1,2}/\\d{1,2}/\\d{4}$' then to_date(trim(mti.due_date_text), 'DD/MM/YYYY')
+             when trim(coalesce(mti.due_date_text, '')) ~ '^\\d{4}-\\d{2}-\\d{2}' then to_date(substring(trim(mti.due_date_text) from 1 for 10), 'YYYY-MM-DD')
+             when trim(coalesce(mti.due_date_text, '')) ~ '^\\d{1,2}/\\d{1,2}/\\d{2}$' then to_date(trim(mti.due_date_text), 'MM/DD/YY')
+             else null
+           end as due_date,
+           case
+             when trim(coalesce(mti.payment_date_text, '')) ~ '^\\d{1,2}/\\d{1,2}/\\d{4}$' then to_date(trim(mti.payment_date_text), 'DD/MM/YYYY')
+             when trim(coalesce(mti.payment_date_text, '')) ~ '^\\d{4}-\\d{2}-\\d{2}' then to_date(substring(trim(mti.payment_date_text) from 1 for 10), 'YYYY-MM-DD')
+             when trim(coalesce(mti.payment_date_text, '')) ~ '^\\d{1,2}/\\d{1,2}/\\d{2}$' then to_date(trim(mti.payment_date_text), 'MM/DD/YY')
+             else null
+           end as payment_date
+         from scoped_targets
+         join member_target_installments mti on mti.id = scoped_targets.target_installment_ref_id
+       ), ranged as (
+         select *
+           from canonical
+          where ($3::date is null or due_date >= $3::date)
+            and ($4::date is null or due_date <= $4::date)
+            and ($5::date is null or payment_date >= $5::date)
+            and ($6::date is null or payment_date <= $6::date)
+       )
        select
-         *,
-         (
-           paid_amount_cents is not null
-           and payment_description is not null
-           and upper(payment_description) <> 'ABERTO'
-           and upper(payment_description) <> 'ACORDADO'
-           and upper(payment_description) <> 'EXCLUIDA'
-         ) as is_paid,
-         upper(trim(payment_description)) in (
-           'PIX',
-           'PIX - CLINICO',
-           'PIX - ORTODONTIA',
-           'PIX NEW ODONTO - P4X',
-           'PIX NEW ODONTOLOGIA - P4X',
-           'PIX ODONTOART - P4X',
-           'PIX RECORRENTE ODONTOART - P4X'
-         ) as is_pix
-       from canonical
-       where ($3::date is null or due_date >= $3::date)
-         and ($4::date is null or due_date <= $4::date)
-         and ($5::date is null or payment_date >= $5::date)
-         and ($6::date is null or payment_date <= $6::date)
-     )
-     select
-       coalesce(sum(amount_cents) filter (
-         where installment_type = 'clinico'
-       ), 0)::float8 as clinico_dispatch_value_cents,
-       count(distinct member_id) filter (
-         where is_paid and installment_type = 'clinico'
-       )::int as clinico_paid_associates,
-       count(*) filter (
-         where is_paid and installment_type = 'clinico'
-       )::int as clinico_paid_installments,
-       coalesce(sum(paid_amount_cents) filter (
-         where is_paid and installment_type = 'clinico'
-       ), 0)::float8 as clinico_paid_amount_cents,
-
-       coalesce(sum(amount_cents) filter (
-         where installment_type = 'orto'
-       ), 0)::float8 as orto_dispatch_value_cents,
-       count(distinct member_id) filter (
-         where is_paid and installment_type = 'orto'
-       )::int as orto_paid_associates,
-       count(*) filter (
-         where is_paid and installment_type = 'orto'
-       )::int as orto_paid_installments,
-       coalesce(sum(paid_amount_cents) filter (
-         where is_paid and installment_type = 'orto'
-       ), 0)::float8 as orto_paid_amount_cents,
-
-       coalesce(sum(amount_cents) filter (
-         where installment_type in ('clinico', 'orto')
-       ), 0)::float8 as pix_dispatch_value_cents,
-       count(distinct member_id) filter (
-         where is_paid and is_pix and installment_type in ('clinico', 'orto')
-       )::int as pix_paid_associates,
-       count(*) filter (
-         where is_paid and is_pix and installment_type in ('clinico', 'orto')
-       )::int as pix_paid_installments,
-       coalesce(sum(paid_amount_cents) filter (
-         where is_paid and is_pix and installment_type in ('clinico', 'orto')
-       ), 0)::float8 as pix_paid_amount_cents,
-
-       coalesce(sum(amount_cents) filter (
-         where installment_type = 'clinico'
-       ), 0)::float8 as pix_clinico_dispatch_value_cents,
-       count(distinct member_id) filter (
-         where is_paid and is_pix and installment_type = 'clinico'
-       )::int as pix_clinico_paid_associates,
-       count(*) filter (
-         where is_paid and is_pix and installment_type = 'clinico'
-       )::int as pix_clinico_paid_installments,
-       coalesce(sum(paid_amount_cents) filter (
-         where is_paid and is_pix and installment_type = 'clinico'
-       ), 0)::float8 as pix_clinico_paid_amount_cents,
-
-       coalesce(sum(amount_cents) filter (
-         where installment_type = 'orto'
-       ), 0)::float8 as pix_orto_dispatch_value_cents,
-       count(distinct member_id) filter (
-         where is_paid and is_pix and installment_type = 'orto'
-       )::int as pix_orto_paid_associates,
-       count(*) filter (
-         where is_paid and is_pix and installment_type = 'orto'
-       )::int as pix_orto_paid_installments,
-       coalesce(sum(paid_amount_cents) filter (
-         where is_paid and is_pix and installment_type = 'orto'
-       ), 0)::float8 as pix_orto_paid_amount_cents
-     from ranged`,
-    [campaignIds, batchIds, from || null, to || null, paymentDateFrom || null, paymentDateTo || null]
-  );
+         count(*) filter (where ranged.installment_type = 'clinico')::int as clinico_dispatch_count,
+         count(*) filter (where ranged.installment_type = 'orto')::int as orto_dispatch_count,
+         count(*)::int as total_dispatch_count
+       from dispatch_events event
+       join dispatch_operations operation
+         on operation.id = event.operation_id
+        and operation.status = 'completed'
+       join ranged
+         on ranged.target_installment_ref_id = event.target_installment_ref_id
+      where (cardinality($1::uuid[]) = 0 or event.campaign_id = any($1::uuid[]))
+        and (cardinality($2::uuid[]) = 0 or event.batch_id = any($2::uuid[]))`,
+      values
+    )
+  ]);
 
   const row = result.rows[0];
+  const dispatchRow = dispatchResult.rows[0];
   const entity = (
+    dispatchCount: number | undefined,
     dispatchValueCents: number | undefined,
     paidAssociateCount: number | undefined,
     paidInstallmentCount: number | undefined,
     paidAmountCents: number | undefined
   ): SummaryAnalysisEntityMetrics => ({
+    dispatchCount: Number(dispatchCount ?? 0),
     dispatchValueCents: Number(dispatchValueCents ?? 0),
     paidAssociateCount: Number(paidAssociateCount ?? 0),
     paidInstallmentCount: Number(paidInstallmentCount ?? 0),
@@ -279,30 +304,35 @@ export async function getSummaryAnalysisMetrics(
     campaignIds,
     batchIds,
     clinico: entity(
+      dispatchRow?.clinico_dispatch_count,
       row?.clinico_dispatch_value_cents,
       row?.clinico_paid_associates,
       row?.clinico_paid_installments,
       row?.clinico_paid_amount_cents
     ),
     orto: entity(
+      dispatchRow?.orto_dispatch_count,
       row?.orto_dispatch_value_cents,
       row?.orto_paid_associates,
       row?.orto_paid_installments,
       row?.orto_paid_amount_cents
     ),
     robo: entity(
+      dispatchRow?.total_dispatch_count,
       row?.pix_dispatch_value_cents,
       row?.pix_paid_associates,
       row?.pix_paid_installments,
       row?.pix_paid_amount_cents
     ),
     roboClinico: entity(
+      dispatchRow?.clinico_dispatch_count,
       row?.pix_clinico_dispatch_value_cents,
       row?.pix_clinico_paid_associates,
       row?.pix_clinico_paid_installments,
       row?.pix_clinico_paid_amount_cents
     ),
     roboOrto: entity(
+      dispatchRow?.orto_dispatch_count,
       row?.pix_orto_dispatch_value_cents,
       row?.pix_orto_paid_associates,
       row?.pix_orto_paid_installments,
