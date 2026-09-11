@@ -46,14 +46,14 @@ export const PROCESSING_PRESETS: Record<ProcessingPresetKey, ProcessingConfig> =
     maxPageSize: 200,
     maxPagesPerOperation: 1000
   },
-  // Perfil validado em producao: bloco 60, concorrencia ERP 50, buffer 60
+  // Perfil validado em producao: bloco 60, concorrencia ERP 60, buffer 60
   // e atraso produtivo zero. Os demais limites acompanham o perfil de
   // producao versionado no .env.example.
   agressivo: {
     workerCount: 10,
     claimBatchSize: 60,
-    perWorkerConcurrency: 50,
-    erpConcurrency: 50,
+    perWorkerConcurrency: 60,
+    erpConcurrency: 60,
     persistenceConcurrency: 1,
     persistenceBatchSize: 15,
     maxBufferedResults: 60,
