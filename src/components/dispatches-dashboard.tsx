@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import * as XLSX from "xlsx-js-style";
 import type { DispatchFilters, DispatchListItem, DispatchOperationHistoryItem } from "@/lib/dispatches";
+import { buildDispatchesWorkbook } from "@/lib/dispatches-workbook";
 import { matchesPaidPendingFilter } from "@/lib/paid-pending";
 
 const PAGE_SIZE = 50;
@@ -132,6 +133,13 @@ function statusLabel(value: string) {
 
 function paymentLabel(value: string) {
   return PAYMENT_LABELS[value] ?? value;
+}
+
+function periodLabel(from: string, to: string, emptyLabel: string) {
+  if (from && to) return from === to ? formatDate(from) : `${formatDate(from)} - ${formatDate(to)}`;
+  if (from) return `A partir de ${formatDate(from)}`;
+  if (to) return `Até ${formatDate(to)}`;
+  return emptyLabel;
 }
 
 function isEligible(row: Row) {
@@ -422,26 +430,61 @@ export function DispatchesDashboard({ rows, history, dispatchUnitCostCents, canR
   }
 
   function exportXlsx() {
-    const sheet = XLSX.utils.json_to_sheet(filteredRows.map((row) => ({
-      Associado: row.name,
-      CPF: row.cpf,
-      Código: row.associatedCode,
-      Parcela: row.installment,
-      "Tipo parcela": row.installmentType,
-      Vencimento: row.dueDate,
-      Campanha: row.campaign,
-      Lote: row.batch,
-      Pagamento: paymentLabel(row.payment),
-      "Tipo de pagto": row.receipt,
-      Valor: row.amount / 100,
-      "Valor pago": (row.paidAmount ?? 0) / 100,
-      Pendência: row.pending / 100,
-      "Qtde disparos": row.dispatchCount,
-      "Último disparo": row.lastDispatchDate
-    })));
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, sheet, "Disparos");
-    XLSX.writeFile(workbook, "disparos.xlsx", { cellStyles: true });
+    if (filteredRows.length === 0) return;
+
+    const campaignLabels = new Map(options.campaign.map((option) => [option.value, option.label]));
+    const batchLabels = new Map(options.batch.map((option) => [option.value, option.label]));
+    const dispatchCountLabel = dispatchCountFilter === "never"
+      ? "Nunca disparado"
+      : dispatchCountFilter === "4plus"
+        ? "4+"
+        : dispatchCountFilter === "all"
+          ? "Todos"
+          : dispatchCountFilter;
+
+    const workbook = buildDispatchesWorkbook({
+      filters: [
+        { label: "Pesquisa geral", value: query.trim() || "Todos" },
+        { label: "Código associado", value: code.trim() || "Todos" },
+        { label: "Parcela", value: installment.trim() || "Todas" },
+        { label: "Data de vencimento", value: periodLabel(dueDateFrom, dueDateTo, "Todos os vencimentos") },
+        { label: "Data de pagamento", value: periodLabel(paymentDateFrom, paymentDateTo, "Todas as datas") },
+        { label: "Status", value: statusFilters.length ? statusFilters.map(statusLabel).join(", ") : "Todos" },
+        { label: "Pagamento", value: paymentFilters.length ? paymentFilters.map(paymentLabel).join(", ") : "Todos" },
+        { label: "Pago com pendência", value: paidPending === "yes" ? "Sim" : paidPending === "no" ? "Não" : "Todos" },
+        { label: "Tipo de pagamento", value: receiptFilters.length ? receiptFilters.join(", ") : "Todos" },
+        { label: "Tipo de parcela", value: installmentTypeFilters.length ? installmentTypeFilters.map(installmentTypeLabel).join(", ") : "Todos" },
+        { label: "Campanha", value: campaignFilters.length ? campaignFilters.map((id) => campaignLabels.get(id) ?? id).join(", ") : "Todas" },
+        { label: "Lote", value: batchFilters.length ? batchFilters.map((id) => batchLabels.get(id) ?? id).join(", ") : "Todos" },
+        { label: "Qtde disparos", value: dispatchCountLabel },
+        { label: "Último disparo", value: periodLabel(lastDispatchFrom, lastDispatchTo, "Todas as datas") }
+      ],
+      rows: filteredRows.map((row) => ({
+        name: row.name,
+        associatedCode: row.associatedCode,
+        installment: row.installment,
+        dueDate: row.dueDate === "-" ? "" : row.dueDate,
+        cpf: row.cpf ? `***.***.***-${row.cpf.slice(-2)}` : "",
+        campaign: row.campaign,
+        batch: row.batch,
+        status: statusLabel(row.status),
+        payment: row.payment === "paid" && row.pending > 0 ? "Pago com pendência" : paymentLabel(row.payment),
+        receiptDescription: row.receipt,
+        installmentType: row.installmentType === "-" ? "" : row.installmentType,
+        paymentDate: row.paymentDate === "-" ? "" : row.paymentDate,
+        amountCents: row.amount,
+        paidAmountCents: row.paidAmount,
+        pendingCents: row.pending,
+        dispatchCount: row.dispatchCount,
+        lastDispatchDate: row.lastDispatchDate === "Nunca disparado" ? "" : row.lastDispatchDate
+      }))
+    });
+
+    XLSX.writeFile(
+      workbook,
+      `disparos-filtrados-${new Date().toISOString().slice(0, 10)}.xlsx`,
+      { cellStyles: true }
+    );
   }
 
   const historyRows = useMemo(() => history.filter((operation) => {
