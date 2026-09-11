@@ -7,8 +7,8 @@ describe("processing-presets", () => {
 
     expect(config.workerCount).toBe(10);
     expect(config.claimBatchSize).toBe(60);
-    expect(config.perWorkerConcurrency).toBe(50);
-    expect(config.erpConcurrency).toBe(50);
+    expect(config.perWorkerConcurrency).toBe(60);
+    expect(config.erpConcurrency).toBe(60);
     expect(config.persistenceConcurrency).toBe(1);
     expect(config.persistenceBatchSize).toBe(15);
     expect(config.maxBufferedResults).toBe(60);
