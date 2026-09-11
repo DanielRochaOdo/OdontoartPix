@@ -50,6 +50,6 @@ export async function POST(request: Request) {
     }));
   } catch (error) {
     const message = error instanceof Error ? error.message : "Nao foi possivel registrar os disparos.";
-    return fail("DISPATCH_REGISTRATION_FAILED", message, 400);
+    return fail("INVALID_REQUEST", message, 400);
   }
 }
