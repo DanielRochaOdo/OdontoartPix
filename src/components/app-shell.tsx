@@ -44,6 +44,15 @@ function MembersIcon({ className = "h-5 w-5" }: { className?: string }) {
   );
 }
 
+function DispatchIcon({ className = "h-5 w-5" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden="true">
+      <path d="m3.5 11 16-7-5.8 16-2.7-6.9L3.5 11Z" className="stroke-current" strokeWidth="1.8" strokeLinejoin="round" />
+      <path d="m11 13 8.5-9" className="stroke-current" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 function LayersIcon({ className = "h-5 w-5" }: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden="true">
@@ -75,6 +84,7 @@ const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: DashboardIcon },
   { href: "/campanhas", label: "Campanhas", icon: CampaignsIcon },
   { href: "/associados", label: "Associados", icon: MembersIcon },
+  { href: "/disparos", label: "Disparos", icon: DispatchIcon },
   { href: "/resumo-analise", label: "Resumo e Análise", icon: AnalysisIcon },
   { href: "/configuracoes", label: "Configurações", icon: SettingsIcon }
 ];
