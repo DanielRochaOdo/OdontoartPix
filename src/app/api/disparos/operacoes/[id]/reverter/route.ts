@@ -21,6 +21,6 @@ export async function POST(
     return ok(await revertDispatchOperation(parsed.data.id, auth.user.id));
   } catch (error) {
     const message = error instanceof Error ? error.message : "Nao foi possivel desfazer a operacao.";
-    return fail("DISPATCH_REVERT_FAILED", message, 400);
+    return fail("CONFLICT", message, 409);
   }
 }
