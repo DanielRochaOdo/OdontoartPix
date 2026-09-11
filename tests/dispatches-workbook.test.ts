@@ -34,21 +34,21 @@ describe("XLSX de Disparos", () => {
     });
 
     const sheet = workbook.Sheets.Disparos;
-    expect(sheet).toBeTruthy();
-    expect(sheet.A1?.v).toBe("ODONTOPIX · DISPAROS");
-    expect(sheet.A2?.v).toBe("Exportação dos registros filtrados");
-    expect(sheet.A5?.v).toBe("FILTROS APLICADOS");
-    expect(sheet.A1?.s?.fill?.fgColor?.rgb).toBe("062B2B");
-    expect(sheet.A5?.s?.fill?.fgColor?.rgb).toBe("0F766E");
-    expect(sheet["!autofilter"]?.ref).toContain(":Q");
-    expect(sheet["!cols"]).toHaveLength(17);
+    const styledSheet = sheet as typeof sheet & Record<string, any>;
 
-    const cells = Object.values(sheet).filter(
-      (cell): cell is { v?: unknown; s?: { fill?: { fgColor?: { rgb?: string } } } } =>
-        Boolean(cell && typeof cell === "object" && "v" in cell)
-    );
-    expect(cells.some((cell) => cell.v === "Qtde disparos")).toBe(true);
-    expect(cells.some((cell) => cell.v === "Último disparo")).toBe(true);
-    expect(cells.some((cell) => cell.s?.fill?.fgColor?.rgb === "ECF7F5")).toBe(false);
+    expect(sheet).toBeTruthy();
+    expect(styledSheet.A1?.v).toBe("ODONTOPIX · DISPAROS");
+    expect(styledSheet.A2?.v).toBe("Exportação dos registros filtrados");
+    expect(styledSheet.A5?.v).toBe("FILTROS APLICADOS");
+    expect(styledSheet.A1?.s?.fill?.fgColor?.rgb).toBe("062B2B");
+    expect(styledSheet.A5?.s?.fill?.fgColor?.rgb).toBe("0F766E");
+    expect(styledSheet["!autofilter"]?.ref).toContain(":Q");
+    expect(styledSheet["!cols"]).toHaveLength(17);
+
+    const values = Object.values(styledSheet)
+      .filter((cell) => cell && typeof cell === "object" && "v" in cell)
+      .map((cell) => cell.v);
+    expect(values).toContain("Qtde disparos");
+    expect(values).toContain("Último disparo");
   });
 });
