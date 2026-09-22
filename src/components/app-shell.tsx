@@ -117,10 +117,6 @@ export function AppShell({
     });
   }, [router]);
 
-  useEffect(() => {
-    setMobileOpen(false);
-  }, [pathname]);
-
   return (
     <div className="min-h-screen w-full bg-app text-primary">
       <GlobalProcessingIndicator />
@@ -135,7 +131,7 @@ export function AppShell({
           <aside
             id="odontopix-sidebar"
             aria-label="Menu principal"
-            className={`odontopix-sidebar fixed inset-y-0 left-0 z-50 flex w-[246px] flex-col bg-[#101d33] text-[#bac7d8] shadow-[8px_0_30px_rgba(16,29,51,0.08)] transition-[transform,width] duration-200 lg:translate-x-0 ${mobileOpen ? "translate-x-0" : "-translate-x-full"} ${collapsed ? "lg:w-[78px]" : "lg:w-[246px]"}`}
+            className={`odontopix-sidebar fixed inset-y-0 left-0 z-50 flex w-[246px] flex-col bg-[#101d33] text-[#bac7d8] shadow-[8px_0_30px_rgba(16,29,51,0.08)] transition-[transform,width] duration-200 ${mobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"} ${collapsed ? "lg:w-[78px]" : "lg:w-[246px]"}`}
           >
             <div className={`flex min-h-0 flex-1 flex-col px-3 pb-4 pt-6 ${collapsed ? "lg:px-2" : ""}`}>
               <div className={`flex shrink-0 items-center gap-3 px-2 ${collapsed ? "lg:justify-center lg:px-0" : ""}`}>
@@ -193,7 +189,7 @@ export function AppShell({
             </div>
           </aside>
 
-          <header className={`sticky top-0 z-30 flex h-[64px] items-center justify-between gap-4 border-b border-subtle bg-surface-primary px-4 sm:px-6 lg:ml-[246px] lg:h-[73px] lg:px-9 ${collapsed ? "lg:ml-[78px]" : ""}`}>
+          <header className={`sticky top-0 z-30 flex h-[64px] items-center justify-between gap-4 border-b border-subtle bg-surface-primary px-4 sm:px-6 lg:h-[73px] lg:px-9 ${collapsed ? "lg:ml-[78px]" : "lg:ml-[246px]"}`}>
             <div className="flex min-w-0 items-center gap-3">
               <button
                 type="button"
