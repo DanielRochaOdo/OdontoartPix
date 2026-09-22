@@ -111,7 +111,7 @@ export function readPaymentFilters(
   if (dueText && (!/^[0-9]{1,2}$/.test(dueText) || Number(dueText) < 1 || Number(dueText) > 31)) {
     throw new Error("Dia de vencimento inválido.");
   }
-  const method = (value("method") ?? "").trim();
+  const method = (value("scope") === "open" ? "" : value("method") ?? "").trim();
   if (method.length > 120) throw new Error("Forma de pagamento inválida.");
   return {
     period, from, to,
@@ -280,7 +280,7 @@ select
   count(*)::int as count,
   count(*) filter (where days > 0)::int as late_count,
   coalesce(round(avg(days)::numeric, 2), 0)::float8 as average_days,
-  coalesce(round(avg(days) filter (where days > 0)::numeric, 2), 0)::float8 as late_average_days,
+  coalesce(round((avg(days) filter (where days > 0))::numeric, 2), 0)::float8 as late_average_days,
   coalesce(sum(report_amount_cents), 0)::float8 as amount_cents
 from eligible
 group by grouping sets ((), (plan), (due_day), (method))
@@ -365,7 +365,7 @@ export async function getPaymentDetails(filters: PaymentFilters, kind: GroupKind
     from eligible
     where ($9::text = 'total'
       or ($9::text = 'plan' and plan = $10::text)
-      or ($9::text = 'due' and due_day = $10::int)
+      or ($9::text = 'due' and due_day::text = $10::text)
       or ($9::text = 'method' and method = $10::text))
     order by days desc, due_date desc, id
     limit 50
