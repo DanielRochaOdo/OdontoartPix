@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   aggregatePaymentRows, delayDays, normalizePaymentMethod,
+  getPaymentDetails, getPaymentMethods, getPaymentReport,
   parseFinancialDate, paymentFilterSearch, readPaymentFilters, sortPaymentGroups,
   type ReportGroup
 } from "@/lib/payment-punctuality";
@@ -67,5 +68,15 @@ describe("Pontualidade de pagamentos", () => {
     expect(link).toContain("plan=orto");
     expect(link).toContain("due=10");
     expect(link).toContain("tab=vencimentos");
+  });
+});
+
+describe("Consulta SQL de pontualidade", () => {
+  it.skipIf(!process.env.DATABASE_HOST)("executa o agrupamento, modalidades e detalhamento no PostgreSQL migrado", async () => {
+    const report = await getPaymentReport(base);
+    expect(report.total.kind).toBe("total");
+    expect(report.total.count).toBeGreaterThanOrEqual(0);
+    expect(Array.isArray(await getPaymentMethods())).toBe(true);
+    expect(Array.isArray(await getPaymentDetails(base, "total", "all"))).toBe(true);
   });
 });
