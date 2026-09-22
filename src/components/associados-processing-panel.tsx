@@ -101,7 +101,7 @@ function Metric({
   }[tone];
 
   return (
-    <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-[#243650] dark:bg-[#111d30]">
+    <div className="flex items-center gap-3 rounded-xl border border-default bg-surface-secondary p-3 ">
       <span className={`inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full border ${toneClass}`}>
         <ManualDashboardIcon name={icon} className="h-7 w-7" />
       </span>
@@ -121,9 +121,9 @@ function ChangesMetric({ count, open, onClick }: { count: number; open: boolean;
       onClick={onClick}
       disabled={!hasChanges}
       aria-expanded={open}
-      className="flex w-full items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-left transition hover:bg-slate-100 disabled:cursor-default disabled:hover:bg-slate-50 dark:border-[#243650] dark:bg-[#111d30] dark:hover:bg-[#17263a] dark:disabled:hover:bg-[#111d30]"
+      className="flex w-full items-center gap-3 rounded-xl border border-default bg-surface-secondary p-3 text-left transition hover:bg-slate-100 disabled:cursor-default disabled:hover:bg-surface-secondary  dark:hover:bg-[#17263a] dark:disabled:hover:bg-[#111d30]"
     >
-      <span className={`inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full border ${hasChanges ? "border-amber-300/70 bg-amber-50 text-amber-700 dark:border-amber-700/60 dark:bg-amber-950/25 dark:text-amber-300" : "border-slate-300 bg-white text-slate-500 dark:border-[#34506d] dark:bg-[#0d1728] dark:text-slate-400"}`}>
+      <span className={`inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full border ${hasChanges ? "border-amber-300/70 bg-amber-50 text-amber-700 dark:border-amber-700/60 dark:bg-amber-950/25 dark:text-amber-300" : "border-default bg-surface-primary text-slate-500  dark:text-slate-400"}`}>
         <ManualDashboardIcon name="active" className="h-7 w-7" />
       </span>
       <div className="min-w-0 flex-1">
@@ -321,7 +321,7 @@ export function AssociadosProcessingPanel() {
   }
 
   return (
-    <section className="processing-active-card mt-5 w-full rounded-2xl border border-slate-200 bg-white p-5 shadow-sm ring-1 ring-emerald-100 transition dark:border-[#22324a] dark:bg-[#0d1728] dark:ring-emerald-950">
+    <section className="processing-active-card mt-5 w-full rounded-2xl border border-default bg-surface-primary p-5 shadow-sm ring-1 ring-emerald-100 transition  dark:ring-emerald-950">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <div className={`flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.16em] ${visibleSnapshot.active ? "text-emerald-700 dark:text-emerald-400" : visibleSnapshot.status === "cancelled" ? "text-red-700 dark:text-red-300" : "text-slate-700 dark:text-slate-200"}`}>
@@ -358,7 +358,7 @@ export function AssociadosProcessingPanel() {
               <button
                 type="button"
                 onClick={() => setDismissedRequestId(visibleSnapshot.requestId)}
-                className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-[#34506d] dark:text-slate-200 dark:hover:bg-[#14263a]"
+                className="rounded-lg border border-default px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-surface-secondary  dark:text-slate-200 dark:hover:bg-surface-hover"
               >
                 Ocultar resultado
               </button>
@@ -405,7 +405,7 @@ export function AssociadosProcessingPanel() {
           {!changesLoading && !changesError && changes ? (
             <div className="mt-4 space-y-3">
               {changes.items.map((item) => (
-                <article key={item.memberId} className="rounded-lg border border-slate-200 bg-white p-3 dark:border-[#2a3d57] dark:bg-[#0d1728]">
+                <article key={item.memberId} className="rounded-lg border border-default bg-surface-primary p-3 ">
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div>
                       <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{item.memberName}</p>
@@ -433,7 +433,7 @@ export function AssociadosProcessingPanel() {
                     type="button"
                     onClick={() => setChangesPage((page) => Math.max(1, page - 1))}
                     disabled={changes.page <= 1 || changesLoading}
-                    className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-[#34506d] dark:text-slate-200"
+                    className="rounded-lg border border-default px-3 py-2 text-xs font-semibold text-slate-700 disabled:opacity-50  dark:text-slate-200"
                   >
                     Anterior
                   </button>
@@ -444,7 +444,7 @@ export function AssociadosProcessingPanel() {
                     type="button"
                     onClick={() => setChangesPage((page) => Math.min(changes.pageCount, page + 1))}
                     disabled={changes.page >= changes.pageCount || changesLoading}
-                    className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-[#34506d] dark:text-slate-200"
+                    className="rounded-lg border border-default px-3 py-2 text-xs font-semibold text-slate-700 disabled:opacity-50  dark:text-slate-200"
                   >
                     Próxima
                   </button>
