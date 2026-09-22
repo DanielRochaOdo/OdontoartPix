@@ -100,7 +100,7 @@ export function AppShell({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(true);
   const [mobileOpen, setMobileOpen] = useState(false);
   const focusMode = pathname.startsWith("/dashboard") && searchParams.get("focus") === "1";
   const lastRefreshRef = useRef(0);
@@ -219,7 +219,6 @@ export function AppShell({
               </div>
             </div>
             <div className="flex shrink-0 items-center gap-2">
-              <span className="hidden rounded-full border border-[#bce5e0] bg-[#effbf8] px-3 py-2 text-[11px] font-bold text-[#087e75] dark:border-[#235851] dark:bg-[#153b37] dark:text-[#a5fff1] sm:inline-flex">Ambiente operacional</span>
               <span className="flex h-9 w-9 items-center justify-center rounded-full bg-[#eaf1f9] text-xs font-extrabold text-[#455a75] dark:bg-[#1d3550] dark:text-[#dbedf8]" aria-label="Usuário autenticado">
                 {(profile.nome?.trim() || profile.email?.trim() || "O").charAt(0).toUpperCase()}
               </span>
