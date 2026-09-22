@@ -12,8 +12,8 @@ import { GlobalProcessingIndicator } from "@/components/global-processing-indica
 function LogoIcon({ className = "h-6 w-6" }: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden="true">
-      <path d="M7.3 5.5c1.8-1.7 3.8-1.4 4.7-.5.9-.9 2.9-1.2 4.7.5 1.8 1.7 1.2 4.7.3 6.6-.8 1.7-1.2 4.4-2.8 4.4-1.4 0-1.3-2.6-2.2-2.6s-1 2.6-2.2 2.6c-1.6 0-2-2.7-2.8-4.4-.9-1.9-1.5-4.9.3-6.6Z" className="stroke-[#00E5C3]" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M12 5.1c-.5 1.3-.5 2.8 0 4.2.5-1.4.5-2.9 0-4.2Z" className="stroke-[#00E5C3]" strokeWidth="1.4" strokeLinecap="round" />
+      <path d="M7.3 5.5c1.8-1.7 3.8-1.4 4.7-.5.9-.9 2.9-1.2 4.7.5 1.8 1.7 1.2 4.7.3 6.6-.8 1.7-1.2 4.4-2.8 4.4-1.4 0-1.3-2.6-2.2-2.6s-1 2.6-2.2 2.6c-1.6 0-2-2.7-2.8-4.4-.9-1.9-1.5-4.9.3-6.6Z" className="stroke-current" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M12 5.1c-.5 1.3-.5 2.8 0 4.2.5-1.4.5-2.9 0-4.2Z" className="stroke-current" strokeWidth="1.4" strokeLinecap="round" />
     </svg>
   );
 }
@@ -99,9 +99,14 @@ export function AppShell({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const [collapsed, setCollapsed] = useState(true);
+  const [collapsed, setCollapsed] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
   const focusMode = pathname.startsWith("/dashboard") && searchParams.get("focus") === "1";
   const lastRefreshRef = useRef(0);
+  const activePage = navItems.find((item) =>
+    pathname === item.href || pathname.startsWith(`${item.href}/`)
+  );
+  const pageLabel = activePage?.label ?? "ODONTOPIX";
 
   useEffect(() => {
     return listenMetricsSync(() => {
@@ -112,113 +117,121 @@ export function AppShell({
     });
   }, [router]);
 
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [pathname]);
+
   return (
     <div className="min-h-screen w-full bg-app text-primary">
       <GlobalProcessingIndicator />
 
       {!focusMode ? (
-        <aside
-          className={`border-r border-[#1a6258] bg-[radial-gradient(circle_at_top,#0c332f_0%,#06201f_42%,#041817_100%)] text-white shadow-[8px_0_40px_rgba(0,0,0,0.18)] transition-[width] duration-200 lg:fixed lg:inset-y-0 lg:left-0 lg:z-40 lg:h-screen ${
-            collapsed ? "lg:w-[92px]" : "lg:w-[264px]"
-          }`}
-        >
-          <div className={`flex h-full max-h-screen flex-col overflow-hidden py-3 ${collapsed ? "px-2" : "px-4"}`}>
-            <div className="shrink-0">
-              <div className={`flex items-center ${collapsed ? "justify-center" : "gap-4 px-3"}`}>
-                <div className="relative flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-[#35d9bc]/70 bg-[#062b29] shadow-[0_0_0_5px_rgba(38,205,174,0.08),0_0_24px_rgba(38,205,174,0.24)]">
-                  <LogoIcon className="h-8 w-8" />
+        <>
+          <div
+            className={`fixed inset-0 z-40 bg-[#101d33]/55 transition-opacity lg:hidden ${mobileOpen ? "opacity-100" : "pointer-events-none opacity-0"}`}
+            aria-hidden="true"
+            onClick={() => setMobileOpen(false)}
+          />
+          <aside
+            id="odontopix-sidebar"
+            aria-label="Menu principal"
+            className={`odontopix-sidebar fixed inset-y-0 left-0 z-50 flex w-[246px] flex-col bg-[#101d33] text-[#bac7d8] shadow-[8px_0_30px_rgba(16,29,51,0.08)] transition-[transform,width] duration-200 lg:translate-x-0 ${mobileOpen ? "translate-x-0" : "-translate-x-full"} ${collapsed ? "lg:w-[78px]" : "lg:w-[246px]"}`}
+          >
+            <div className={`flex min-h-0 flex-1 flex-col px-3 pb-4 pt-6 ${collapsed ? "lg:px-2" : ""}`}>
+              <div className={`flex shrink-0 items-center gap-3 px-2 ${collapsed ? "lg:justify-center lg:px-0" : ""}`}>
+                <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[#28d3bb] to-[#0796ac] text-white shadow-[0_7px_20px_rgba(21,187,175,0.18)]">
+                  <LogoIcon className="h-7 w-7" />
+                </span>
+                <div className={`min-w-0 ${collapsed ? "lg:hidden" : ""}`}>
+                  <p className="text-[18px] font-extrabold leading-tight tracking-[-0.05em] text-white">ODONTOPIX</p>
+                  <p className="mt-0.5 text-[9px] font-semibold tracking-[0.18em] text-[#8ca0b9]">GESTÃO FINANCEIRA</p>
                 </div>
-                {!collapsed ? (
-                  <div className="min-w-0">
-                    <div className="text-xs uppercase tracking-[0.3em] text-[#67e4c8]">OdontoartPix</div>
-                    <h1 className="mt-1 text-base font-medium leading-tight tracking-[0.08em] text-[#52cdb4]">Análise de mensalidades</h1>
-                  </div>
-                ) : null}
-              </div>
-
-              <div className={`mt-3 ${collapsed ? "flex justify-center" : "px-2"}`}>
                 <button
                   type="button"
-                  onClick={() => setCollapsed((value) => !value)}
-                  aria-label={collapsed ? "Expandir menu lateral" : "Recolher menu lateral"}
-                  title={collapsed ? "Expandir menu lateral" : "Recolher menu lateral"}
-                  className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-[#1b685d] bg-[#082624]/70 text-[#a5d8d0] transition hover:border-[#37d7bc] hover:bg-[#0b3934] hover:text-white"
+                  className="ml-auto inline-flex h-9 w-9 items-center justify-center rounded-lg text-[#bbcadb] hover:bg-[#213451] hover:text-white lg:hidden"
+                  aria-label="Fechar menu"
+                  onClick={() => setMobileOpen(false)}
                 >
-                  <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
-                    {collapsed ? <path d="M9 6l6 6-6 6" /> : <path d="M15 6l-6 6 6 6" />}
-                  </svg>
+                  <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6 6 18"/></svg>
                 </button>
               </div>
 
-              {!collapsed ? (
-                <div className="mt-3 flex items-center gap-3 rounded-2xl border border-[#1b6259] bg-[#0a2d2a]/80 px-3 py-3 shadow-[inset_0_1px_0_rgba(117,255,222,0.04)]">
-                  <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[#0b3732] text-[#53dbc0]">
-                    <LayersIcon className="h-5 w-5" />
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-xs text-[#7cc6b8]">Ambiente operacional</p>
-                    <p className="mt-1 truncate text-sm font-semibold text-[#f2fffc]">{profile.email ?? profile.nome ?? "Usuário autenticado"}</p>
-                  </div>
-                  <svg viewBox="0 0 24 24" className="h-5 w-5 shrink-0 text-[#b8ddd7]" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                    <path d="m7 9 5 5 5-5" />
-                  </svg>
-                </div>
-              ) : null}
-            </div>
-
-            <nav className={`mt-5 flex-1 overflow-y-auto pr-1 ${collapsed ? "space-y-4" : "space-y-2"}`}>
-              {navItems.map((item) => {
-                const Icon = item.icon;
-                const isActive = pathname === item.href || (item.href !== "/dashboard" && pathname.startsWith(`${item.href}/`));
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    title={item.label}
-                    className={`group relative flex rounded-2xl border transition duration-300 ${
-                      collapsed ? "mx-auto h-14 w-14 items-center justify-center" : "items-center gap-3 px-3 py-2.5"
-                    } ${
-                      isActive
-                        ? "border-[#2fe0c0] bg-[linear-gradient(135deg,rgba(28,128,111,0.62),rgba(11,67,61,0.82))] text-[#effffb] shadow-[0_0_20px_rgba(34,221,188,0.18),inset_0_1px_0_rgba(172,255,235,0.12)]"
-                        : "border-transparent text-[#c2ddd8] hover:border-[#1d6259] hover:bg-[#0a302d]/80 hover:text-white"
-                    }`}
-                  >
-                    <span
-                      className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border transition ${
-                        isActive
-                          ? "border-[#00E5C3]/50 bg-[#0b4b43] text-[#00E5C3]"
-                          : "border-[#164b46] bg-[#092522]/65 text-[#bed6d1] group-hover:border-[#00B8FF] group-hover:text-[#00E5C3]"
-                      }`}
+              <div className={`mt-8 px-3 text-[10px] font-bold uppercase tracking-[0.16em] text-[#71859e] ${collapsed ? "lg:sr-only" : ""}`}>Navegação</div>
+              <nav aria-label="Navegação principal" className="mt-3 flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
+                {navItems.map((item) => {
+                  const Icon = item.icon;
+                  const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`);
+                  return (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      title={item.label}
+                      aria-current={isActive ? "page" : undefined}
+                      onClick={() => setMobileOpen(false)}
+                      className={`group relative flex min-h-11 items-center gap-3 rounded-[10px] px-3 py-2.5 text-[13px] font-semibold transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#75cec4] ${collapsed ? "lg:justify-center lg:px-2" : ""} ${isActive ? "bg-[#183f49] text-[#a5fff1] shadow-[inset_3px_0_#1dc7b3]" : "text-[#bac7d8] hover:bg-[#213451] hover:text-white"}`}
                     >
-                      <Icon className="h-5 w-5" />
-                    </span>
-                    {!collapsed ? <span className="truncate text-sm tracking-wide">{item.label}</span> : null}
-                  </Link>
-                );
-              })}
-            </nav>
+                      <Icon className={`h-[19px] w-[19px] shrink-0 ${isActive ? "text-[#23d6bd]" : ""}`} />
+                      <span className={collapsed ? "lg:sr-only" : ""}>{item.label}</span>
+                    </Link>
+                  );
+                })}
+              </nav>
 
-            <div className={`mt-4 shrink-0 border-t border-[#1b5b53] pt-3 ${collapsed ? "flex flex-col items-center gap-3" : "space-y-3 px-1"}`}>
-              <div className={collapsed ? "contents" : "flex items-center gap-3"}>
-                <ThemeToggle />
-                {!collapsed ? <span className="text-sm text-[#c2ddd8]">Modo escuro</span> : null}
-              </div>
-              <div className={collapsed ? "contents" : "flex items-center gap-3"}>
-                <LogoutButton />
-                {!collapsed ? <span className="text-sm text-[#c2ddd8]">Sair da aplicação</span> : null}
+              <div className={`mt-4 shrink-0 border-t border-[#2a3b52] pt-4 ${collapsed ? "lg:flex lg:flex-col lg:items-center" : ""}`}>
+                <div className={`flex items-center gap-3 px-2 ${collapsed ? "lg:px-0" : ""}`}>
+                  <ThemeToggle />
+                  <span className={`text-xs text-[#bac7d8] ${collapsed ? "lg:sr-only" : ""}`}>Alternar tema</span>
+                </div>
+                <div className={`mt-2 flex items-center gap-3 px-2 ${collapsed ? "lg:px-0" : ""}`}>
+                  <LogoutButton />
+                  <span className={`text-xs text-[#bac7d8] ${collapsed ? "lg:sr-only" : ""}`}>Sair da aplicação</span>
+                </div>
+                <p className={`mt-3 truncate px-2 text-[11px] text-[#8fa2b7] ${collapsed ? "lg:sr-only" : ""}`} title={profile.email ?? profile.nome ?? undefined}>
+                  {profile.nome ?? profile.email ?? "Usuário autenticado"}
+                </p>
               </div>
             </div>
-          </div>
-        </aside>
+          </aside>
+
+          <header className={`sticky top-0 z-30 flex h-[64px] items-center justify-between gap-4 border-b border-subtle bg-surface-primary px-4 sm:px-6 lg:ml-[246px] lg:h-[73px] lg:px-9 ${collapsed ? "lg:ml-[78px]" : ""}`}>
+            <div className="flex min-w-0 items-center gap-3">
+              <button
+                type="button"
+                aria-label="Abrir menu"
+                aria-controls="odontopix-sidebar"
+                aria-expanded={mobileOpen}
+                onClick={() => setMobileOpen(true)}
+                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-default text-secondary hover:bg-surface-hover lg:hidden"
+              >
+                <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+              </button>
+              <button
+                type="button"
+                aria-label={collapsed ? "Expandir menu lateral" : "Recolher menu lateral"}
+                title={collapsed ? "Expandir menu lateral" : "Recolher menu lateral"}
+                onClick={() => setCollapsed((value) => !value)}
+                className="hidden h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-default text-secondary hover:bg-surface-hover lg:inline-flex"
+              >
+                <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2"><path d={collapsed ? "m9 6 6 6-6 6" : "m15 6-6 6 6 6"}/></svg>
+              </button>
+              <div className="min-w-0 truncate text-xs text-secondary">
+                <span className="hidden sm:inline">ODONTOPIX <span className="mx-2 text-muted">/</span> </span>
+                <strong className="font-semibold text-primary">{pageLabel}</strong>
+              </div>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              <span className="hidden rounded-full border border-[#bce5e0] bg-[#effbf8] px-3 py-2 text-[11px] font-bold text-[#087e75] dark:border-[#235851] dark:bg-[#153b37] dark:text-[#a5fff1] sm:inline-flex">Ambiente operacional</span>
+              <span className="flex h-9 w-9 items-center justify-center rounded-full bg-[#eaf1f9] text-xs font-extrabold text-[#455a75] dark:bg-[#1d3550] dark:text-[#dbedf8]" aria-label="Usuário autenticado">
+                {(profile.nome?.trim() || profile.email?.trim() || "O").charAt(0).toUpperCase()}
+              </span>
+            </div>
+          </header>
+        </>
       ) : null}
 
-      <main
-        className={`min-w-0 transition-[margin-left] duration-200 ${
-          focusMode ? "" : collapsed ? "lg:ml-[92px]" : "lg:ml-[264px]"
-        }`}
-      >
+      <div className={`min-w-0 transition-[margin-left] duration-200 ${focusMode ? "" : collapsed ? "lg:ml-[78px]" : "lg:ml-[246px]"}`}>
         {children}
-      </main>
+      </div>
     </div>
   );
 }
