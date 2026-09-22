@@ -13,9 +13,9 @@ type ChartValue = {
 };
 
 const chartCardClassName =
-  "flex h-full min-h-[244px] flex-col rounded-2xl border border-[#c7d8e6] bg-white p-4 shadow-sm transition hover:border-[#00a98f]/70 dark:border-[#284665] dark:bg-[#071b34]/90 dark:shadow-[0_8px_28px_rgba(0,0,0,0.2)] dark:hover:border-[#00E5C3]/70";
+  "flex h-full min-h-[244px] flex-col rounded-2xl border border-subtle bg-surface-primary p-4 shadow-[0_5px_22px_rgba(31,49,85,0.045)] transition hover:border-brand/70    ";
 const lowerChartCardClassName =
-  "flex h-full min-h-[216px] flex-col rounded-2xl border border-[#c7d8e6] bg-white p-4 shadow-sm dark:border-[#284665] dark:bg-[#071b34]/90 dark:shadow-[0_8px_28px_rgba(0,0,0,0.2)]";
+  "flex h-full min-h-[216px] flex-col rounded-2xl border border-subtle bg-surface-primary p-4 shadow-[0_5px_22px_rgba(31,49,85,0.045)]   ";
 
 function ChartTitleIcon({ type }: { type: "chart" | "value" | "ticket" | "insight" }) {
   const name = type === "value" ? "values" : type === "ticket" ? "ticket" : type === "insight" ? "insights" : "miniChart";
@@ -58,7 +58,7 @@ function DonutChart({
 
   return (
     <article className={chartCardClassName}>
-      <h3 className="flex items-center gap-2 text-base font-semibold text-[#102033] dark:text-[#f1f7ff]">
+      <h3 className="flex items-center gap-2 text-base font-semibold text-primary ">
         <ChartTitleIcon type={title === "Valores" ? "value" : "chart"} />
         {title}
       </h3>
@@ -114,11 +114,11 @@ function DonutChart({
             <div key={item.label} className="flex items-center justify-between gap-3 text-xs">
               <div className="flex items-center gap-2">
                 <span className="inline-flex h-3 w-3 rounded-full" style={{ backgroundColor: item.color }} />
-                <span className="text-[#30485d] dark:text-[#c4d3e2]">{item.label}</span>
+                <span className="text-secondary ">{item.label}</span>
               </div>
-              <div className="text-right font-medium text-[#102033] dark:text-[#edf6ff]">
+              <div className="text-right font-medium text-primary ">
                 {formatter ? formatter(item.value) : item.value.toLocaleString("pt-BR")} {" | "}
-                <span className="text-[#6d8396] dark:text-[#8fa7bc]">
+                <span className="text-muted ">
                   {percentage.toLocaleString("pt-BR", { maximumFractionDigits: 2 })}%
                 </span>
               </div>
@@ -155,8 +155,8 @@ function ReceiptStatusChart({ statuses }: { statuses: DashboardReceiptStatus[] }
     <article className={lowerChartCardClassName}>
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h3 className="flex items-center gap-2 text-base font-semibold text-[#102033] dark:text-[#f1f7ff]"><ChartTitleIcon type="insight" />Recebimentos</h3>
-          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-[#5d7184] dark:text-[#a9bdd0]">
+          <h3 className="flex items-center gap-2 text-base font-semibold text-primary "><ChartTitleIcon type="insight" />Recebimentos</h3>
+          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-secondary ">
             <span>Parcelas agrupadas por DescricaoRecebimento.</span>
             {values.length > 0 ? <span className="font-semibold text-[#087eaf] dark:text-[#6edbff]">Clique para detalhar</span> : null}
           </div>
@@ -164,7 +164,7 @@ function ReceiptStatusChart({ statuses }: { statuses: DashboardReceiptStatus[] }
       </div>
 
       {values.length === 0 ? (
-        <div className="mt-3 flex flex-1 items-center justify-center rounded-2xl border border-dashed border-[#c7d8e6] bg-[#f7fafc] px-5 text-center text-sm text-[#6d8396] dark:border-[#284665] dark:bg-[#06172c] dark:text-[#829ab1]">
+        <div className="mt-3 flex flex-1 items-center justify-center rounded-2xl border border-dashed border-subtle bg-surface-secondary px-5 text-center text-sm text-muted   ">
           Nenhum status de recebimento registrado ainda.
         </div>
       ) : (
@@ -214,25 +214,25 @@ function ReceiptStatusChart({ statuses }: { statuses: DashboardReceiptStatus[] }
 
       {selectedStatus ? (
         <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-slate-950/65 p-4 sm:p-6" role="presentation" onClick={() => setSelectedLabel(null)}>
-          <div className="max-h-[calc(100vh-2rem)] w-full max-w-4xl overflow-y-auto rounded-3xl border border-[#c7d8e6] bg-white p-6 shadow-2xl dark:border-[#284665] dark:bg-[#071b34]" role="dialog" aria-modal="true" aria-labelledby="receipt-status-modal-title" onClick={(event) => event.stopPropagation()}>
+          <div className="max-h-[calc(100vh-2rem)] w-full max-w-4xl overflow-y-auto rounded-3xl border border-subtle bg-surface-primary p-6 shadow-2xl  " role="dialog" aria-modal="true" aria-labelledby="receipt-status-modal-title" onClick={(event) => event.stopPropagation()}>
             <div className="flex items-start justify-between gap-4">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#00a98f]">Detalhamento</p>
-                <h4 id="receipt-status-modal-title" className="mt-2 text-xl font-semibold text-[#102033] dark:text-[#f1f7ff]">Status de recebimento</h4>
-                <p className="mt-1 text-sm text-[#5d7184] dark:text-[#a9bdd0]">Valores consolidados por DescricaoRecebimento.</p>
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand">Detalhamento</p>
+                <h4 id="receipt-status-modal-title" className="mt-2 text-xl font-semibold text-primary ">Status de recebimento</h4>
+                <p className="mt-1 text-sm text-secondary ">Valores consolidados por DescricaoRecebimento.</p>
               </div>
-              <button type="button" onClick={() => setSelectedLabel(null)} className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-[#d6e3ef] text-[#5d7184] transition hover:bg-[#f5f8fc] dark:border-[#284665] dark:text-[#c4d3e2] dark:hover:bg-[#10223b]" aria-label="Fechar detalhamento">
+              <button type="button" onClick={() => setSelectedLabel(null)} className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-subtle text-secondary transition hover:bg-surface-secondary   " aria-label="Fechar detalhamento">
                 <span aria-hidden="true" className="text-xl leading-none">×</span>
               </button>
             </div>
             <div className="mt-5 grid gap-2 sm:grid-cols-2">
               {values.map((item) => (
-                <div key={item.label} className={`rounded-2xl border p-3 ${item.label === selectedStatus.label ? "border-[#00a98f] bg-[#f4fffc] dark:bg-[#0b2b3d]" : "border-[#d6e3ef] dark:border-[#284665]"}`}>
+                <div key={item.label} className={`rounded-2xl border p-3 ${item.label === selectedStatus.label ? "border-brand bg-surface-hover " : "border-subtle "}`}>
                   <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-1">
-                    <span className="flex min-w-0 items-start gap-2 break-words text-sm font-medium text-[#30485d] dark:text-[#c4d3e2]"><span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: item.color }} />{item.label}</span>
-                    <span className="shrink-0 text-right text-sm font-semibold text-[#102033] dark:text-[#edf6ff]">{item.value.toLocaleString("pt-BR")} parcela(s)</span>
-                    <p className="col-span-2 text-sm text-[#5d7184] dark:text-[#a9bdd0]">Associados: <strong className="text-[#102033] dark:text-[#edf6ff]">{item.associateCount.toLocaleString("pt-BR")}</strong></p>
-                    <p className="col-span-2 text-sm text-[#5d7184] dark:text-[#a9bdd0]">Equivalente: <strong className="text-[#102033] dark:text-[#edf6ff]">{formatCurrencyBR(item.amountCents)}</strong></p>
+                    <span className="flex min-w-0 items-start gap-2 break-words text-sm font-medium text-secondary "><span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: item.color }} />{item.label}</span>
+                    <span className="shrink-0 text-right text-sm font-semibold text-primary ">{item.value.toLocaleString("pt-BR")} parcela(s)</span>
+                    <p className="col-span-2 text-sm text-secondary ">Associados: <strong className="text-primary ">{item.associateCount.toLocaleString("pt-BR")}</strong></p>
+                    <p className="col-span-2 text-sm text-secondary ">Equivalente: <strong className="text-primary ">{formatCurrencyBR(item.amountCents)}</strong></p>
                   </div>
                 </div>
               ))}
@@ -325,8 +325,8 @@ export function DashboardDonutCharts({
           maximumFractionDigits: 2
         })}%`}
         values={[
-          { label: "Pagos", value: paid, color: "#22D58C" },
-          { label: "Nao pagos", value: unpaid, color: "#FF5B5B" }
+          { label: "Pagos", value: paid, color: "#13ad9f" },
+          { label: "Nao pagos", value: unpaid, color: "#c75b55" }
         ]}
       />
 
@@ -334,34 +334,34 @@ export function DashboardDonutCharts({
         title="Valores"
         centerValue={formatCurrencyBR(paidAmountCents + pendingAmountCents)}
         values={[
-          { label: "Valor pago", value: paidAmountCents, color: "#00B8FF" },
-          { label: "Valor pendente", value: pendingAmountCents, color: "#FF5B5B" }
+          { label: "Valor pago", value: paidAmountCents, color: "#5578d9" },
+          { label: "Valor pendente", value: pendingAmountCents, color: "#c75b55" }
         ]}
         formatter={formatCurrencyBR}
         compactCenterValue
       />
 
       <article className={lowerChartCardClassName}>
-        <h3 className="flex items-center gap-2 text-base font-semibold text-[#102033] dark:text-[#f1f7ff]"><ChartTitleIcon type="ticket" />Ticket medio da campanha</h3>
-        <p className="mt-1 text-sm text-[#5d7184] dark:text-[#a9bdd0]">
+        <h3 className="flex items-center gap-2 text-base font-semibold text-primary "><ChartTitleIcon type="ticket" />Ticket medio da campanha</h3>
+        <p className="mt-1 text-sm text-secondary ">
           Valor medio pago por pagamento confirmado.
         </p>
-        <div className="mt-3 flex flex-col items-center justify-center rounded-2xl border border-[#c7d8e6] bg-[#f5f8fc] px-6 py-5 text-center shadow-[inset_0_1px_18px_rgba(16,196,174,0.06)] dark:border-[#284665] dark:bg-[#06172c]">
+        <div className="mt-3 flex flex-col items-center justify-center rounded-2xl border border-subtle bg-surface-secondary px-6 py-5 text-center shadow-[inset_0_1px_18px_rgba(16,196,174,0.06)]  ">
           <div className="flex items-baseline justify-center gap-2 whitespace-nowrap">
-            <span className="text-[2.15rem] font-semibold leading-none text-[#13d7b5]">{formatCurrencyBR(averageTicketAmountCents)}</span>
-            <span className={`text-xs font-semibold ${ticketVariation === null || ticketVariation === 0 ? "text-[#6d8396] dark:text-[#8fa7bc]" : ticketVariation > 0 ? "text-[#159b69] dark:text-[#72f0bc]" : "text-[#d94352] dark:text-[#ff9ba3]"}`}>
+            <span className="text-[2.15rem] font-semibold leading-none text-brand">{formatCurrencyBR(averageTicketAmountCents)}</span>
+            <span className={`text-xs font-semibold ${ticketVariation === null || ticketVariation === 0 ? "text-muted " : ticketVariation > 0 ? "text-[#159b69] dark:text-[#72f0bc]" : "text-[#d94352] dark:text-[#ff9ba3]"}`}>
               ({ticketVariation === null ? "—" : `${ticketVariation > 0 ? "+" : ""}${ticketVariation.toLocaleString("pt-BR", { maximumFractionDigits: 2 })}%`})
             </span>
           </div>
-          <p className="mt-2 max-w-[20rem] text-sm text-[#5d7184] dark:text-[#b6c9dc]">
+          <p className="mt-2 max-w-[20rem] text-sm text-secondary ">
             {formatCurrencyBR(paidAmountCents)} em {paid.toLocaleString("pt-BR")} pagamentos
           </p>
-          <div className="mt-4 w-full max-w-[18rem] border-t border-[#d6e3ef] pt-3 dark:border-[#284665]">
+          <div className="mt-4 w-full max-w-[18rem] border-t border-subtle pt-3 ">
             <svg viewBox="0 0 264 52" className={`h-12 w-full ${ticketVariation !== null && ticketVariation < 0 ? "text-[#FF5B5B]" : "text-[#00E5C3]"}`} preserveAspectRatio="none" aria-label="Variação do ticket médio" role="img">
               <path d={wavePath} fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
               <path d="M0,50 H264" fill="none" stroke="currentColor" strokeOpacity="0.12" strokeWidth="1" />
             </svg>
-            <p className="mt-1 text-[10px] uppercase tracking-[0.14em] text-[#6d8396] dark:text-[#7893ab]">Variação do ticket médio</p>
+            <p className="mt-1 text-[10px] uppercase tracking-[0.14em] text-muted dark:text-muted">Variação do ticket médio</p>
           </div>
         </div>
       </article>

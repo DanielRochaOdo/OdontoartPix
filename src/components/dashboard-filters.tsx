@@ -91,7 +91,7 @@ function ProcessingCardVisibilityToggle({
       aria-expanded={!collapsed}
       aria-label={collapsed ? "Mostrar sincronização em andamento" : "Ocultar sincronização em andamento"}
       title={collapsed ? "Mostrar sincronização em andamento" : "Ocultar sincronização em andamento"}
-      className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-[#284665] bg-[#071b34] text-[#edf6ff] shadow-sm transition hover:border-[#00E5C3] hover:bg-[#0b2540] hover:text-[#00E5C3]"
+      className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-default bg-surface-primary text-secondary shadow-[0_5px_22px_rgba(31,49,85,0.045)] transition hover:border-brand hover:bg-surface-hover hover:text-brand"
     >
       <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
         <path
@@ -121,7 +121,7 @@ function FilterMenu({
 }) {
   return (
     <details className="group relative min-w-[240px]">
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-xl border border-[#c7d8e6] bg-white px-4 py-3 text-sm text-[#30485d] shadow-sm transition hover:border-[#00a98f] dark:border-[#284665] dark:bg-[#071b34] dark:text-[#d7e5f2] dark:hover:border-[#00E5C3]">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-xl border border-subtle bg-surface-primary px-4 py-3 text-sm text-secondary shadow-[0_5px_22px_rgba(31,49,85,0.045)] transition hover:border-brand    ">
         <span className="truncate">
           {label}
           {selectedCount > 0 ? ` (${selectedCount})` : ""}
@@ -131,14 +131,14 @@ function FilterMenu({
         </span>
       </summary>
 
-      <div className="absolute right-0 z-20 mt-2 w-[min(92vw,360px)] rounded-2xl border border-[#c7d8e6] bg-white p-4 shadow-2xl dark:border-[#284665] dark:bg-[#071b34]">
-        <label className="flex items-center gap-2 rounded-xl border border-[#c7d8e6] bg-[#f1f6fa] px-3 py-2 text-sm text-[#5d7184] dark:border-[#284665] dark:bg-[#0b2540] dark:text-[#9bb2c7]">
+      <div className="absolute right-0 z-20 mt-2 w-[min(92vw,360px)] rounded-2xl border border-subtle bg-surface-primary p-4 shadow-2xl  ">
+        <label className="flex items-center gap-2 rounded-xl border border-subtle bg-surface-secondary px-3 py-2 text-sm text-secondary   ">
           <SearchIcon />
           <input
             value={query}
             onChange={(event) => onQueryChange(event.target.value)}
             placeholder={`Buscar ${label.toLowerCase()}`}
-            className="w-full border-0 bg-transparent p-0 text-sm text-[#102033] outline-none placeholder:text-[#7893ab] dark:text-white"
+            className="w-full border-0 bg-transparent p-0 text-sm text-primary outline-none placeholder:text-muted dark:text-white"
           />
         </label>
 
@@ -303,23 +303,23 @@ export function DashboardFilters({
 
   return (
     <div className="flex flex-col gap-2 lg:items-end">
-      <div className="flex flex-wrap items-center justify-end gap-x-5 gap-y-1 text-xs text-[#7893ab] dark:text-[#9bb2c7]">
+      <div className="flex flex-wrap items-center justify-end gap-x-5 gap-y-1 text-xs text-muted ">
         <span>
-          Última sincronização: <strong className="font-medium text-[#30485d] dark:text-[#d7e5f2]">{formatScheduleDate(lastProcessingAt)}</strong>
+          Última sincronização: <strong className="font-medium text-secondary ">{formatScheduleDate(lastProcessingAt)}</strong>
         </span>
         <span>
-          Último pulso: <strong title={lastPulseStatus ?? undefined} className="font-medium text-[#30485d] dark:text-[#d7e5f2]">{formatScheduleDate(lastPulseAt)}</strong>
+          Último pulso: <strong title={lastPulseStatus ?? undefined} className="font-medium text-secondary ">{formatScheduleDate(lastPulseAt)}</strong>
         </span>
         <span>
-          Próxima janela: <strong className="font-medium text-[#30485d] dark:text-[#d7e5f2]">{nextProcessingDue ? "Liberada no próximo pulso" : formatScheduleDate(nextProcessingAt)}</strong>
+          Próxima janela: <strong className="font-medium text-secondary ">{nextProcessingDue ? "Liberada no próximo pulso" : formatScheduleDate(nextProcessingAt)}</strong>
         </span>
       </div>
       <div className="hidden">
         <span>
-          Último processamento: <strong className="font-medium text-[#30485d] dark:text-[#d7e5f2]">{formatScheduleDate(lastProcessingAt)}</strong>
+          Último processamento: <strong className="font-medium text-secondary ">{formatScheduleDate(lastProcessingAt)}</strong>
         </span>
         <span>
-          Próximo processamento: <strong className="font-medium text-[#30485d] dark:text-[#d7e5f2]">{formatScheduleDate(nextProcessingAt)}</strong>
+          Próximo processamento: <strong className="font-medium text-secondary ">{formatScheduleDate(nextProcessingAt)}</strong>
         </span>
       </div>
       <div className="flex flex-wrap gap-2 lg:justify-end">
@@ -354,7 +354,7 @@ export function DashboardFilters({
                 className={`flex w-full items-center justify-between rounded-xl border px-3 py-2 text-left text-sm transition ${
                   active
                     ? "border-[#1ed9ba] bg-[#0a514a] text-[#effffc]"
-                    : "border-[#c7d8e6] bg-[#f7fafc] text-[#30485d] hover:border-[#00a98f] dark:border-[#284665] dark:bg-[#0b2038] dark:text-[#c5d5e3] dark:hover:border-[#00E5C3]"
+                    : "border-subtle bg-surface-secondary text-secondary hover:border-brand    "
                 }`}
               >
                 <span className="truncate">{campaign.name}</span>
@@ -389,7 +389,7 @@ export function DashboardFilters({
                 className={`flex w-full items-start justify-between rounded-xl border px-3 py-2 text-left text-sm transition ${
                   active
                     ? "border-[#1ed9ba] bg-[#0a514a] text-[#effffc]"
-                    : "border-[#c7d8e6] bg-[#f7fafc] text-[#30485d] hover:border-[#00a98f] dark:border-[#284665] dark:bg-[#0b2038] dark:text-[#c5d5e3] dark:hover:border-[#00E5C3]"
+                    : "border-subtle bg-surface-secondary text-secondary hover:border-brand    "
                 }`}
               >
                 <div className="min-w-0">
@@ -418,7 +418,7 @@ export function DashboardFilters({
           onClick={applyFilters}
           aria-label="Aplicar filtros"
           title="Aplicar filtros"
-          className="inline-flex h-12 w-12 items-center justify-center rounded-xl bg-[#00c8aa] text-[#03211f] shadow-[0_0_18px_rgba(0,229,195,0.22)] transition hover:bg-[#00b596] dark:bg-[#00E5C3] dark:hover:bg-[#22D5B8]"
+          className="inline-flex h-12 w-12 items-center justify-center rounded-xl bg-brand text-white transition hover:bg-brand"
         >
           <CheckIcon />
         </button>
@@ -427,7 +427,7 @@ export function DashboardFilters({
           onClick={clearFilters}
           aria-label="Limpar filtros"
           title="Limpar filtros"
-          className="inline-flex h-12 w-12 items-center justify-center rounded-xl border border-[#9db5c8] bg-transparent text-[#30485d] shadow-sm transition hover:border-[#00a98f] hover:bg-[#eafaf6] dark:border-[#52708b] dark:text-[#d7e5f2] dark:hover:border-[#00E5C3] dark:hover:bg-[#0b2540]"
+          className="inline-flex h-12 w-12 items-center justify-center rounded-xl border border-[#9db5c8] bg-transparent text-secondary shadow-[0_5px_22px_rgba(31,49,85,0.045)] transition hover:border-brand hover:bg-[#eafaf6]    dark:hover:bg-surface-secondary"
         >
           <ResetIcon />
         </button>

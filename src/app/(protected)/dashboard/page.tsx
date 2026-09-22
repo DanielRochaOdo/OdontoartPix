@@ -238,7 +238,7 @@ export default async function DashboardPage({
       {canAdmin(profile?.role) ? <div id="dashboard-processing-slot" className="mt-5 w-full" /> : null}
 
       {errorMessage ? (
-        <div className="mt-6 rounded-2xl border border-red-500/40 bg-red-950/30 p-4 text-sm text-red-200">
+        <div className="mt-6 rounded-2xl border border-danger bg-danger-soft p-4 text-sm text-danger">
           {errorMessage}
         </div>
       ) : (
@@ -270,24 +270,24 @@ export default async function DashboardPage({
                   icon={card.label === "Pagos" ? "paid" : "paidValue"}
                   detailEndpoint={card.label === "Pagos" ? `/api/dashboard/paid-details?campaignIds=${encodeURIComponent(selectedCampaignIds.join(","))}&batchIds=${encodeURIComponent(selectedBatchIds.join(","))}` : undefined}
                   scopeKey={dashboardScopeKey}
-                  valueClassName={card.label === "Valor pago" ? "text-[#00a98f] dark:text-[#18d8b6]" : undefined}
+                  valueClassName={card.label === "Valor pago" ? "text-brand " : undefined}
                 />
               ) : card.label === "Erros" ? (
                 <Link
                   key={card.label}
                   href={membersErrorHref}
-                  className="group flex min-h-[112px] items-center gap-4 rounded-2xl border border-[#d6e3ef] bg-white p-4 shadow-sm transition hover:border-[#FF5B5B]/70 hover:bg-[#fff7f7] dark:border-[#284665] dark:bg-[#071b34]/90 dark:shadow-[0_8px_24px_rgba(0,0,0,0.16)] dark:hover:bg-[#10223b]"
+                  className="group flex min-h-[112px] items-center gap-4 rounded-2xl border border-subtle bg-surface-primary p-4 shadow-[0_5px_22px_rgba(31,49,85,0.045)] transition hover:border-[#FF5B5B]/70 hover:bg-[#fff7f7]    "
                 >
                   <span className={`inline-flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border transition group-hover:shadow-[0_0_18px_rgba(255,91,91,0.22)] ${metricIconClass(card.label)}`}><MetricIcon label={card.label} /></span>
-                  <div className="min-w-0"><p className="text-[13px] leading-4 text-[#5d7184] dark:text-[#c1d0e0]">{card.label}</p><div className="mt-1 text-2xl font-semibold leading-tight text-[#102033] dark:text-[#f4f8ff]">{card.value}</div></div>
+                  <div className="min-w-0"><p className="text-[13px] leading-4 text-secondary ">{card.label}</p><div className="mt-1 text-2xl font-semibold leading-tight text-primary ">{card.value}</div></div>
                 </Link>
               ) : (
                 <article
                   key={card.label}
-                  className="group flex min-h-[112px] items-center gap-4 rounded-2xl border border-[#d6e3ef] bg-white p-4 shadow-sm transition hover:border-[#00a98f]/70 hover:bg-[#f4fffc] dark:border-[#284665] dark:bg-[#071b34]/90 dark:shadow-[0_8px_24px_rgba(0,0,0,0.16)] dark:hover:border-[#00E5C3]/70 dark:hover:bg-[#0b2440]"
+                  className="group flex min-h-[112px] items-center gap-4 rounded-2xl border border-subtle bg-surface-primary p-4 shadow-[0_5px_22px_rgba(31,49,85,0.045)] transition hover:border-brand/70 hover:bg-surface-hover     "
                 >
                   <span className={`inline-flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border transition group-hover:shadow-[0_0_18px_rgba(0,229,195,0.2)] ${metricIconClass(card.label)}`}><MetricIcon label={card.label} /></span>
-                  <div className="min-w-0"><p className="text-[13px] leading-4 text-[#5d7184] dark:text-[#c1d0e0]">{card.label}</p><div className={`mt-1 text-2xl font-semibold leading-tight tracking-tight ${card.label === "Valor pago" ? "text-[#00a98f] dark:text-[#18d8b6]" : card.label === "Valor pendente" ? "text-[#d94352] dark:text-rose-400" : "text-[#102033] dark:text-[#f4f8ff]"}`}>{card.value}</div></div>
+                  <div className="min-w-0"><p className="text-[13px] leading-4 text-secondary ">{card.label}</p><div className={`mt-1 text-2xl font-semibold leading-tight tracking-tight ${card.label === "Valor pago" ? "text-brand " : card.label === "Valor pendente" ? "text-[#d94352] dark:text-rose-400" : "text-primary "}`}>{card.value}</div></div>
                 </article>
               )
             ))}
