@@ -70,17 +70,17 @@ export function DashboardAgreedMetricCard({
       <button
         type="button"
         onClick={() => setModalOpen(true)}
-        className="group flex min-h-[112px] w-full items-center gap-4 rounded-2xl border border-[#d6e3ef] bg-white p-4 text-left shadow-sm transition hover:border-[#00a98f]/70 hover:bg-[#f4fffc] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#00a98f] dark:border-[#284665] dark:bg-[#071b34]/90 dark:hover:border-[#00E5C3]/70 dark:hover:bg-[#0b2440]"
+        className="group flex min-h-[112px] w-full items-center gap-4 rounded-2xl border border-subtle bg-surface-primary p-4 text-left shadow-[0_5px_22px_rgba(31,49,85,0.045)] transition hover:border-brand/70 hover:bg-surface-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-[#00a98f]    "
       >
         <span className="inline-flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-[#22D58C]/50 bg-[#22D58C]/10 text-[#22D58C] transition group-hover:shadow-[0_0_18px_rgba(34,213,140,0.22)]">
           <ManualDashboardIcon name="totalValue" className="h-9 w-9" />
         </span>
         <span className="min-w-0">
-          <span className="block text-[13px] leading-4 text-[#5d7184] dark:text-[#c1d0e0]">{label}</span>
-          <span className="mt-1 block text-2xl font-semibold leading-tight tracking-tight text-[#00a98f] dark:text-[#18d8b6]">
+          <span className="block text-[13px] leading-4 text-secondary ">{label}</span>
+          <span className="mt-1 block text-2xl font-semibold leading-tight tracking-tight text-brand ">
             {formatCurrencyBR(amountCents)}
           </span>
-          <span className="mt-1 block text-[10px] text-[#7b91a3]">Clique para ver parcelas e associados</span>
+          <span className="mt-1 block text-[10px] text-muted">Clique para ver parcelas e associados</span>
         </span>
       </button>
 
@@ -94,43 +94,43 @@ export function DashboardAgreedMetricCard({
             aria-modal="true"
             aria-labelledby="dashboard-agreed-metric-title"
             onMouseDown={(event) => event.stopPropagation()}
-            className="w-full max-w-2xl rounded-2xl border border-[#d6e3ef] bg-white p-5 text-[#102033] shadow-2xl dark:border-[#284665] dark:bg-[#071b34] dark:text-[#f5f8ff]"
+            className="w-full max-w-2xl rounded-2xl border border-subtle bg-surface-primary p-5 text-primary shadow-2xl   "
           >
             <div className="flex items-start justify-between gap-4">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#00a98f] dark:text-[#00E5C3]">Valores acordados</p>
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-brand ">Valores acordados</p>
                 <h2 id="dashboard-agreed-metric-title" className="mt-1 text-xl font-semibold">Detalhes de Acordado</h2>
               </div>
               <button
                 type="button"
                 onClick={() => setModalOpen(false)}
                 aria-label="Fechar"
-                className="text-2xl leading-none text-[#5d7184] dark:text-[#9bb2c7]"
+                className="text-2xl leading-none text-secondary "
               >
                 ×
               </button>
             </div>
 
             <div className="mt-5 grid gap-3 sm:grid-cols-3">
-              <div className="rounded-xl border border-[#d6e3ef] bg-[#f5f8fc] p-4 dark:border-[#284665] dark:bg-[#0b2133]">
-                <p className="text-xs text-[#5d7184] dark:text-[#9bb2c7]">Valor acordado</p>
-                <p className="mt-1 text-2xl font-semibold text-[#00a98f] dark:text-[#18d8b6]">{formatCurrencyBR(amountCents)}</p>
+              <div className="rounded-xl border border-subtle bg-surface-secondary p-4  ">
+                <p className="text-xs text-secondary ">Valor acordado</p>
+                <p className="mt-1 text-2xl font-semibold text-brand ">{formatCurrencyBR(amountCents)}</p>
               </div>
-              <div className="rounded-xl border border-[#d6e3ef] bg-[#f5f8fc] p-4 dark:border-[#284665] dark:bg-[#0b2133]">
-                <p className="text-xs text-[#5d7184] dark:text-[#9bb2c7]">Quantidade de parcelas</p>
+              <div className="rounded-xl border border-subtle bg-surface-secondary p-4  ">
+                <p className="text-xs text-secondary ">Quantidade de parcelas</p>
                 <p className="mt-1 text-2xl font-semibold">{installmentCount.toLocaleString("pt-BR")}</p>
               </div>
-              <div className="rounded-xl border border-[#d6e3ef] bg-[#f5f8fc] p-4 dark:border-[#284665] dark:bg-[#0b2133]">
-                <p className="text-xs text-[#5d7184] dark:text-[#9bb2c7]">Associados únicos</p>
+              <div className="rounded-xl border border-subtle bg-surface-secondary p-4  ">
+                <p className="text-xs text-secondary ">Associados únicos</p>
                 <p className="mt-1 text-2xl font-semibold">{memberCount.toLocaleString("pt-BR")}</p>
-                <p className="mt-1 text-[10px] text-[#7b91a3]">Um associado é contado uma vez, mesmo com várias parcelas acordadas.</p>
+                <p className="mt-1 text-[10px] text-muted">Um associado é contado uma vez, mesmo com várias parcelas acordadas.</p>
               </div>
             </div>
 
-            <div className="mt-3 rounded-xl border border-[#d6e3ef] bg-[#f5f8fc] p-4 dark:border-[#284665] dark:bg-[#0b2133]">
-              <p className="text-xs text-[#5d7184] dark:text-[#9bb2c7]">Ultima leitura geral</p>
+            <div className="mt-3 rounded-xl border border-subtle bg-surface-secondary p-4  ">
+              <p className="text-xs text-secondary ">Ultima leitura geral</p>
               <p className="mt-1 font-medium">{previous === null ? "Nao disponivel" : formatCurrencyBR(previous)}</p>
-              <p className="mt-3 text-xs text-[#5d7184] dark:text-[#9bb2c7]">Variacao desde a ultima leitura</p>
+              <p className="mt-3 text-xs text-secondary ">Variacao desde a ultima leitura</p>
               <p className="mt-1 font-semibold">
                 {variation === null
                   ? "Sem leitura anterior disponivel"
