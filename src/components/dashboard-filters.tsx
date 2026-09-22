@@ -91,7 +91,7 @@ function ProcessingCardVisibilityToggle({
       aria-expanded={!collapsed}
       aria-label={collapsed ? "Mostrar sincronização em andamento" : "Ocultar sincronização em andamento"}
       title={collapsed ? "Mostrar sincronização em andamento" : "Ocultar sincronização em andamento"}
-      className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-[#284665] bg-surface-primary text-[#edf6ff] shadow-[0_5px_22px_rgba(31,49,85,0.045)] transition hover:border-[#00E5C3] hover:bg-surface-secondary hover:text-[#00E5C3]"
+      className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-default bg-surface-primary text-secondary shadow-[0_5px_22px_rgba(31,49,85,0.045)] transition hover:border-brand hover:bg-surface-hover hover:text-brand"
     >
       <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
         <path
@@ -418,7 +418,7 @@ export function DashboardFilters({
           onClick={applyFilters}
           aria-label="Aplicar filtros"
           title="Aplicar filtros"
-          className="inline-flex h-12 w-12 items-center justify-center rounded-xl bg-[#00c8aa] text-[#03211f] shadow-[0_0_18px_rgba(0,229,195,0.22)] transition hover:bg-[#00b596] dark:bg-[#00E5C3] dark:hover:bg-[#22D5B8]"
+          className="inline-flex h-12 w-12 items-center justify-center rounded-xl bg-brand text-white transition hover:bg-brand"
         >
           <CheckIcon />
         </button>
