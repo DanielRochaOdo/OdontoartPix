@@ -121,7 +121,7 @@ function ChangesMetric({ count, open, onClick }: { count: number; open: boolean;
       onClick={onClick}
       disabled={!hasChanges}
       aria-expanded={open}
-      className="flex w-full items-center gap-3 rounded-xl border border-default bg-surface-secondary p-3 text-left transition hover:bg-slate-100 disabled:cursor-default disabled:hover:bg-surface-secondary  dark:hover:bg-[#17263a] dark:disabled:hover:bg-[#111d30]"
+      className="flex w-full items-center gap-3 rounded-xl border border-default bg-surface-secondary p-3 text-left transition hover:bg-surface-hover disabled:cursor-default disabled:hover:bg-surface-secondary"
     >
       <span className={`inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full border ${hasChanges ? "border-amber-300/70 bg-amber-50 text-amber-700 dark:border-amber-700/60 dark:bg-amber-950/25 dark:text-amber-300" : "border-default bg-surface-primary text-slate-500  dark:text-slate-400"}`}>
         <ManualDashboardIcon name="active" className="h-7 w-7" />
@@ -321,7 +321,7 @@ export function AssociadosProcessingPanel() {
   }
 
   return (
-    <section className="processing-active-card mt-5 w-full rounded-2xl border border-default bg-surface-primary p-5 shadow-sm ring-1 ring-emerald-100 transition  dark:ring-emerald-950">
+    <section className="processing-active-card mt-5 w-full rounded-2xl border border-default bg-surface-primary p-5 shadow-sm ring-1 ring-brand-soft transition">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <div className={`flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.16em] ${visibleSnapshot.active ? "text-emerald-700 dark:text-emerald-400" : visibleSnapshot.status === "cancelled" ? "text-red-700 dark:text-red-300" : "text-slate-700 dark:text-slate-200"}`}>
