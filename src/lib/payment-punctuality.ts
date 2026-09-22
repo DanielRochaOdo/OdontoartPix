@@ -2,6 +2,7 @@ import { dbQuery } from "@/lib/db/pool";
 
 export type ReportTab = "geral" | "planos" | "vencimentos" | "formas";
 export type ReportScope = "paid" | "late" | "open";
+export type PaymentPlan = "clinico" | "orto" | "sem-classificacao";
 export type ReportMetric = "avg" | "rate" | "count" | "amount";
 export type ReportOrder = "desc" | "asc";
 export type GroupKind = "total" | "plan" | "due" | "method";
@@ -10,10 +11,10 @@ export type PaymentFilters = {
   period: "12m" | "30d" | "3m" | "6m" | "all" | "custom";
   from: string;
   to: string;
-  plan: "all" | "clinico" | "orto" | "sem-classificacao";
-  due: number | null;
-  method: string;
-  scope: ReportScope;
+  plans: PaymentPlan[];
+  dues: number[];
+  methods: string[];
+  scopes: ReportScope[];
   metric: ReportMetric;
   order: ReportOrder;
   tab: ReportTab;
@@ -95,7 +96,11 @@ export function readPaymentFilters(
   today = reportToday()
 ): PaymentFilters {
   const value = (name: string) => typeof params[name] === "string" ? params[name] as string : undefined;
-  const period = readEnum(value("period"), ["12m", "30d", "3m", "6m", "all", "custom"] as const, "12m");
+  const values = (name: string) => {
+    const raw = params[name];
+    return raw === undefined ? [] : (Array.isArray(raw) ? raw : [raw]).map((item) => item.trim()).filter(Boolean);
+  };
+  const period = readEnum(value("period"), ["12m", "30d", "3m", "6m", "all", "custom"] as const, "all");
   const customFrom = value("from") ?? "";
   const customTo = value("to") ?? "";
   if (period === "custom" && (
@@ -106,19 +111,36 @@ export function readPaymentFilters(
   const from = period === "custom" ? customFrom
     : period === "all" ? "" : period === "30d" ? daysBefore(today, 29)
     : monthsBefore(today, period === "3m" ? 3 : period === "6m" ? 6 : 12);
-  const to = period === "custom" ? customTo : today;
-  const dueText = value("due") ?? "";
-  if (dueText && (!/^[0-9]{1,2}$/.test(dueText) || Number(dueText) < 1 || Number(dueText) > 31)) {
+  const to = period === "custom" ? customTo : period === "all" ? "" : today;
+
+  // Ausência de filtro equivale a todas as opções da dimensão.
+  const requestedPlans = [...new Set(values("plan").filter((item) => item !== "all"))];
+  if (requestedPlans.some((item) => !["clinico", "orto", "sem-classificacao"].includes(item))) {
+    throw new Error("Plano inválido.");
+  }
+  const requestedDues = values("due");
+  if (requestedDues.some((item) => !/^[0-9]{1,2}$/.test(item) || Number(item) < 1 || Number(item) > 31)) {
     throw new Error("Dia de vencimento inválido.");
   }
-  const method = (value("scope") === "open" ? "" : value("method") ?? "").trim();
-  if (method.length > 120) throw new Error("Forma de pagamento inválida.");
+  const methods = [...new Set(values("method"))];
+  if (methods.some((item) => item.length > 120)) throw new Error("Forma de pagamento inválida.");
+
+  // Sem seleção explícita, os dois grupos de parcelas quitadas ficam ativos:
+  // pontuais e pagas com atraso. Scope legado=paid também retorna ambas.
+  const requestedScopes = values("scopes");
+  const legacyScope = values("scope");
+  const scopes = requestedScopes.length ? [...new Set(requestedScopes)]
+    : legacyScope.length === 1 && legacyScope[0] === "open" ? ["open"]
+    : legacyScope.length === 1 && legacyScope[0] === "late" ? ["late"]
+    : ["paid", "late"];
+  if (scopes.some((item) => !["paid", "late", "open"].includes(item))) {
+    throw new Error("Situação de pagamento inválida.");
+  }
   return {
     period, from, to,
-    plan: readEnum(value("plan"), ["all", "clinico", "orto", "sem-classificacao"] as const, "all"),
-    due: dueText ? Number(dueText) : null,
-    method,
-    scope: readEnum(value("scope"), ["paid", "late", "open"] as const, "paid"),
+    plans: requestedPlans as PaymentPlan[],
+    dues: [...new Set(requestedDues.map(Number))],
+    methods, scopes: scopes as ReportScope[],
     metric: readEnum(value("metric"), ["avg", "rate", "count", "amount"] as const, "avg"),
     order: readEnum(value("order"), ["desc", "asc"] as const, "desc"),
     tab: readEnum(value("tab"), ["geral", "planos", "vencimentos", "formas"] as const, "geral"),
@@ -128,13 +150,15 @@ export function readPaymentFilters(
 
 export function paymentFilterSearch(filters: PaymentFilters, updates: Record<string, string> = {}) {
   const params = new URLSearchParams({
-    period: filters.period, plan: filters.plan, due: filters.due ? String(filters.due) : "",
-    method: filters.method, scope: filters.scope, metric: filters.metric,
-    order: filters.order, tab: filters.tab
+    period: filters.period, metric: filters.metric, order: filters.order, tab: filters.tab
   });
+  for (const plan of filters.plans) params.append("plan", plan);
+  for (const due of filters.dues) params.append("due", String(due));
+  for (const method of filters.methods) params.append("method", method);
+  for (const scope of filters.scopes) params.append("scopes", scope);
   if (filters.period === "custom") {
-    params.set("from", filters.from);
-    params.set("to", filters.to);
+    if (filters.from) params.set("from", filters.from);
+    if (filters.to) params.set("to", filters.to);
   }
   for (const [key, value] of Object.entries(updates)) {
     if (value) params.set(key, value);
