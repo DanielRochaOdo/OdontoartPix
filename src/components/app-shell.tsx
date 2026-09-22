@@ -123,9 +123,11 @@ export function AppShell({
 
       {!focusMode ? (
         <>
-          <div
+          <button
+            type="button"
+            tabIndex={mobileOpen ? 0 : -1}
+            aria-label="Fechar menu lateral"
             className={`fixed inset-0 z-40 bg-[#101d33]/55 transition-opacity lg:hidden ${mobileOpen ? "opacity-100" : "pointer-events-none opacity-0"}`}
-            aria-hidden="true"
             onClick={() => setMobileOpen(false)}
           />
           <aside
