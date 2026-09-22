@@ -136,7 +136,7 @@ function BarRanking({
       <p className="mt-1 text-xs text-muted">{LABEL_BY_METRIC[filters.metric]} · {filters.order === "desc" ? "maior para menor" : "menor para maior"}</p>
       <div className="mt-5 space-y-4">
         {groups.slice(0, limit).map((item) => (
-          <Link key={item.kind + item.key} href={paymentFilterSearch(filters, { detailKind: item.kind, detailKey: item.key })}
+          <Link key={item.kind + item.key} href={paymentFilterSearch(filters, { detailKind: item.kind, detailKey: item.key }) + "#detalhamento"}
             className="group block rounded-lg outline-offset-4 focus-visible:outline-2 focus-visible:outline-brand"
             title={"Ver parcelas de " + item.label}>
             <div className="mb-1.5 flex items-baseline justify-between gap-2 text-xs">
@@ -185,7 +185,7 @@ function RankingTable({ groups, filters, kind }: { groups: ReportGroup[]; filter
             {groups.map((item) => (
               <tr key={item.kind + item.key} className="border-t border-subtle hover:bg-surface-hover">
                 <th scope="row" className="p-0 font-semibold text-brand">
-                  <Link href={paymentFilterSearch(filters, { detailKind: item.kind, detailKey: item.key })}
+                  <Link href={paymentFilterSearch(filters, { detailKind: item.kind, detailKey: item.key }) + "#detalhamento"}
                     className="block px-4 py-3 underline-offset-4 hover:underline">{item.label} ↗</Link>
                 </th>
                 <td className="px-4 py-3 text-right tabular-nums">{decimal(item.averageDays)} dias</td>
@@ -351,7 +351,7 @@ export default async function PunctualityPage({
                       <td className="px-4 py-3">{item.plan}</td>
                       <td className="px-4 py-3 tabular-nums">{humanDate(item.dueDate)}</td>
                       <td className="px-4 py-3 tabular-nums">{humanDate(item.paymentDate)}</td>
-                      <td className="px-4 py-3">{item.method}</td>
+                      <td className="px-4 py-3">{filters.scope === "open" ? "Não aplicável" : item.method}</td>
                       <td className="px-4 py-3 text-right tabular-nums font-bold">{number(item.days)}</td>
                       <td className="px-4 py-3 text-right tabular-nums">{money(item.amountCents)}</td>
                     </tr>
