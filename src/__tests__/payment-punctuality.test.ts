@@ -10,11 +10,11 @@ const today = "2026-09-22";
 const base = readPaymentFilters({}, today);
 
 describe("Pontualidade de pagamentos", () => {
-  it("usa os últimos 12 meses, parcelas pagas e ordenação decrescente por média", () => {
-    expect(base.period).toBe("12m");
-    expect(base.from).toBe("2025-09-22");
-    expect(base.to).toBe(today);
-    expect(base.scope).toBe("paid");
+  it("abre com todo o histórico, pagas pontuais e atrasadas e ordenação decrescente por média", () => {
+    expect(base.period).toBe("all");
+    expect(base.from).toBe("");
+    expect(base.to).toBe("");
+    expect(base.scopes).toEqual(["paid", "late"]);
     expect(base.metric).toBe("avg");
     expect(base.order).toBe("desc");
   });
@@ -24,6 +24,31 @@ describe("Pontualidade de pagamentos", () => {
     expect(() => readPaymentFilters({ period: "custom", from: "2026-10-01", to: "2026-09-01" }, today)).toThrow();
     expect(() => readPaymentFilters({ due: "32" }, today)).toThrow();
     expect(readPaymentFilters({ period: "custom", from: "2026-01-01", to: "2026-08-31" }, today).to).toBe("2026-08-31");
+  });
+
+  it("combina múltiplos planos, vencimentos, formas e situações, sem alterar o conjunto de parcelas pagas", () => {
+    const filter = readPaymentFilters({
+      plan: ["clinico", "orto"], due: ["10", "20"],
+      method: ["Pix", "DINHEIRO"], scopes: ["paid", "late"], period: "all"
+    }, today);
+    expect(filter.plans).toEqual(["clinico", "orto"]);
+    expect(filter.dues).toEqual([10, 20]);
+    expect(filter.methods).toEqual(["Pix", "DINHEIRO"]);
+    expect(filter.scopes).toEqual(["paid", "late"]);
+    expect(readPaymentFilters({ scope: "paid" }, today).scopes).toEqual(["paid", "late"]);
+    expect(readPaymentFilters({ scopes: ["open"] }, today).scopes).toEqual(["open"]);
+  });
+
+  it("filtra a interseção das dimensões e inclui pontuais + atrasados sem duplicar", () => {
+    const rows = [
+      { due_date_text: "10/08/2024", payment_date_text: "10/08/2024", payment_status: "paid", installment_type: "clinico", payment_description: "PIX", paid_amount_cents: 1000, pending_amount_cents: 0 },
+      { due_date_text: "20/08/2024", payment_date_text: "25/08/2024", payment_status: "paid", installment_type: "orto", payment_description: "DINHEIRO", paid_amount_cents: 2000, pending_amount_cents: 0 },
+      { due_date_text: "15/08/2024", payment_date_text: "20/08/2024", payment_status: "paid", installment_type: "orto", payment_description: "PIX", paid_amount_cents: 3000, pending_amount_cents: 0 }
+    ];
+    expect(aggregatePaymentRows(rows, base)).toMatchObject({ count: 3, lateCount: 2 });
+    expect(aggregatePaymentRows(rows, {
+      ...base, plans: ["orto", "clinico"], dues: [10, 20], methods: ["Pix", "DINHEIRO"]
+    })).toMatchObject({ count: 2, averageDays: 2.5, lateCount: 1 });
   });
 
   it("interpreta datas válidas, rejeita datas impossíveis e zera pagamentos pontuais", () => {
@@ -53,8 +78,8 @@ describe("Pontualidade de pagamentos", () => {
       { due_date_text: "10/09/2026", payment_date_text: null, payment_status: "unpaid", installment_type: "orto", payment_description: "ABERTO", paid_amount_cents: 0, pending_amount_cents: 20000 }
     ];
     expect(aggregatePaymentRows(rows, base)).toMatchObject({ count: 2, averageDays: 3, lateCount: 1 });
-    expect(aggregatePaymentRows(rows, { ...base, scope: "late" })).toMatchObject({ count: 1, averageDays: 6, lateCount: 1 });
-    expect(aggregatePaymentRows(rows, { ...base, scope: "open" })).toMatchObject({ count: 1, averageDays: 12, lateCount: 1 });
+    expect(aggregatePaymentRows(rows, { ...base, scopes: ["late"] })).toMatchObject({ count: 1, averageDays: 6, lateCount: 1 });
+    expect(aggregatePaymentRows(rows, { ...base, scopes: ["open"] })).toMatchObject({ count: 1, averageDays: 12, lateCount: 1 });
   });
 
   it("alterna a ordenação mantendo os filtros globais na navegação", () => {
@@ -64,9 +89,15 @@ describe("Pontualidade de pagamentos", () => {
     ];
     expect(sortPaymentGroups(groups, base).map((group) => group.key)).toEqual(["orto", "clinico"]);
     expect(sortPaymentGroups(groups, { ...base, order: "asc" }).map((group) => group.key)).toEqual(["clinico", "orto"]);
-    const link = paymentFilterSearch({ ...base, plan: "orto", due: 10 }, { tab: "vencimentos" });
+    const link = paymentFilterSearch({ ...base, plans: ["orto", "clinico"], dues: [10, 20], methods: ["Pix", "DINHEIRO"] }, { tab: "vencimentos" });
     expect(link).toContain("plan=orto");
     expect(link).toContain("due=10");
+    expect(link).toContain("due=20");
+    expect(link).toContain("plan=clinico");
+    expect(link).toContain("method=Pix");
+    expect(link).toContain("method=DINHEIRO");
+    expect(link).toContain("scopes=paid");
+    expect(link).toContain("scopes=late");
     expect(link).toContain("tab=vencimentos");
   });
 });
