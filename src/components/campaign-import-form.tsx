@@ -117,13 +117,13 @@ export function CampaignImportForm({
   }
 
   return (
-    <form onSubmit={onSubmit} className="space-y-4 rounded-2xl border border-[#16C79A]/70 bg-white p-5 shadow-sm dark:bg-[#071b34]/90">
-      <div className="border-b border-[#183956] pb-4">
+    <form onSubmit={onSubmit} className="space-y-4 rounded-2xl border border-subtle bg-surface-primary p-5 shadow-sm">
+      <div className="border-b border-subtle pb-4">
         <div className="flex items-center gap-3">
           <CampaignControlIcon name="importCampaign" className="h-7 w-7" />
           <div>
-            <h2 className="text-lg font-semibold text-[#102033] dark:text-[#F5F8FF]">Importar campanha ou lote</h2>
-            <p className="mt-1 text-sm text-[#5d7184] dark:text-[#8CA3B3]">Escolha uma campanha e importe para um lote existente ou crie um novo lote.</p>
+            <h2 className="text-lg font-semibold text-primary">Importar campanha ou lote</h2>
+            <p className="mt-1 text-sm text-secondary">Escolha uma campanha e importe para um lote existente ou crie um novo lote.</p>
           </div>
         </div>
       </div>
@@ -136,7 +136,7 @@ export function CampaignImportForm({
         </>
       ) : (
         <>
-          <label htmlFor="campaign-target" className="text-sm font-medium text-[#00F0C2]">Destino da importacao</label>
+          <label htmlFor="campaign-target" className="text-sm font-medium text-brand">Destino da importacao</label>
           <select
             id="campaign-target"
             name="campaignId"
@@ -160,7 +160,7 @@ export function CampaignImportForm({
 
       {campaignId ? (
         <>
-          <label htmlFor="batch-target" className="text-sm font-medium text-[#00F0C2]">Lote de destino</label>
+          <label htmlFor="batch-target" className="text-sm font-medium text-brand">Lote de destino</label>
           <select id="batch-target" name="batchId" value={batchId} onChange={(event) => setBatchId(event.target.value)} className={inputClass}>
             <option value="">Criar novo lote</option>
             {availableBatches.map((batch) => <option key={batch.id} value={batch.id}>{batch.name}</option>)}
@@ -174,22 +174,22 @@ export function CampaignImportForm({
       {!batchId ? <input name="batchName" placeholder="Nome do novo lote" className={inputClass} /> : null}
       <textarea name="description" placeholder="Descricao" className={`${inputClass} min-h-20 resize-y`} />
 
-      <p className="rounded-lg border border-[#284665] bg-[#071525] px-3 py-2 text-xs text-[#AFC3D4]">
-        A planilha deve conter a coluna <strong className="text-white">Tipo Parcela</strong>. Em cada linha informe somente <strong className="text-white">Clinico</strong> ou <strong className="text-white">Orto</strong>. Essa classificacao fica vinculada a parcela, mesmo que ela participe de outros lotes ou campanhas.
+      <p className="rounded-lg border border-default bg-surface-secondary px-3 py-2 text-xs text-secondary">
+        A planilha deve conter a coluna <strong className="text-primary">Tipo Parcela</strong>. Em cada linha informe somente <strong className="text-primary">Clinico</strong> ou <strong className="text-primary">Orto</strong>. Essa classificacao fica vinculada a parcela, mesmo que ela participe de outros lotes ou campanhas.
       </p>
 
       <div
         onDragOver={(event) => { event.preventDefault(); setIsDragging(true); }}
         onDragLeave={() => setIsDragging(false)}
         onDrop={(event) => { event.preventDefault(); setIsDragging(false); setFile(event.dataTransfer.files[0]); }}
-        className={`rounded-xl border-2 border-dashed p-5 text-center ${isDragging ? "border-[#00F0C2] bg-[#0B3442]" : "border-[#284665] bg-[#071525]"}`}
+        className={`rounded-xl border-2 border-dashed p-5 text-center ${isDragging ? "border-brand bg-brand-soft" : "border-default bg-surface-secondary"}`}
       >
         <input ref={fileInputRef} id="campaign-file" name="file" type="file" accept=".csv,.txt,.xlsx,.xls" required onChange={(event) => setSelectedFile(event.target.files?.[0]?.name ?? "")} className="sr-only" />
-        <label htmlFor="campaign-file" className="cursor-pointer text-sm text-[#AFC3D4]"><span className="font-medium text-[#00F0C2]">Arraste o arquivo aqui</span> ou clique para escolher</label>
+        <label htmlFor="campaign-file" className="cursor-pointer text-sm text-secondary"><span className="font-medium text-brand">Arraste o arquivo aqui</span> ou clique para escolher</label>
         {selectedFile ? <p className="mt-2 truncate text-sm font-medium text-white">{selectedFile}</p> : null}
       </div>
 
-      <button disabled={busy} className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-[#00F0C2] px-4 py-3 text-sm font-semibold text-[#06151F] disabled:opacity-60">
+      <button disabled={busy} className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-brand px-4 py-3 text-sm font-semibold text-white hover:bg-brand disabled:opacity-60">
         <CampaignControlIcon name="importBase" className="h-5 w-5" />{busy ? "Importando..." : "Importar base"}
       </button>
       {status ? <p className="text-sm text-slate-600 dark:text-slate-300">{status}</p> : null}
