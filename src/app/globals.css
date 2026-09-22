@@ -13,18 +13,18 @@
   --color-surface-elevated: #ffffff;
   --color-surface-hover: #eff7f6;
   --color-surface-selected: #e5f8f4;
-  --color-text-primary: #102033;
-  --color-text-secondary: #52677c;
-  --color-text-muted: #75879a;
+  --color-text-primary: #192940;
+  --color-text-secondary: #68788d;
+  --color-text-muted: #8190a2;
   --color-text-disabled: #9eabb9;
   --color-text-inverse: #ffffff;
-  --color-border-subtle: #e4ebf2;
-  --color-border-default: #d2dfea;
+  --color-border-subtle: #e5ebf2;
+  --color-border-default: #dce5ee;
   --color-border-strong: #b6c8d8;
   --color-border-focus: #009b84;
-  --color-brand-primary: #009b84;
-  --color-brand-hover: #007f6d;
-  --color-brand-active: #006b5c;
+  --color-brand-primary: #078c82;
+  --color-brand-hover: #066e67;
+  --color-brand-active: #065c56;
   --color-brand-soft: rgb(0 155 132 / 10%);
   --color-success: #078a57;
   --color-success-soft: rgb(7 138 87 / 10%);
@@ -38,7 +38,9 @@
   --color-chart-unpaid: #e05259;
   --color-chart-paid-value: #088fc7;
   --color-chart-pending-value: #d94352;
-  --color-focus-ring: rgb(0 155 132 / 25%);
+  --color-focus-ring: rgb(7 140 130 / 26%);
+  --color-ui-shadow: 0 5px 22px rgba(31, 49, 85, 0.045);
+  --color-ui-control: #fbfcff;
 }
 
 [data-theme="dark"],
@@ -78,6 +80,8 @@
   --color-chart-paid-value: #10b7f4;
   --color-chart-pending-value: #ff5b68;
   --color-focus-ring: rgb(0 229 195 / 28%);
+  --color-ui-shadow: 0 5px 22px rgba(0, 0, 0, 0.12);
+  --color-ui-control: #0b2133;
 }
 
 body {
@@ -239,5 +243,61 @@ textarea {
   .processing-progress-fill::after,
   .global-processing-orb {
     animation: none;
+  }
+}
+
+/* Linguagem visual compartilhada do protótipo ODONTOPIX.
+   Aplicável a todos os módulos sem alterar a lógica de seus componentes. */
+@layer components {
+  .odonto-card {
+    background: var(--color-surface-primary);
+    border: 1px solid var(--color-border-subtle);
+    border-radius: 14px;
+    box-shadow: var(--color-ui-shadow);
+  }
+  .odonto-control {
+    background: var(--color-ui-control);
+    color: var(--color-text-primary);
+    border: 1px solid var(--color-border-default);
+    border-radius: 9px;
+    min-height: 39px;
+  }
+  .odonto-control:focus-visible {
+    outline: 3px solid var(--color-focus-ring);
+    outline-offset: 2px;
+    border-color: var(--color-border-focus);
+  }
+  .odonto-page-title {
+    font-size: clamp(1.5rem, 2.5vw, 1.75rem);
+    line-height: 1.2;
+    letter-spacing: -0.04em;
+    font-weight: 790;
+  }
+  .odonto-dashboard-card {
+    border-color: var(--color-border-subtle);
+    background: var(--color-surface-primary);
+    box-shadow: var(--color-ui-shadow);
+  }
+  .odonto-dashboard-card:hover {
+    border-color: var(--color-border-strong);
+    background: var(--color-surface-hover);
+  }
+  .odontopix-sidebar button:focus-visible,
+  .odontopix-sidebar a:focus-visible {
+    outline: 3px solid #75cec4;
+    outline-offset: 2px;
+  }
+  .odontopix-sidebar button[title="Sair do sistema"],
+  .odontopix-sidebar button[title^="Tema"],
+  .odontopix-sidebar button[title="Alternar tema"] {
+    border-color: #365065;
+    color: #bac7d8;
+    background: #23384e;
+  }
+  .odontopix-sidebar button[title="Sair do sistema"]:hover,
+  .odontopix-sidebar button[title^="Tema"]:hover,
+  .odontopix-sidebar button[title="Alternar tema"]:hover {
+    background: #213451;
+    color: #fff;
   }
 }
