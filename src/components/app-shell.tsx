@@ -86,6 +86,7 @@ const navItems = [
   { href: "/associados", label: "Associados", icon: MembersIcon },
   { href: "/disparos", label: "Disparos", icon: DispatchIcon },
   { href: "/resumo-analise", label: "Resumo e Análise", icon: AnalysisIcon },
+  { href: "/pontualidade", label: "Pontualidade de pagamentos", icon: AnalysisIcon },
   { href: "/configuracoes", label: "Configurações", icon: SettingsIcon }
 ];
 
