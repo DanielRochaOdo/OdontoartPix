@@ -22,7 +22,7 @@ type CampaignOption = { id: string; name: string };
 type BatchOption = { id: string; campaignId: string; name: string };
 
 const STORAGE_KEY = "campaign-import-report";
-const inputClass = "w-full rounded-lg border border-[#d6e3ef] bg-[#eef4f8] px-3 py-2 text-sm text-[#102033] dark:border-[#284665] dark:bg-[#0B2133] dark:text-[#F5F8FF]";
+const inputClass = "odonto-control w-full px-3 py-2 text-sm";
 
 function normalizedBatchName(value: string) {
   return value.trim().toLocaleLowerCase("pt-BR");
@@ -186,7 +186,7 @@ export function CampaignImportForm({
       >
         <input ref={fileInputRef} id="campaign-file" name="file" type="file" accept=".csv,.txt,.xlsx,.xls" required onChange={(event) => setSelectedFile(event.target.files?.[0]?.name ?? "")} className="sr-only" />
         <label htmlFor="campaign-file" className="cursor-pointer text-sm text-secondary"><span className="font-medium text-brand">Arraste o arquivo aqui</span> ou clique para escolher</label>
-        {selectedFile ? <p className="mt-2 truncate text-sm font-medium text-white">{selectedFile}</p> : null}
+        {selectedFile ? <p className="mt-2 truncate text-sm font-medium text-primary">{selectedFile}</p> : null}
       </div>
 
       <button disabled={busy} className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-brand px-4 py-3 text-sm font-semibold text-white hover:bg-brand disabled:opacity-60">
