@@ -288,7 +288,6 @@ group by grouping sets ((), (plan), (due_day), (method))
 `;
 
 // SQL usa intervalo fechado [from, to] na data original de vencimento.
-// $6 fica reservado para expansão de filtros sem mudar assinatura de consulta.
 function queryValues(filters: PaymentFilters): unknown[] {
   return [filters.from || null, filters.to || null, filters.plan, filters.due,
     filters.method, filters.scope, filters.asOf];
@@ -339,7 +338,7 @@ export async function getPaymentMethods() {
   const result = await dbQuery<{ description: string | null }>(`
     select distinct payment_description as description
     from member_target_installments
-    where payment_status = 'paid' and payment_description is not null
+    where payment_status = 'paid'
     order by payment_description
   `);
   return [...new Set(result.rows.map((row) => normalizePaymentMethod(row.description)))].sort((a, b) => a.localeCompare(b, "pt-BR"));
