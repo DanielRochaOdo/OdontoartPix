@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { PageHeader } from "@/components/page-header";
 import { PageSurface } from "@/components/page-surface";
+import { PunctualityFilters } from "@/components/punctuality-filters";
 import {
   getPaymentDetails, getPaymentMethods, getPaymentReport,
   paymentFilterSearch, readPaymentFilters, sortPaymentGroups,
@@ -46,83 +47,6 @@ function StatCard({ label, value, hint }: { label: string; value: string; hint: 
       <p className="mt-2 break-words text-2xl font-bold tracking-tight text-primary sm:text-[28px]">{value}</p>
       <p className="mt-2 text-xs text-muted">{hint}</p>
     </article>
-  );
-}
-
-function filterSelect(name: string, label: string, selected: string, options: Array<{ value: string; label: string }>) {
-  return (
-    <label className="flex min-w-0 flex-col gap-1.5 text-xs font-semibold text-secondary">
-      {label}
-      <select name={name} defaultValue={selected} className="odonto-control w-full px-3 py-2 text-[13px]">
-        {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-      </select>
-    </label>
-  );
-}
-
-function Filters({ filters, methods }: { filters: PaymentFilters; methods: string[] }) {
-  return (
-    <form action="/pontualidade" method="get" className="odonto-card mt-6 p-4 sm:p-5">
-      <input type="hidden" name="tab" value={filters.tab} />
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h2 className="text-sm font-bold text-primary">Filtros da análise</h2>
-          <p className="mt-1 text-xs text-secondary">Os filtros permanecem ativos ao navegar entre os relatórios.</p>
-        </div>
-        <Link href="/pontualidade" className="rounded-lg border border-default px-3 py-2 text-xs font-semibold text-secondary hover:bg-surface-hover">Limpar filtros</Link>
-      </div>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-        {filterSelect("period", "Período de vencimento", filters.period, [
-          { value: "12m", label: "Últimos 12 meses" }, { value: "30d", label: "Últimos 30 dias" },
-          { value: "3m", label: "Últimos 3 meses" }, { value: "6m", label: "Últimos 6 meses" },
-          { value: "all", label: "Todo o histórico" }, { value: "custom", label: "Personalizado" }
-        ])}
-        {filterSelect("plan", "Plano", filters.plan, [
-          { value: "all", label: "Todos os planos" }, { value: "clinico", label: "Clínico" },
-          { value: "orto", label: "Orto" }, { value: "sem-classificacao", label: "Não classificado" }
-        ])}
-        {filterSelect("due", "Dia do vencimento", filters.due ? String(filters.due) : "", [
-          { value: "", label: "Todos os dias" }, ...Array.from({ length: 31 }, (_, i) => ({
-            value: String(i + 1), label: "Dia " + String(i + 1).padStart(2, "0")
-          }))
-        ])}
-        {filterSelect("method", "Forma de pagamento", filters.method, [
-          { value: "", label: "Todas as formas" },
-          ...methods.map((item) => ({ value: item, label: item }))
-        ])}
-        {filterSelect("scope", "Situação das parcelas", filters.scope, [
-          { value: "paid", label: "Pagas" }, { value: "late", label: "Pagas com atraso" },
-          { value: "open", label: "Em aberto e vencidas" }
-        ])}
-        {filterSelect("metric", "Ordenar por", filters.metric, [
-          { value: "avg", label: "Média de dias de atraso" },
-          { value: "rate", label: "Percentual em atraso" },
-          { value: "count", label: "Quantidade de parcelas" },
-          { value: "amount", label: "Valor financeiro" }
-        ])}
-        {filterSelect("order", "Ordem", filters.order, [
-          { value: "desc", label: "Maior para menor" }, { value: "asc", label: "Menor para maior" }
-        ])}
-        <div className="flex items-end">
-          <button type="submit" className="min-h-[39px] w-full rounded-lg bg-brand px-5 py-2 text-sm font-bold text-white transition hover:opacity-90">Aplicar filtros</button>
-        </div>
-      </div>
-      <div className="mt-4 grid gap-3 border-t border-subtle pt-4 sm:grid-cols-2">
-        <label className="flex flex-col gap-1.5 text-xs font-semibold text-secondary">
-          Data inicial (período personalizado)
-          <input type="date" name="from" defaultValue={filters.period === "custom" ? filters.from : ""}
-            className="odonto-control w-full px-3 py-2 text-[13px]" />
-        </label>
-        <label className="flex flex-col gap-1.5 text-xs font-semibold text-secondary">
-          Data final (período personalizado)
-          <input type="date" name="to" defaultValue={filters.period === "custom" ? filters.to : ""}
-            className="odonto-control w-full px-3 py-2 text-[13px]" />
-        </label>
-      </div>
-      <p className="mt-3 text-xs leading-relaxed text-muted">
-        O intervalo personalizado será utilizado ao selecionar “Personalizado”. Os demais períodos são móveis e calculados a partir da data local do sistema.
-      </p>
-    </form>
   );
 }
 
@@ -256,10 +180,19 @@ export default async function PunctualityPage({
     }
   }
 
-  const scopeTitle = filters.scope === "open" ? "Dias em aberto" : "Atraso médio";
-  const scopeHint = filters.scope === "open" ? "Dias desde o vencimento até hoje, somente parcelas vencidas"
+  const openOnly = filters.scopes.length === 1 && filters.scopes[0] === "open";
+  const includesOpen = filters.scopes.includes("open");
+  const includesPaid = filters.scopes.includes("paid") || filters.scopes.includes("late");
+  const scopeTitle = openOnly ? "Dias em aberto" : includesOpen ? "Tempo médio em dias" : "Atraso médio";
+  const scopeHint = openOnly ? "Dias decorridos desde o vencimento até hoje"
+    : includesOpen ? "Pagas: dias até quitar; em aberto: dias decorridos desde o vencimento"
     : "Dias corridos entre o vencimento e a quitação; pontuais contam zero";
-  const periodLabel = (filters.from ? humanDate(filters.from) : "Início do histórico") + " até " + (filters.to ? humanDate(filters.to) : "hoje");
+  const periodLabel = filters.period === "all" || (!filters.from && !filters.to)
+    ? "Todo o histórico"
+    : (filters.from ? humanDate(filters.from) : "Início do histórico") + " até " + (filters.to ? humanDate(filters.to) : "hoje");
+  const scopeLabel = filters.scopes.length === 3 ? "Pagas no prazo + com atraso + em aberto"
+    : filters.scopes.includes("paid") && filters.scopes.includes("late") ? "Pagas no prazo + pagas com atraso" + (includesOpen ? " + em aberto" : "")
+    : filters.scopes.map((scope) => scope === "paid" ? "Pagas no prazo" : scope === "late" ? "Pagas com atraso" : "Em aberto e vencidas").join(" + ");
 
   return (
     <PageSurface>
@@ -268,11 +201,11 @@ export default async function PunctualityPage({
       <div className="mt-4 flex flex-wrap items-center gap-2 text-xs text-secondary">
         <span className="rounded-full border border-subtle bg-surface-primary px-3 py-1.5">{periodLabel}</span>
         <span className="rounded-full border border-subtle bg-surface-primary px-3 py-1.5">
-          {filters.scope === "open" ? "Em aberto e vencidas" : filters.scope === "late" ? "Pagas com atraso" : "Pagas"}
+          {scopeLabel}
         </span>
         <span className="rounded-full border border-subtle bg-surface-primary px-3 py-1.5">Dados reais · atualizados ao abrir</span>
       </div>
-      <Filters filters={filters} methods={methods} />
+      <PunctualityFilters key={paymentFilterSearch(filters)} filters={filters} methods={methods} />
 
       <nav aria-label="Relatórios de pontualidade" className="mt-6 flex gap-1 overflow-x-auto border-b border-subtle">
         {TABS.map((tab) => (
@@ -288,18 +221,18 @@ export default async function PunctualityPage({
       <section className="mt-6" aria-label={current.label}>
         <h2 className="text-lg font-bold text-primary">{current.label}</h2>
         <p className="mt-1 text-sm text-secondary">{current.description}</p>
-        {filters.scope === "open" ? (
+        {includesOpen ? (
           <p className="mt-3 rounded-lg border border-warning bg-warning-soft p-3 text-xs text-warning">
-            Em aberto: o indicador representa dias já vencidos, não dias até a quitação. A forma de pagamento efetiva ainda não existe; a aba de modalidades não permite comparação neste filtro.
+            Parcelas em aberto são medidas em dias decorridos desde o vencimento, não em dias até a quitação. Ao combiná-las com pagamentos quitados, os indicadores misturam durações de naturezas diferentes. A comparação por forma de pagamento é exibida somente quando são selecionadas situações de parcelas pagas.
           </p>
         ) : null}
         <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <StatCard label={scopeTitle} value={decimal(report.total.averageDays) + " dias"} hint={scopeHint} />
-          <StatCard label={filters.scope === "open" ? "Parcelas em atraso" : "Parcelas quitadas"}
+          <StatCard label={openOnly ? "Parcelas em atraso" : includesOpen ? "Parcelas analisadas" : "Parcelas quitadas"}
             value={number(report.total.count)} hint="Obrigações financeiras únicas analisadas" />
-          <StatCard label={filters.scope === "open" ? "Taxa de vencidas" : "Pagas após o vencimento"}
+          <StatCard label={openOnly ? "Taxa de vencidas" : includesOpen ? "Parcelas com atraso" : "Pagas após o vencimento"}
             value={percent(report.total.lateRate)} hint={number(report.total.lateCount) + " de " + number(report.total.count) + " parcelas"} />
-          <StatCard label={filters.scope === "open" ? "Valor em aberto" : "Valor recebido"}
+          <StatCard label={openOnly ? "Valor em aberto" : includesOpen ? "Valor financeiro analisado" : "Valor recebido"}
             value={money(report.total.amountCents)} hint="Somatório financeiro das parcelas elegíveis" />
         </div>
 
@@ -307,7 +240,7 @@ export default async function PunctualityPage({
           <div className="mt-5 grid gap-4 xl:grid-cols-3">
             <BarRanking title="Planos" groups={plans} filters={filters} limit={3} />
             <BarRanking title="Vencimentos" groups={dues} filters={filters} limit={8} />
-            <BarRanking title="Formas de pagamento" groups={filters.scope === "open" ? [] : paymentMethods} filters={filters} limit={8} />
+            <BarRanking title="Formas de pagamento" groups={includesOpen ? [] : paymentMethods} filters={filters} limit={8} />
           </div>
         ) : filters.tab === "planos" ? (
           <div className="mt-5 grid gap-4 xl:grid-cols-[minmax(260px,0.9fr)_minmax(0,1.7fr)]">
@@ -321,8 +254,8 @@ export default async function PunctualityPage({
           </div>
         ) : (
           <div className="mt-5 grid gap-4 xl:grid-cols-[minmax(260px,0.9fr)_minmax(0,1.7fr)]">
-            <BarRanking title="Modalidades de recebimento" groups={filters.scope === "open" ? [] : paymentMethods} filters={filters} limit={30} />
-            <RankingTable kind="method" groups={filters.scope === "open" ? [] : paymentMethods} filters={filters} />
+            <BarRanking title="Modalidades de recebimento" groups={includesOpen ? [] : paymentMethods} filters={filters} limit={30} />
+            <RankingTable kind="method" groups={includesOpen ? [] : paymentMethods} filters={filters} />
           </div>
         )}
 
@@ -351,7 +284,7 @@ export default async function PunctualityPage({
                       <td className="px-4 py-3">{item.plan}</td>
                       <td className="px-4 py-3 tabular-nums">{humanDate(item.dueDate)}</td>
                       <td className="px-4 py-3 tabular-nums">{humanDate(item.paymentDate)}</td>
-                      <td className="px-4 py-3">{filters.scope === "open" ? "Não aplicável" : item.method}</td>
+                      <td className="px-4 py-3">{item.paymentDate ? item.method : "Não aplicável"}</td>
                       <td className="px-4 py-3 text-right tabular-nums font-bold">{number(item.days)}</td>
                       <td className="px-4 py-3 text-right tabular-nums">{money(item.amountCents)}</td>
                     </tr>
@@ -362,7 +295,7 @@ export default async function PunctualityPage({
           </section>
         ) : null}
         <p className="mt-5 text-xs leading-relaxed text-muted">
-          Base: parcelas canônicas vinculadas a campanhas e lotes ativos, sem duplicar a mesma obrigação em vários lotes. O período se refere ao vencimento. Pagamentos sem data válida de quitação ou vencimento não entram na média; parcelas acordadas e excluídas não são consideradas pagas. A taxa de atraso usa somente as parcelas elegíveis no filtro atual. A modalidade informa a forma efetivamente utilizada, não a causa do atraso.
+          Base: parcelas canônicas vinculadas a campanhas e lotes ativos, sem duplicar a mesma obrigação em vários lotes. Sem filtro temporal, considera todo o histórico de vencimentos até a data da consulta. O período personalizado se refere ao vencimento. Pagamentos sem data válida de quitação ou vencimento não entram na média; parcelas acordadas e excluídas não são consideradas pagas. A taxa de atraso usa somente as parcelas elegíveis no filtro atual. A modalidade informa a forma efetivamente utilizada, não a causa do atraso.
         </p>
       </section>
     </PageSurface>
