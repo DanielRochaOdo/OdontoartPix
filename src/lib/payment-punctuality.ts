@@ -203,16 +203,17 @@ export function aggregatePaymentRows(rows: Array<{
     const due = parseFinancialDate(row.due_date_text);
     const paid = parseFinancialDate(row.payment_date_text);
     if (!due || (filters.from && due < filters.from) || (filters.to && due > filters.to) || due > filters.asOf) return [];
-    if (filters.plan !== "all" && (row.installment_type ?? "sem-classificacao") !== filters.plan) return [];
-    if (filters.due && Number(due.slice(8, 10)) !== filters.due) return [];
+    if (filters.plans.length && !filters.plans.includes((row.installment_type ?? "sem-classificacao") as PaymentPlan)) return [];
+    if (filters.dues.length && !filters.dues.includes(Number(due.slice(8, 10)))) return [];
     const method = normalizePaymentMethod(row.payment_description);
-    if (filters.method && method !== filters.method) return [];
-    if (filters.scope === "open" ? row.payment_status !== "unpaid"
-      : row.payment_status !== "paid" || !paid || paid > filters.asOf || row.paid_amount_cents === null) return [];
-    const days = filters.scope === "open" ? delayDays(due, filters.asOf) : delayDays(due, paid!);
-    if (filters.scope === "open" && days === 0) return [];
-    if (filters.scope === "late" && days === 0) return [];
-    return [{ days, amount: filters.scope === "open" ? row.pending_amount_cents : row.paid_amount_cents ?? 0 }];
+    const isOpen = row.payment_status === "unpaid" && due < filters.asOf && filters.scopes.includes("open");
+    const isPaid = row.payment_status === "paid" && paid !== null &&
+      paid <= filters.asOf && row.paid_amount_cents !== null;
+    if (!isOpen && !isPaid) return [];
+    if (!isOpen && filters.methods.length && !filters.methods.includes(method)) return [];
+    const days = isOpen ? delayDays(due, filters.asOf) : delayDays(due, paid!);
+    if (!isOpen && !filters.scopes.includes(days > 0 ? "late" : "paid")) return [];
+    return [{ days, amount: isOpen ? row.pending_amount_cents : row.paid_amount_cents ?? 0 }];
   });
   return {
     count: selected.length,
