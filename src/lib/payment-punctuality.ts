@@ -186,6 +186,7 @@ export function aggregatePaymentRows(rows: Array<{
     if (filters.scope === "open" ? row.payment_status !== "unpaid"
       : row.payment_status !== "paid" || !paid || paid > filters.asOf || row.paid_amount_cents === null) return [];
     const days = filters.scope === "open" ? delayDays(due, filters.asOf) : delayDays(due, paid!);
+    if (filters.scope === "open" && days === 0) return [];
     if (filters.scope === "late" && days === 0) return [];
     return [{ days, amount: filters.scope === "open" ? row.pending_amount_cents : row.paid_amount_cents ?? 0 }];
   });
@@ -248,23 +249,23 @@ export const PAYMENT_SOURCE_SQL = `with candidate as (
     extract(day from due_date)::int as due_day
   from parsed
 ), selected as (
-  select *, case when $7::text = 'open'
-      then greatest($8::date - due_date, 0)
+  select *, case when $6::text = 'open'
+      then greatest($7::date - due_date, 0)
       else greatest(payment_date - due_date, 0) end as days,
-    case when $7::text = 'open' then pending_amount_cents else paid_amount_cents end as report_amount_cents
+    case when $6::text = 'open' then pending_amount_cents else paid_amount_cents end as report_amount_cents
   from normalized
-  where due_date is not null and due_date <= $8::date
+  where due_date is not null and due_date <= $7::date
     and ($1::date is null or due_date >= $1::date)
     and ($2::date is null or due_date <= $2::date)
     and ($3::text = 'all' or plan = $3::text)
     and ($4::int is null or due_day = $4::int)
     and ($5::text = '' or method = $5::text)
-    and (($7::text = 'open' and payment_status = 'unpaid' and due_date < $8::date)
-      or ($7::text <> 'open' and payment_status = 'paid'
+    and (($6::text = 'open' and payment_status = 'unpaid' and due_date < $7::date)
+      or ($6::text <> 'open' and payment_status = 'paid'
         and paid_amount_cents is not null and payment_date is not null
-        and payment_date <= $8::date))
+        and payment_date <= $7::date))
 ), eligible as (
-  select * from selected where $7::text <> 'late' or days > 0
+  select * from selected where $6::text <> 'late' or days > 0
 )`;
 
 const groupQuery = PAYMENT_SOURCE_SQL + `
@@ -290,7 +291,7 @@ group by grouping sets ((), (plan), (due_day), (method))
 // $6 fica reservado para expansão de filtros sem mudar assinatura de consulta.
 function queryValues(filters: PaymentFilters): unknown[] {
   return [filters.from || null, filters.to || null, filters.plan, filters.due,
-    filters.method, null, filters.scope, filters.asOf];
+    filters.method, filters.scope, filters.asOf];
 }
 
 type GroupRow = {
@@ -363,10 +364,10 @@ export async function getPaymentDetails(filters: PaymentFilters, kind: GroupKind
       case when payment_date is null then null else to_char(payment_date, 'YYYY-MM-DD') end as payment_date,
       method, days, report_amount_cents::float8 as report_amount_cents
     from eligible
-    where ($9::text = 'total'
-      or ($9::text = 'plan' and plan = $10::text)
-      or ($9::text = 'due' and due_day::text = $10::text)
-      or ($9::text = 'method' and method = $10::text))
+    where ($8::text = 'total'
+      or ($8::text = 'plan' and plan = $9::text)
+      or ($8::text = 'due' and due_day::text = $9::text)
+      or ($8::text = 'method' and method = $9::text))
     order by days desc, due_date desc, id
     limit 50
   `, [...queryValues(filters), kind, key]);
