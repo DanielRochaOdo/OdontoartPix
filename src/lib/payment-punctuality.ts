@@ -466,7 +466,7 @@ export function summarizePaymentMethodChanges(rows: Array<{
     totalPaid += row.count;
     const expected = paymentMethodIdentity(row.configured);
     const actual = paymentMethodIdentity(row.received);
-    if (!expected || !actual || actual === "NAO INFORMADO") {
+    if (!expected || expected === "NAO INFORMADO" || !actual || actual === "NAO INFORMADO") {
       withoutConfigured += row.count;
       continue;
     }
