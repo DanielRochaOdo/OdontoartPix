@@ -1,10 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import * as XLSX from "xlsx-js-style";
-import type { DispatchFilters, DispatchListItem, DispatchOperationHistoryItem } from "@/lib/dispatches";
-import { buildDispatchesWorkbook } from "@/lib/dispatches-workbook";
+import type { DispatchFilters, DispatchFilterOptions, DispatchPage, DispatchOperationHistoryItem } from "@/lib/dispatches";
 import { matchesPaidPendingFilter } from "@/lib/paid-pending";
 
 const PAGE_SIZE = 50;
@@ -225,13 +223,20 @@ function DateRangeFilter({ label, from, to, onFrom, onTo }: {
   );
 }
 
-export function DispatchesDashboard({ rows, history, dispatchUnitCostCents, canRegister }: {
-  rows: DispatchListItem[];
+export function DispatchesDashboard({ initialPage, filterOptions, history, dispatchUnitCostCents, canRegister }: {
+  initialPage: DispatchPage;
+  filterOptions: DispatchFilterOptions;
   history: DispatchOperationHistoryItem[];
   dispatchUnitCostCents: number;
   canRegister: boolean;
 }) {
   const router = useRouter();
+  const [pageData, setPageData] = useState(initialPage);
+  const rows = pageData.rows;
+  const firstRequest = useRef(true);
+  const [refreshToken, setRefreshToken] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [tab, setTab] = useState<Tab>("installments");
   const [query, setQuery] = useState("");
   const [code, setCode] = useState("");
@@ -294,56 +299,29 @@ export function DispatchesDashboard({ rows, history, dispatchUnitCostCents, canR
     };
   }), [rows]);
 
+  // As opções são obtidas do conjunto completo no servidor, não das 50 linhas visíveis.
   const options = useMemo(() => ({
-    status: unique(viewRows.map((row) => row.status)).sort().map((value) => ({ value, label: statusLabel(value) })),
-    payment: unique(viewRows.map((row) => row.payment)).sort().map((value) => ({ value, label: paymentLabel(value) })),
-    receipt: unique(viewRows.map((row) => row.receipt)).sort((a, b) => a.localeCompare(b, "pt-BR")).map((value) => ({ value, label: value })),
-    installmentType: unique(viewRows.map((row) => row.installmentTypeKey)).filter(Boolean).sort().map((value) => ({ value, label: installmentTypeLabel(value) })),
-    campaign: [...new Map(viewRows.map((row) => [row.campaignId, row.campaign])).entries()].map(([value, label]) => ({ value, label })),
-    batch: [...new Map(viewRows.map((row) => [row.batchId, row.batch])).entries()].map(([value, label]) => ({ value, label }))
-  }), [viewRows]);
+    status: filterOptions.status,
+    payment: filterOptions.payment.map((option) => ({
+      value: normalizePayment(option.value), label: paymentLabel(normalizePayment(option.value))
+    })),
+    receipt: filterOptions.receipt,
+    installmentType: filterOptions.installmentType.map((option) => ({
+      value: option.value, label: installmentTypeLabel(option.value)
+    })),
+    campaign: filterOptions.campaign,
+    batch: filterOptions.batch
+  }), [filterOptions]);
 
-  const filteredRows = useMemo(() => viewRows.filter((row) => {
-    const search = [row.name, row.cpf, row.associatedCode, row.installment, row.installmentType, row.dueDate, row.campaign, row.batch, row.status, row.payment, row.receipt, row.paymentDate]
-      .join(" ")
-      .toLocaleLowerCase("pt-BR");
-    const dispatchMatch = dispatchCountFilter === "all"
-      || (dispatchCountFilter === "never" && row.dispatchCount === 0)
-      || (dispatchCountFilter === "1" && row.dispatchCount === 1)
-      || (dispatchCountFilter === "2" && row.dispatchCount === 2)
-      || (dispatchCountFilter === "3" && row.dispatchCount === 3)
-      || (dispatchCountFilter === "4plus" && row.dispatchCount >= 4);
-    return (!query.trim() || search.includes(query.trim().toLocaleLowerCase("pt-BR")))
-      && (!code.trim() || row.associatedCode === code.trim())
-      && (!installment.trim() || row.installment === installment.trim())
-      && (!dueDateFrom || (row.dueDateKey && row.dueDateKey >= dueDateFrom))
-      && (!dueDateTo || (row.dueDateKey && row.dueDateKey <= dueDateTo))
-      && (!paymentDateFrom || (row.paymentDateKey && row.paymentDateKey >= paymentDateFrom))
-      && (!paymentDateTo || (row.paymentDateKey && row.paymentDateKey <= paymentDateTo))
-      && (statusFilters.length === 0 || statusFilters.includes(row.status))
-      && (paymentFilters.length === 0 || paymentFilters.includes(row.payment))
-      && matchesPaidPendingFilter(row.payment, row.pending, paidPending)
-      && (receiptFilters.length === 0 || receiptFilters.includes(row.receipt))
-      && (installmentTypeFilters.length === 0 || installmentTypeFilters.includes(row.installmentTypeKey))
-      && (campaignFilters.length === 0 || campaignFilters.includes(row.campaignId))
-      && (batchFilters.length === 0 || batchFilters.includes(row.batchId))
-      && dispatchMatch
-      && (!lastDispatchFrom || (row.lastDispatchDateKey && row.lastDispatchDateKey >= lastDispatchFrom))
-      && (!lastDispatchTo || (row.lastDispatchDateKey && row.lastDispatchDateKey <= lastDispatchTo));
-  }), [viewRows, query, code, installment, dueDateFrom, dueDateTo, paymentDateFrom, paymentDateTo, statusFilters, paymentFilters, paidPending, receiptFilters, installmentTypeFilters, campaignFilters, batchFilters, dispatchCountFilter, lastDispatchFrom, lastDispatchTo]);
+  const filteredRows = viewRows;
 
   const eligibleRows = useMemo(() => filteredRows.filter(isEligible), [filteredRows]);
-  const pageCount = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE));
+  const pageCount = Math.max(1, Math.ceil(pageData.filteredCount / PAGE_SIZE));
   const currentPage = Math.min(page, pageCount);
-  const pageRows = filteredRows.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  const pageRows = filteredRows;
   const eligiblePageRows = pageRows.filter(isEligible);
-  const selectedRows = filteredRows.filter((row) => selectedIds.has(row.targetId) && isEligible(row));
   const allPageSelected = eligiblePageRows.length > 0 && eligiblePageRows.every((row) => selectedIds.has(row.targetId));
-  const totals = useMemo(() => ({
-    amount: filteredRows.reduce((sum, row) => sum + row.amount, 0),
-    pending: filteredRows.reduce((sum, row) => sum + row.pending, 0),
-    dispatches: filteredRows.reduce((sum, row) => sum + row.dispatchCount, 0)
-  }), [filteredRows]);
+  const totals = pageData.totals;
 
   const currentFilters = useMemo<DispatchFilters>(() => ({
     query, code, installment, dueDateFrom, dueDateTo, paymentDateFrom, paymentDateTo,
@@ -351,6 +329,39 @@ export function DispatchesDashboard({ rows, history, dispatchUnitCostCents, canR
     installmentType: installmentTypeFilters, campaign: campaignFilters, batch: batchFilters,
     dispatchCount: dispatchCountFilter, lastDispatchFrom, lastDispatchTo
   }), [query, code, installment, dueDateFrom, dueDateTo, paymentDateFrom, paymentDateTo, statusFilters, paymentFilters, paidPending, receiptFilters, installmentTypeFilters, campaignFilters, batchFilters, dispatchCountFilter, lastDispatchFrom, lastDispatchTo]);
+
+  // A página e os agregados globais compartilham os mesmos filtros SQL.
+  // AbortController evita que uma resposta antiga sobrescreva a busca mais recente.
+  useEffect(() => {
+    if (firstRequest.current) {
+      firstRequest.current = false;
+      return;
+    }
+    const controller = new AbortController();
+    setLoading(true);
+    setError(null);
+    const timeout = window.setTimeout(async () => {
+      try {
+        const response = await fetch("/api/disparos/lista", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ filters: currentFilters, page }),
+          signal: controller.signal
+        });
+        const payload = await response.json();
+        if (!response.ok || !payload?.success) throw new Error(payload?.error?.message ?? "Falha na consulta.");
+        if (!controller.signal.aborted) setPageData(payload.data as DispatchPage);
+      } catch (error) {
+        if (!controller.signal.aborted) setError(error instanceof Error ? error.message : "Erro ao consultar a lista.");
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
+    }, 200);
+    return () => {
+      controller.abort();
+      window.clearTimeout(timeout);
+    };
+  }, [currentFilters, page, refreshToken]);
 
   function resetPage() {
     setPage(1);
@@ -383,9 +394,9 @@ export function DispatchesDashboard({ rows, history, dispatchUnitCostCents, canR
   }
 
   async function registerDispatches(mode: "selected" | "filtered") {
-    const targets = mode === "selected" ? selectedRows.map((row) => row.targetId) : undefined;
-    const count = mode === "selected" ? selectedRows.length : eligibleRows.length;
-    if (!canRegister || count === 0 || busy) return;
+    const targets = mode === "selected" ? [...selectedIds] : undefined;
+    const count = mode === "selected" ? selectedIds.size : pageData.eligibleCount;
+    if (!canRegister || count === 0 || busy || loading) return;
     if (!window.confirm(`Registrar disparo em ${formatCount(count)} parcela${count === 1 ? "" : "s"}?\n\nData do disparo: ${formatDate(todayKey())}`)) return;
     setBusy(true); setError(null); setNotice(null);
     try {
@@ -401,6 +412,7 @@ export function DispatchesDashboard({ rows, history, dispatchUnitCostCents, canR
       }
       setSelectedIds(new Set());
       setNotice(`${formatCount(Number(payload.data?.itemCount ?? count))} disparos registrados com sucesso.`);
+      setRefreshToken((value) => value + 1);
       router.refresh();
     } catch {
       setError("Falha de comunicação ao registrar os disparos.");
@@ -421,6 +433,7 @@ export function DispatchesDashboard({ rows, history, dispatchUnitCostCents, canR
         return;
       }
       setNotice(`Operação com ${formatCount(operation.itemCount)} disparos desfeita.`);
+      setRefreshToken((value) => value + 1);
       router.refresh();
     } catch {
       setError("Falha de comunicação ao desfazer a operação.");
@@ -429,62 +442,35 @@ export function DispatchesDashboard({ rows, history, dispatchUnitCostCents, canR
     }
   }
 
-  function exportXlsx() {
-    if (filteredRows.length === 0) return;
-
-    const campaignLabels = new Map(options.campaign.map((option) => [option.value, option.label]));
-    const batchLabels = new Map(options.batch.map((option) => [option.value, option.label]));
-    const dispatchCountLabel = dispatchCountFilter === "never"
-      ? "Nunca disparado"
-      : dispatchCountFilter === "4plus"
-        ? "4+"
-        : dispatchCountFilter === "all"
-          ? "Todos"
-          : dispatchCountFilter;
-
-    const workbook = buildDispatchesWorkbook({
-      filters: [
-        { label: "Pesquisa geral", value: query.trim() || "Todos" },
-        { label: "Código associado", value: code.trim() || "Todos" },
-        { label: "Parcela", value: installment.trim() || "Todas" },
-        { label: "Data de vencimento", value: periodLabel(dueDateFrom, dueDateTo, "Todos os vencimentos") },
-        { label: "Data de pagamento", value: periodLabel(paymentDateFrom, paymentDateTo, "Todas as datas") },
-        { label: "Status", value: statusFilters.length ? statusFilters.map(statusLabel).join(", ") : "Todos" },
-        { label: "Pagamento", value: paymentFilters.length ? paymentFilters.map(paymentLabel).join(", ") : "Todos" },
-        { label: "Pago com pendência", value: paidPending === "yes" ? "Sim" : paidPending === "no" ? "Não" : "Todos" },
-        { label: "Tipo de pagamento", value: receiptFilters.length ? receiptFilters.join(", ") : "Todos" },
-        { label: "Tipo de parcela", value: installmentTypeFilters.length ? installmentTypeFilters.map(installmentTypeLabel).join(", ") : "Todos" },
-        { label: "Campanha", value: campaignFilters.length ? campaignFilters.map((id) => campaignLabels.get(id) ?? id).join(", ") : "Todas" },
-        { label: "Lote", value: batchFilters.length ? batchFilters.map((id) => batchLabels.get(id) ?? id).join(", ") : "Todos" },
-        { label: "Qtde disparos", value: dispatchCountLabel },
-        { label: "Último disparo", value: periodLabel(lastDispatchFrom, lastDispatchTo, "Todas as datas") }
-      ],
-      rows: filteredRows.map((row) => ({
-        name: row.name,
-        associatedCode: row.associatedCode,
-        installment: row.installment,
-        dueDate: row.dueDate === "-" ? "" : row.dueDate,
-        cpf: row.cpf ? `***.***.***-${row.cpf.slice(-2)}` : "",
-        campaign: row.campaign,
-        batch: row.batch,
-        status: statusLabel(row.status),
-        payment: row.payment === "paid" && row.pending > 0 ? "Pago com pendência" : paymentLabel(row.payment),
-        receiptDescription: row.receipt,
-        installmentType: row.installmentType === "-" ? "" : row.installmentType,
-        paymentDate: row.paymentDate === "-" ? "" : row.paymentDate,
-        amountCents: row.amount,
-        paidAmountCents: row.paidAmount,
-        pendingCents: row.pending,
-        dispatchCount: row.dispatchCount,
-        lastDispatchDate: row.lastDispatchDate === "Nunca disparado" ? "" : row.lastDispatchDate
-      }))
-    });
-
-    XLSX.writeFile(
-      workbook,
-      `disparos-filtrados-${new Date().toISOString().slice(0, 10)}.xlsx`,
-      { cellStyles: true }
-    );
+  async function exportXlsx() {
+    if (!pageData.filteredCount || loading || exporting) return;
+    setExporting(true);
+    setError(null);
+    try {
+      // Os mesmos filtros geram o XLSX completo no servidor, sem LIMIT 50.
+      const response = await fetch("/api/disparos/exportar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filters: currentFilters })
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.error?.message ?? "Não foi possível exportar os registros.");
+      }
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = "disparos-filtrados-" + new Date().toISOString().slice(0, 10) + ".xlsx";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Não foi possível exportar.");
+    } finally {
+      setExporting(false);
+    }
   }
 
   const historyRows = useMemo(() => history.filter((operation) => {
@@ -537,15 +523,15 @@ export function DispatchesDashboard({ rows, history, dispatchUnitCostCents, canR
             <p className="mt-3 text-xs text-muted">Pagamento inicia em <strong>Não pago</strong>. Para relatórios, altere para Pago ou limpe a seleção para visualizar todos.</p>
           </div>
 
-          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5"><SummaryCard label="Parcelas encontradas" value={formatCount(filteredRows.length)} /><SummaryCard label="Valor das parcelas" value={formatMoney(totals.amount)} tone="brand" /><SummaryCard label="Valor pendente" value={formatMoney(totals.pending)} tone="danger" /><SummaryCard label="Disparos registrados" value={formatCount(totals.dispatches)} /><SummaryCard label="Custo dos disparos" value={formatMoney(totals.dispatches * dispatchUnitCostCents)} tone="brand" /></div>
+          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5"><SummaryCard label="Parcelas encontradas" value={formatCount(pageData.filteredCount)} /><SummaryCard label="Valor das parcelas" value={formatMoney(totals.amount)} tone="brand" /><SummaryCard label="Valor pendente" value={formatMoney(totals.pending)} tone="danger" /><SummaryCard label="Disparos registrados" value={formatCount(totals.dispatches)} /><SummaryCard label="Custo dos disparos" value={formatMoney(totals.dispatches * dispatchUnitCostCents)} tone="brand" /></div>
 
           <div className="mt-4 overflow-hidden rounded-2xl border border-default bg-surface-primary shadow-sm">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-subtle p-3">
-              <label className="flex items-center gap-2 text-sm font-medium text-secondary"><input type="checkbox" checked={allPageSelected} onChange={togglePage} disabled={eligiblePageRows.length === 0} className="h-4 w-4 rounded border-default" />{formatCount(selectedRows.length)} selecionadas</label>
-              <div className="flex flex-wrap gap-2"><button type="button" onClick={() => void registerDispatches("selected")} disabled={!canRegister || busy || selectedRows.length === 0} className="rounded-lg border border-brand bg-brand-soft px-3 py-2 text-xs font-semibold text-brand disabled:opacity-40">Registrar disparos nas selecionadas</button><button type="button" onClick={() => void registerDispatches("filtered")} disabled={!canRegister || busy || eligibleRows.length === 0} className="rounded-lg bg-brand px-3 py-2 text-xs font-semibold text-inverse disabled:opacity-40">Registrar disparos em todo o resultado ({formatCount(eligibleRows.length)})</button><button type="button" onClick={exportXlsx} className="rounded-lg border border-default bg-surface-secondary px-3 py-2 text-xs font-semibold text-secondary">Exportar XLSX</button></div>
+              <label className="flex items-center gap-2 text-sm font-medium text-secondary"><input type="checkbox" checked={allPageSelected} onChange={togglePage} disabled={loading || eligiblePageRows.length === 0} className="h-4 w-4 rounded border-default" />{formatCount(selectedRows.length)} selecionadas</label>
+              <div className="flex flex-wrap gap-2"><button type="button" onClick={() => void registerDispatches("selected")} disabled={!canRegister || busy || loading || selectedIds.size === 0} className="rounded-lg border border-brand bg-brand-soft px-3 py-2 text-xs font-semibold text-brand disabled:opacity-40">Registrar disparos nas selecionadas</button><button type="button" onClick={() => void registerDispatches("filtered")} disabled={!canRegister || busy || loading || pageData.eligibleCount === 0} className="rounded-lg bg-brand px-3 py-2 text-xs font-semibold text-inverse disabled:opacity-40">Registrar disparos em todo o resultado ({formatCount(pageData.eligibleCount)})</button><button type="button" onClick={() => void exportXlsx()} disabled={loading || exporting || pageData.filteredCount === 0} className="rounded-lg border border-default bg-surface-secondary px-3 py-2 text-xs font-semibold text-secondary disabled:opacity-40">{exporting ? "Exportando..." : `Exportar XLSX (${formatCount(pageData.filteredCount)})`}</button></div>
             </div>
-            <div className="overflow-x-auto"><table className="w-full min-w-[1500px] text-left text-xs"><thead className="bg-surface-secondary text-[10px] uppercase tracking-wide text-muted"><tr><th className="px-3 py-3">Sel.</th><th className="px-3 py-3">Associado</th><th className="px-3 py-3">Vencimento</th><th className="px-3 py-3">Código</th><th className="px-3 py-3">Parcela</th><th className="px-3 py-3">Tipo de pagto</th><th className="px-3 py-3">Tipo parcela</th><th className="px-3 py-3">Campanha</th><th className="px-3 py-3">Lote</th><th className="px-3 py-3 text-right">Valor</th><th className="px-3 py-3 text-right">Valor pago</th><th className="px-3 py-3 text-right">Pendência</th><th className="px-3 py-3">Pagamento</th><th className="px-3 py-3 text-center">Qtde disparos</th><th className="px-3 py-3">Último disparo</th></tr></thead><tbody className="divide-y divide-subtle">{pageRows.map((row) => <tr key={row.targetId} className="hover:bg-surface-hover"><td className="px-3 py-3"><input type="checkbox" checked={selectedIds.has(row.targetId)} onChange={() => toggleRow(row)} disabled={!isEligible(row)} className="h-4 w-4 rounded border-default disabled:opacity-30" /></td><td className="px-3 py-3"><div className="font-semibold text-primary">{row.name}</div><div className="mt-1 text-[10px] text-muted">{row.cpf || "-"}</div></td><td className="px-3 py-3 text-secondary">{row.dueDate}</td><td className="px-3 py-3 text-secondary">{row.associatedCode || "-"}</td><td className="px-3 py-3 text-secondary">{row.installment || "-"}</td><td className="px-3 py-3 text-secondary">{row.receipt}</td><td className="px-3 py-3 text-secondary">{row.installmentType}</td><td className="max-w-[150px] px-3 py-3 text-secondary"><span className="block truncate" title={row.campaign}>{row.campaign}</span></td><td className="max-w-[150px] px-3 py-3 text-secondary"><span className="block truncate" title={row.batch}>{row.batch}</span></td><td className="px-3 py-3 text-right font-medium text-primary">{formatMoney(row.amount)}</td><td className="px-3 py-3 text-right text-secondary">{formatMoney(row.paidAmount ?? 0)}</td><td className={`px-3 py-3 text-right font-semibold ${row.pending > 0 ? "text-danger" : "text-success"}`}>{formatMoney(row.pending)}</td><td className="px-3 py-3"><span className={`rounded-full border px-2 py-1 text-[10px] font-semibold ${row.payment === "paid" ? "border-success bg-success-soft text-success" : "border-danger bg-danger-soft text-danger"}`}>{paymentLabel(row.payment)}</span></td><td className="px-3 py-3 text-center font-semibold text-primary">{formatCount(row.dispatchCount)}</td><td className="px-3 py-3 text-secondary">{row.lastDispatchDate}</td></tr>)}</tbody></table></div>
-            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-subtle p-3 text-xs text-muted"><span>Exibindo {formatCount(filteredRows.length)} parcelas · Página {currentPage} de {pageCount}</span><div className="flex items-center gap-2"><button type="button" onClick={() => setPage((value) => Math.max(1, value - 1))} disabled={currentPage <= 1} className="rounded-lg border border-default px-3 py-2 disabled:opacity-30">Anterior</button><button type="button" onClick={() => setPage((value) => Math.min(pageCount, value + 1))} disabled={currentPage >= pageCount} className="rounded-lg border border-default px-3 py-2 disabled:opacity-30">Próxima</button></div></div>
+            <div className="overflow-x-auto"><table className="w-full min-w-[1500px] text-left text-xs"><thead className="bg-surface-secondary text-[10px] uppercase tracking-wide text-muted"><tr><th className="px-3 py-3">Sel.</th><th className="px-3 py-3">Associado</th><th className="px-3 py-3">Vencimento</th><th className="px-3 py-3">Código</th><th className="px-3 py-3">Parcela</th><th className="px-3 py-3">Tipo de pagto</th><th className="px-3 py-3">Tipo parcela</th><th className="px-3 py-3">Campanha</th><th className="px-3 py-3">Lote</th><th className="px-3 py-3 text-right">Valor</th><th className="px-3 py-3 text-right">Valor pago</th><th className="px-3 py-3 text-right">Pendência</th><th className="px-3 py-3">Pagamento</th><th className="px-3 py-3 text-center">Qtde disparos</th><th className="px-3 py-3">Último disparo</th></tr></thead><tbody className="divide-y divide-subtle">{pageRows.map((row) => <tr key={row.targetId} className="hover:bg-surface-hover"><td className="px-3 py-3"><input type="checkbox" checked={selectedIds.has(row.targetId)} onChange={() => toggleRow(row)} disabled={loading || !isEligible(row)} className="h-4 w-4 rounded border-default disabled:opacity-30" /></td><td className="px-3 py-3"><div className="font-semibold text-primary">{row.name}</div><div className="mt-1 text-[10px] text-muted">{row.cpf || "-"}</div></td><td className="px-3 py-3 text-secondary">{row.dueDate}</td><td className="px-3 py-3 text-secondary">{row.associatedCode || "-"}</td><td className="px-3 py-3 text-secondary">{row.installment || "-"}</td><td className="px-3 py-3 text-secondary">{row.receipt}</td><td className="px-3 py-3 text-secondary">{row.installmentType}</td><td className="max-w-[150px] px-3 py-3 text-secondary"><span className="block truncate" title={row.campaign}>{row.campaign}</span></td><td className="max-w-[150px] px-3 py-3 text-secondary"><span className="block truncate" title={row.batch}>{row.batch}</span></td><td className="px-3 py-3 text-right font-medium text-primary">{formatMoney(row.amount)}</td><td className="px-3 py-3 text-right text-secondary">{formatMoney(row.paidAmount ?? 0)}</td><td className={`px-3 py-3 text-right font-semibold ${row.pending > 0 ? "text-danger" : "text-success"}`}>{formatMoney(row.pending)}</td><td className="px-3 py-3"><span className={`rounded-full border px-2 py-1 text-[10px] font-semibold ${row.payment === "paid" ? "border-success bg-success-soft text-success" : "border-danger bg-danger-soft text-danger"}`}>{paymentLabel(row.payment)}</span></td><td className="px-3 py-3 text-center font-semibold text-primary">{formatCount(row.dispatchCount)}</td><td className="px-3 py-3 text-secondary">{row.lastDispatchDate}</td></tr>)}</tbody></table></div>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-subtle p-3 text-xs text-muted"><span>{loading ? "Atualizando registros..." : `Exibindo ${formatCount(pageData.filteredCount)} parcelas · Página ${currentPage} de ${pageCount} · ${formatCount(pageRows.length)} nesta página`}</span><div className="flex items-center gap-2"><button type="button" onClick={() => setPage((value) => Math.max(1, value - 1))} disabled={loading || currentPage <= 1} className="rounded-lg border border-default px-3 py-2 disabled:opacity-30">Anterior</button><button type="button" onClick={() => setPage((value) => Math.min(pageCount, value + 1))} disabled={loading || currentPage >= pageCount} className="rounded-lg border border-default px-3 py-2 disabled:opacity-30">Próxima</button></div></div>
           </div>
         </>
       ) : (
