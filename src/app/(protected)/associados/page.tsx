@@ -43,10 +43,8 @@ export default async function MembersPage({
         : "",
     status: readSearchParamArray(resolvedSearchParams.status),
     payment: readSearchParamArray(resolvedSearchParams.payment),
-    paidPending:
-      typeof resolvedSearchParams.paidPending === "string"
-        ? resolvedSearchParams.paidPending
-        : "all",
+    paidPending: resolvedSearchParams.paidPending === "yes" ? "yes" as const
+      : resolvedSearchParams.paidPending === "no" ? "no" as const : "all" as const,
     receipt: readSearchParamArray(resolvedSearchParams.receipt),
     campaign: readSearchParamArray(resolvedSearchParams.campaign),
     batch: readSearchParamArray(resolvedSearchParams.batch)
