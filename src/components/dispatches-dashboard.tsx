@@ -301,7 +301,9 @@ export function DispatchesDashboard({ initialPage, filterOptions, history, dispa
 
   // As opções são obtidas do conjunto completo no servidor, não das 50 linhas visíveis.
   const options = useMemo(() => ({
-    status: filterOptions.status,
+    status: filterOptions.status.map((option) => ({
+      value: option.value, label: statusLabel(option.value)
+    })),
     payment: filterOptions.payment.map((option) => ({
       value: normalizePayment(option.value), label: paymentLabel(normalizePayment(option.value))
     })),
