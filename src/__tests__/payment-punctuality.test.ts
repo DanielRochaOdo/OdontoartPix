@@ -84,19 +84,24 @@ describe("Pontualidade de pagamentos", () => {
     expect(delayDays("2026-09-10", "2026-09-16")).toBe(6);
   });
 
-  it("distingue o método configurado do recebido sem falsos positivos de acentuação e variações de Pix", () => {
-    expect(paymentMethodIdentity("BOLETO BANCÁRIO")).toBe("BOLETO BANCARIO");
-    expect(paymentMethodIdentity("Boleto")).toBe("BOLETO BANCARIO");
-    expect(paymentMethodIdentity("pix new odontologia - p4x")).toBe("PIX");
-    expect(paymentMethodIdentity("Pix")).toBe("PIX");
+  it("considera mudanças entre descrições específicas, inclusive Pix → Pix", () => {
+    expect(paymentMethodIdentity(" PIX - CLINICO ")).toBe("PIX - CLINICO");
+    expect(paymentMethodIdentity("pix  -   clinico")).toBe("PIX - CLINICO");
+    expect(paymentMethodIdentity("PIX ODONTOART - P4X")).toBe("PIX ODONTOART - P4X");
+    expect(paymentMethodIdentity("BOLETO BANCÁRIO")).not.toBe(paymentMethodIdentity("BOLETO BANCARIO"));
     const data = summarizePaymentMethodChanges([
       { configured: "BOLETO BANCARIO", received: "Pix", count: 2, amountCents: 15000, averageDays: 3, lateRate: 50 },
       { configured: "BOLETO BANCÁRIO", received: "Boleto", count: 1, amountCents: 5000, averageDays: 0, lateRate: 0 },
       { configured: "PIX - CLINICO", received: "Pix", count: 1, amountCents: 4000, averageDays: 0, lateRate: 0 },
+      { configured: "PIX - CLINICO", received: "PIX ODONTOART - P4X", count: 1, amountCents: 15000, averageDays: 0, lateRate: 0 },
+      { configured: "PIX - CLINICO", received: "pix - clinico", count: 1, amountCents: 7000, averageDays: 0, lateRate: 0 },
       { configured: null, received: "Pix", count: 4, amountCents: 40000, averageDays: 2, lateRate: 40 }
     ]);
-    expect(data).toMatchObject({ totalPaid: 8, compared: 4, changed: 2, unchanged: 2, withoutConfigured: 4 });
-    expect(data.rows.filter((row) => row.changed)).toHaveLength(1);
+    expect(data).toMatchObject({ totalPaid: 10, compared: 6, changed: 5, unchanged: 1, withoutConfigured: 4 });
+    expect(data.rows.filter((row) => row.changed)).toHaveLength(4);
+    expect(data.rows.find((row) => row.received === "PIX ODONTOART - P4X")).toMatchObject({
+      configured: "PIX - CLINICO", received: "PIX ODONTOART - P4X", count: 1, changed: true
+    });
   });
 
   it("usa somente descrições Pix reconhecidas pelo Dashboard", () => {
@@ -240,6 +245,30 @@ describe("Pontualidade integrada aos mesmos dados canônicos de Associados", () 
         expect((await getPaymentDetails(filters, "total", "all")).length).toBe(2);
         const reconciliation = await getPaymentDateReconciliation(filters);
         expect(reconciliation).toMatchObject({ matchedRows: 2, paidRows: 2, missingDueRows: 0, missingAmountRows: 0 });
+        // DescricaoRecebimento original precisa continuar disponível: a classificação
+        // global "Pix" não pode esconder a troca PIX - CLINICO → PIX ODONTOART - P4X.
+        await dbQuery(`
+          update member_target_installments
+             set configured_payment_description = 'PIX - CLINICO',
+                 payment_description = 'PIX ODONTOART - P4X'
+           where id = $1
+        `, [link.rows[0].target_installment_ref_id]);
+        const pixFilters = { ...filters, methods: ["Pix"], dues: [10] };
+        const pixChange = await getPaymentMethodChanges(pixFilters);
+        expect(pixChange).toMatchObject({
+          totalPaid: 1, compared: 1, changed: 1, unchanged: 0, withoutConfigured: 0
+        });
+        expect(pixChange.rows).toMatchObject([{
+          configured: "PIX - CLINICO", received: "PIX ODONTOART - P4X", changed: true, count: 1
+        }]);
+        const pixDetails = await getPaymentMethodChangeDetails(
+          pixFilters, "PIX - CLINICO", "PIX ODONTOART - P4X"
+        );
+        expect(pixDetails).toHaveLength(1);
+        expect(pixDetails[0]).toMatchObject({
+          configuredMethod: "PIX - CLINICO", method: "PIX ODONTOART - P4X",
+          memberId, code: id + "-0"
+        });
         const byDue = await getPaymentReport({ ...filters, dateBasis: "due" });
         expect(byDue.total.count).toBe(0);
       } finally {
