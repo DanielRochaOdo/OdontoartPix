@@ -25,38 +25,7 @@ export type AssociadoCardListItem = {
   campaign: { name: string } | null;
 };
 
-export async function getAssociadosCardList(filters: {
-  campaignIds?: string[];
-  batchIds?: string[];
-  status?: string;
-} = {}): Promise<AssociadoCardListItem[]> {
-  const campaignIds = (filters.campaignIds ?? []).filter(Boolean);
-  const batchIds = (filters.batchIds ?? []).filter(Boolean);
-  const status = filters.status && filters.status !== "all" ? filters.status : null;
-
-  try {
-    const result = await dbQuery<{
-      id: string;
-      campaign_id: string;
-      batch_id: string;
-      target_installment_id: string | null;
-      installment_type: string | null;
-      due_date_text: string | null;
-      processing_status: string;
-      payment_status: string | null;
-      payment_description: string | null;
-      payment_date_text: string | null;
-      installment_amount_cents: number;
-      payment_amount_cents: number | null;
-      total_pending_amount_cents: number;
-      last_error: string | null;
-      cpf: string | null;
-      member_name: string | null;
-      external_user_code: string | null;
-      batch_name: string;
-      campaign_name: string;
-    }>(
-      `with scoped_links as (
+export const ASSOCIADOS_CARD_BASE_SQL = `with scoped_links as (
          select cbm.*,
                 b.name as batch_name,
                 c.name as campaign_name
@@ -115,8 +84,40 @@ export async function getAssociadosCardList(filters: {
            on canonical.id = grouped.target_installment_ref_id
          join members m
            on m.id = canonical.member_id
-          and m.deleted_at is null
-        order by canonical.updated_at desc, canonical.id asc`,
+          and m.deleted_at is null`;
+
+export async function getAssociadosCardList(filters: {
+  campaignIds?: string[];
+  batchIds?: string[];
+  status?: string;
+} = {}): Promise<AssociadoCardListItem[]> {
+  const campaignIds = (filters.campaignIds ?? []).filter(Boolean);
+  const batchIds = (filters.batchIds ?? []).filter(Boolean);
+  const status = filters.status && filters.status !== "all" ? filters.status : null;
+
+  try {
+    const result = await dbQuery<{
+      id: string;
+      campaign_id: string;
+      batch_id: string;
+      target_installment_id: string | null;
+      installment_type: string | null;
+      due_date_text: string | null;
+      processing_status: string;
+      payment_status: string | null;
+      payment_description: string | null;
+      payment_date_text: string | null;
+      installment_amount_cents: number;
+      payment_amount_cents: number | null;
+      total_pending_amount_cents: number;
+      last_error: string | null;
+      cpf: string | null;
+      member_name: string | null;
+      external_user_code: string | null;
+      batch_name: string;
+      campaign_name: string;
+    }>(
+      ASSOCIADOS_CARD_BASE_SQL + " order by canonical.updated_at desc, canonical.id asc",
       [campaignIds, batchIds, status]
     );
 

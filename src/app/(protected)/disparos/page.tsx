@@ -2,15 +2,16 @@ import { DispatchesDashboard } from "@/components/dispatches-dashboard";
 import { PageHeader } from "@/components/page-header";
 import { PageSurface } from "@/components/page-surface";
 import { canManage, getCurrentProfile } from "@/lib/auth";
-import { getDispatchHistory, getDispatchList } from "@/lib/dispatches";
+import { getDispatchHistory, getDispatchPage, getDispatchFilterOptions } from "@/lib/dispatches";
 import { getSummaryAnalysisSettings } from "@/lib/summary-analysis-settings";
 
 export const dynamic = "force-dynamic";
 
 export default async function DispatchesPage() {
-  const [rows, history, settings, profile] = await Promise.all([
-    getDispatchList(),
+  const [pageData, history, options, settings, profile] = await Promise.all([
+    getDispatchPage({ payment: ["unpaid"] }),
     getDispatchHistory(100),
+    getDispatchFilterOptions(),
     getSummaryAnalysisSettings(),
     getCurrentProfile()
   ]);
@@ -24,7 +25,8 @@ export default async function DispatchesPage() {
       />
       <div className="mt-6">
         <DispatchesDashboard
-          rows={rows}
+          initialPage={pageData}
+          filterOptions={options}
           history={history}
           dispatchUnitCostCents={settings.dispatchUnitCostCents}
           canRegister={canManage(profile?.role)}

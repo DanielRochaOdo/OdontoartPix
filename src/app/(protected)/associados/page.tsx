@@ -2,7 +2,7 @@ import { AssociadosCardList } from "@/components/associados-card-list";
 import { AssociadosProcessingPanel } from "@/components/associados-processing-panel";
 import { PageHeader } from "@/components/page-header";
 import { PageSurface } from "@/components/page-surface";
-import { getAssociadosCardList } from "@/lib/associados-card-read";
+import { getAssociadosCardPage, getAssociadosCardFilterOptions } from "@/lib/associados-paginated";
 import { canAdmin, getCurrentProfile } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
@@ -43,21 +43,16 @@ export default async function MembersPage({
         : "",
     status: readSearchParamArray(resolvedSearchParams.status),
     payment: readSearchParamArray(resolvedSearchParams.payment),
-    paidPending:
-      typeof resolvedSearchParams.paidPending === "string"
-        ? resolvedSearchParams.paidPending
-        : "all",
+    paidPending: resolvedSearchParams.paidPending === "yes" ? "yes" as const
+      : resolvedSearchParams.paidPending === "no" ? "no" as const : "all" as const,
     receipt: readSearchParamArray(resolvedSearchParams.receipt),
     campaign: readSearchParamArray(resolvedSearchParams.campaign),
     batch: readSearchParamArray(resolvedSearchParams.batch)
   };
 
-  const [members, profile] = await Promise.all([
-    getAssociadosCardList({
-      campaignIds: initialFilters.campaign,
-      batchIds: initialFilters.batch,
-      status: initialFilters.status.length === 1 ? initialFilters.status[0] : "all"
-    }),
+  const [pageData, options, profile] = await Promise.all([
+    getAssociadosCardPage(initialFilters),
+    getAssociadosCardFilterOptions(),
     getCurrentProfile()
   ]);
 
@@ -71,7 +66,8 @@ export default async function MembersPage({
       <AssociadosProcessingPanel />
       <div className="mt-6">
         <AssociadosCardList
-          members={members}
+          initialPage={pageData}
+          filterOptions={options}
           initialFilters={initialFilters}
           canReprocessErrors={canAdmin(profile?.role)}
         />

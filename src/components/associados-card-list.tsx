@@ -2,10 +2,8 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
-import * as XLSX from "xlsx-js-style";
-import { buildAssociadosWorkbook } from "@/lib/export-workbooks";
-import type { AssociadoCardListItem } from "@/lib/associados-card-read";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { AssociadosFilterOptions, AssociadosFilters, AssociadosPage } from "@/lib/associados-paginated";
 import { emitMetricsSync } from "@/lib/metrics-sync";
 import {
   isPaidWithPending,
@@ -465,11 +463,13 @@ function CardActions({ row }: { row: Row }) {
 }
 
 export function AssociadosCardList({
-  members,
+  initialPage,
+  filterOptions,
   initialFilters,
   canReprocessErrors = false
 }: {
-  members: AssociadoCardListItem[];
+  initialPage: AssociadosPage;
+  filterOptions: AssociadosFilterOptions;
   canReprocessErrors?: boolean;
   initialFilters?: {
     query?: string;
@@ -488,6 +488,23 @@ export function AssociadosCardList({
   };
 }) {
   const router = useRouter();
+  const [pageData, setPageData] = useState(initialPage);
+  const members = pageData.rows;
+  const lastInitialPage = useRef(initialPage);
+  useEffect(() => {
+    // router.refresh() renova os dados SSR; recarrega também os filtros atuais
+    // sem substituir o resultado filtrado por uma página inicial sem filtros.
+    if (lastInitialPage.current !== initialPage) {
+      lastInitialPage.current = initialPage;
+      setRefreshToken((value) => value + 1);
+    }
+  }, [initialPage]);
+  const firstRequest = useRef(true);
+  const [refreshToken, setRefreshToken] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [pageError, setPageError] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [selectingAll, setSelectingAll] = useState(false);
   const [query, setQuery] = useState(initialFilters?.query ?? "");
   const [codeFilter, setCodeFilter] = useState(initialFilters?.code ?? "");
   const [installmentFilter, setInstallmentFilter] = useState(initialFilters?.installment ?? "");
@@ -567,117 +584,80 @@ export function AssociadosCardList({
     [members]
   );
 
-  const options = useMemo(
-    () => ({
-      status: [...new Set(rows.map((row) => row.status))].sort(),
-      payment: [...new Set(rows.map((row) => row.payment))].sort(),
-      receipt: [...new Set(rows.map((row) => row.receiptDescription))].sort((a, b) => a.localeCompare(b, "pt-BR")),
-      installmentType: [...new Set(rows.map((row) => row.installmentType).filter((value) => value !== "-"))].sort((a, b) => a.localeCompare(b, "pt-BR")),
-      campaign: [...new Map(rows.map((row) => [row.campaignId, row.campaign])).entries()],
-      batch: [...new Map(rows.map((row) => [row.batchId, row.batch])).entries()]
-    }),
-    [rows]
-  );
+  // Os menus recebem opções do conjunto completo, não apenas da página de 50.
+  const options = useMemo(() => ({
+    status: [...new Set(filterOptions.status.map((item) => normalizeStatus(item.value)))].sort(),
+    payment: [...new Set(filterOptions.payment.map((item) => normalizePayment(item.value)))].sort(),
+    receipt: filterOptions.receipt.map((item) => item.value),
+    installmentType: filterOptions.installmentType.map((item) => item.value).filter((value) => value !== "-"),
+    campaign: filterOptions.campaign.map((item): [string, string] => [item.value, item.label]),
+    batch: filterOptions.batch.map((item): [string, string] => [item.value, item.label])
+  }), [filterOptions]);
 
-  const filteredRows = useMemo(
-    () =>
-      rows
-        .filter((row) => {
-          const search = [
-            row.name,
-            row.cpf,
-            row.associatedCode,
-            row.installment,
-            row.installmentType,
-            row.dueDate,
-            row.campaign,
-            row.batch,
-            row.status,
-            row.payment,
-            row.paidWithPending ? "pago com pendencia" : "",
-            row.receiptDescription,
-            row.paymentDate,
-            row.missingInstallment ? INSTALLMENT_NOT_FOUND_LABEL : ""
-          ]
-            .join(" ")
-            .toLowerCase();
+  const currentFilters = useMemo<AssociadosFilters>(() => ({
+    query, code: codeFilter, installment: installmentFilter,
+    dueDateFrom, dueDateTo, paymentDateFrom, paymentDateTo,
+    status: statusFilters, payment: paymentFilters, paidPending: paidPendingFilter,
+    receipt: receiptFilters, installmentType: installmentTypeFilters,
+    campaign: campaignFilters, batch: batchFilters
+  }), [query, codeFilter, installmentFilter, dueDateFrom, dueDateTo,
+    paymentDateFrom, paymentDateTo, statusFilters, paymentFilters, paidPendingFilter,
+    receiptFilters, installmentTypeFilters, campaignFilters, batchFilters]);
 
-          const rowDate = dateKey(row.dueDate);
-          const matchesDate =
-            (!dueDateFrom && !dueDateTo) ||
-            (Boolean(rowDate) &&
-              (!dueDateFrom || rowDate >= dueDateFrom) &&
-              (!dueDateTo || rowDate <= dueDateTo));
-
-          const rowPaymentDate = dateKey(row.paymentDate);
-          const matchesPaymentDate =
-            (!paymentDateFrom && !paymentDateTo) ||
-            (Boolean(rowPaymentDate) &&
-              (!paymentDateFrom || rowPaymentDate >= paymentDateFrom) &&
-              (!paymentDateTo || rowPaymentDate <= paymentDateTo));
-
-          return (
-            (!query.trim() || search.includes(query.trim().toLowerCase())) &&
-            (!codeFilter.trim() || row.associatedCode === codeFilter.trim()) &&
-            (!installmentFilter.trim() || row.installment === installmentFilter.trim()) &&
-            matchesDate &&
-            matchesPaymentDate &&
-            (statusFilters.length === 0 || statusFilters.includes(row.status)) &&
-            (paymentFilters.length === 0 || paymentFilters.includes(row.payment)) &&
-            matchesPaidPendingFilter(row.payment, row.pending, paidPendingFilter) &&
-            (receiptFilters.length === 0 || receiptFilters.includes(row.receiptDescription)) &&
-            (installmentTypeFilters.length === 0 || installmentTypeFilters.includes(row.installmentType)) &&
-            (campaignFilters.length === 0 || campaignFilters.includes(row.campaignId)) &&
-            (batchFilters.length === 0 || batchFilters.includes(row.batchId))
-          );
-        })
-        .sort((a, b) => {
-          const left = a[sortKey];
-          const right = b[sortKey];
-          const result =
-            typeof left === "number" && typeof right === "number"
-              ? left - right
-              : String(left).localeCompare(String(right), "pt-BR", {
-                  numeric: true,
-                  sensitivity: "base"
-                });
-          return ascending ? result : -result;
-        }),
-    [
-      ascending,
-      batchFilters,
-      campaignFilters,
-      codeFilter,
-      dueDateFrom,
-      dueDateTo,
-      installmentFilter,
-      installmentTypeFilters,
-      paidPendingFilter,
-      paymentDateFrom,
-      paymentDateTo,
-      paymentFilters,
-      query,
-      receiptFilters,
-      rows,
-      sortKey,
-      statusFilters
-    ]
-  );
-
-  const pageCount = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE));
+  const filteredRows = rows;
+  const pageCount = Math.max(1, Math.ceil(pageData.filteredCount / PAGE_SIZE));
   const currentPage = Math.min(page, pageCount);
-  const paginatedRows = useMemo(
-    () => filteredRows.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE),
-    [currentPage, filteredRows]
-  );
-  const allFilteredSelected =
-    filteredRows.length > 0 && filteredRows.every((row) => selectedIds.has(row.id));
+  const paginatedRows = pageError ? [] : filteredRows;
+  const allFilteredSelected = pageData.filteredCount > 0 && selectedIds.size === pageData.filteredCount;
   const selectedCount = selectedIds.size;
   const canShowErrorReprocess =
     canReprocessErrors &&
     statusFilters.length === 1 &&
     statusFilters[0] === "error" &&
-    filteredRows.length > 0;
+    pageData.filteredCount > 0 && !pageError;
+
+  const previousFilters = useRef(JSON.stringify(currentFilters));
+  useEffect(() => {
+    const filtersKey = JSON.stringify(currentFilters);
+    if (previousFilters.current !== filtersKey) {
+      setSelectedIds(new Set());
+      previousFilters.current = filtersKey;
+    }
+    if (firstRequest.current) {
+      firstRequest.current = false;
+      return;
+    }
+    const controller = new AbortController();
+    setLoading(true);
+    setPageError(false);
+    const timeout = window.setTimeout(async () => {
+      try {
+        const response = await fetch("/api/associados/lista", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ filters: currentFilters, page, sort: sortKey, ascending }),
+          signal: controller.signal
+        });
+        const payload = await response.json();
+        if (!response.ok || !payload?.success) throw new Error(payload?.error?.message ?? "Falha ao consultar a lista.");
+        if (!controller.signal.aborted) {
+          setPageData(payload.data as AssociadosPage);
+          setPageError(false);
+        }
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setPageError(true);
+          setSelectionError(error instanceof Error ? error.message : "Não foi possível atualizar os associados.");
+        }
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
+    }, 200);
+    return () => {
+      controller.abort();
+      window.clearTimeout(timeout);
+    };
+  }, [currentFilters, page, sortKey, ascending, refreshToken]);
 
   const completionPercentage = bulkProgress
     ? bulkProgress.requestedCount === 0
@@ -806,61 +786,66 @@ export function AssociadosCardList({
     });
   }
 
-  function toggleAllFiltered() {
-    setSelectedIds((current) => {
-      const next = new Set(current);
-      if (allFilteredSelected) {
-        for (const row of filteredRows) next.delete(row.id);
-      } else {
-        for (const row of filteredRows) next.add(row.id);
-      }
-      return next;
+  async function idsFromFullFilter() {
+    // IDs de todas as páginas, não apenas das 50 parcelas presentes no navegador.
+    const response = await fetch("/api/associados/ids-filtrados", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filters: currentFilters })
     });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload?.success) {
+      throw new Error(payload?.error?.message ?? "Não foi possível consultar a seleção completa.");
+    }
+    return payload.data.memberIds as string[];
   }
 
-  function exportFilteredRows() {
-    if (filteredRows.length === 0) return;
+  async function toggleAllFiltered() {
+    if (loading || pageError || selectingAll) return;
+    if (allFilteredSelected) {
+      setSelectedIds(new Set());
+      return;
+    }
+    setSelectingAll(true);
+    setSelectionError(null);
+    try {
+      const allIds = await idsFromFullFilter();
+      setSelectedIds(new Set(allIds));
+    } catch (error) {
+      setSelectionError(error instanceof Error ? error.message : "Não foi possível selecionar todos os registros.");
+    } finally {
+      setSelectingAll(false);
+    }
+  }
 
-    const campaignLabels = new Map(options.campaign);
-    const batchLabels = new Map(options.batch);
-    const workbook = buildAssociadosWorkbook({
-      filters: [
-        { label: "Pesquisa geral", value: query.trim() || "Todos" },
-        { label: "Código associado", value: codeFilter.trim() || "Todos" },
-        { label: "Parcela", value: installmentFilter.trim() || "Todas" },
-        { label: "Data de vencimento", value: dateLabel },
-        { label: "Data de pagamento", value: paymentDateLabel },
-        { label: "Status", value: statusFilters.length ? statusFilters.map(statusLabel).join(", ") : "Todos" },
-        { label: "Pagamento", value: paymentFilters.length ? paymentFilters.map(paymentLabel).join(", ") : "Todos" },
-        { label: "Pago com pendência", value: paidPendingFilter === "yes" ? "Sim" : paidPendingFilter === "no" ? "Não" : "Todos" },
-        { label: "Tipo de pagamento", value: receiptFilters.length ? receiptFilters.join(", ") : "Todos" },
-        { label: "Tipo de parcela", value: installmentTypeFilters.length ? installmentTypeFilters.join(", ") : "Todos" },
-        { label: "Campanha", value: campaignFilters.length ? campaignFilters.map((id) => campaignLabels.get(id) ?? id).join(", ") : "Todas" },
-        { label: "Lote", value: batchFilters.length ? batchFilters.map((id) => batchLabels.get(id) ?? id).join(", ") : "Todos" }
-      ],
-      rows: filteredRows.map((row) => ({
-        name: row.name,
-        associatedCode: row.associatedCode,
-        installment: row.installment,
-        dueDate: row.dueDate || "",
-        cpf: row.cpf ? `***.***.***-${row.cpf.slice(-2)}` : "",
-        campaign: row.campaign,
-        batch: row.batch,
-        status: row.missingInstallment ? `Erro — ${INSTALLMENT_NOT_FOUND_LABEL}` : statusLabel(row.status),
-        payment: row.paidWithPending ? "Pago com pendência" : paymentLabel(row.payment),
-        receiptDescription: row.receiptDescription,
-        installmentType: row.installmentType === "-" ? "" : row.installmentType,
-        paymentDate: row.paymentDate === "-" ? "" : row.paymentDate,
-        amountCents: row.amount,
-        paidAmountCents: row.paidAmount,
-        pendingCents: row.pending
-      }))
-    });
-    XLSX.writeFile(
-      workbook,
-      `associados-filtrados-${new Date().toISOString().slice(0, 10)}.xlsx`,
-      { cellStyles: true }
-    );
+  async function exportFilteredRows() {
+    if (pageData.filteredCount === 0 || loading || pageError || exporting) return;
+    setExporting(true);
+    setSelectionError(null);
+    try {
+      const response = await fetch("/api/associados/exportar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filters: currentFilters, sort: sortKey, ascending })
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.error?.message ?? "Não foi possível exportar os associados.");
+      }
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = "associados-filtrados-" + new Date().toISOString().slice(0, 10) + ".xlsx";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+    } catch (error) {
+      setSelectionError(error instanceof Error ? error.message : "Não foi possível exportar.");
+    } finally {
+      setExporting(false);
+    }
   }
 
   async function reprocessSelected() {
@@ -906,11 +891,12 @@ export function AssociadosCardList({
   async function reprocessFilteredErrors() {
     if (!canShowErrorReprocess || bulkProgress?.active) return;
 
-    const memberIds = filteredRows.map((row) => row.id);
     setReprocessingErrors(true);
     setBulkError(null);
 
     try {
+      const memberIds = await idsFromFullFilter();
+      if (memberIds.length === 0) throw new Error("Nenhum registro corresponde aos filtros atuais.");
       const response = await fetch("/api/associados/reprocessar-erros-filtrados", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1020,7 +1006,7 @@ export function AssociadosCardList({
             <button
               type="button"
               onClick={reprocessSelected}
-              disabled={selectedCount === 0 || reprocessingSelected}
+              disabled={loading || pageError || selectedCount === 0 || reprocessingSelected}
               className="rounded-lg border border-brand bg-brand-soft px-3 py-2 text-sm font-semibold text-brand transition hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-50"
             >
               {reprocessingSelected ? "Enviando..." : `Reprocessar selecionados (${selectedCount})`}
@@ -1028,8 +1014,8 @@ export function AssociadosCardList({
             {canShowErrorReprocess || bulkProgress?.active ? (
               <button
                 type="button"
-                onClick={reprocessFilteredErrors}
-                disabled={reprocessingErrors || bulkProgress?.active || !canShowErrorReprocess}
+                onClick={() => void reprocessFilteredErrors()}
+                disabled={loading || pageError || reprocessingErrors || bulkProgress?.active || !canShowErrorReprocess}
                 className="rounded-lg border border-warning bg-warning-soft px-3 py-2 text-sm font-medium text-warning disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {reprocessingErrors ? "Criando snapshot..." : bulkProgress?.active ? "Reprocessando..." : "Reprocessar erros"}
@@ -1037,11 +1023,11 @@ export function AssociadosCardList({
             ) : null}
             <button
               type="button"
-              onClick={exportFilteredRows}
-              disabled={filteredRows.length === 0}
+              onClick={() => void exportFilteredRows()}
+              disabled={loading || pageError || exporting || pageData.filteredCount === 0}
               className="rounded-lg border border-brand bg-brand-soft px-3 py-2 text-sm font-semibold text-brand transition hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-50"
             >
-              Exportar XLSX ({filteredRows.length})
+              {exporting ? "Exportando..." : `Exportar XLSX (${pageData.filteredCount.toLocaleString("pt-BR")})`}
             </button>
             <button type="button" onClick={clearAllFilters} className="rounded-lg border border-default bg-surface-secondary px-3 py-2 text-sm font-medium text-secondary transition hover:bg-surface-hover hover:text-primary">
               Limpar
@@ -1217,8 +1203,8 @@ export function AssociadosCardList({
 
       <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div className="text-sm text-secondary">
-          <div>Exibindo {filteredRows.length} de {rows.length} associados.</div>
-          <div className="mt-1 text-xs text-muted">Pagina {currentPage} de {pageCount} · Ate {PAGE_SIZE} registros por pagina.</div>
+          <div>{pageError ? "Não foi possível atualizar a contagem." : `Exibindo ${pageData.filteredCount.toLocaleString("pt-BR")} de ${pageData.totalCount.toLocaleString("pt-BR")} associados.`}</div>
+          <div className="mt-1 text-xs text-muted">{loading ? "Atualizando registros..." : `Pagina ${currentPage} de ${pageCount} · ${paginatedRows.length} registros nesta página (até ${PAGE_SIZE}).`}</div>
           {selectedCount > 0 ? <div className="mt-1 text-xs font-medium text-brand">{selectedCount} registro(s) selecionado(s).</div> : null}
         </div>
         <div className="flex flex-wrap items-center gap-3">
@@ -1226,11 +1212,11 @@ export function AssociadosCardList({
             <input
               type="checkbox"
               checked={allFilteredSelected}
-              onChange={toggleAllFiltered}
-              disabled={filteredRows.length === 0}
+              onChange={() => void toggleAllFiltered()}
+              disabled={loading || pageError || selectingAll || pageData.filteredCount === 0}
               className="h-4 w-4 rounded border-default"
             />
-            <span>Selecionar todos filtrados ({filteredRows.length})</span>
+            <span>{selectingAll ? "Selecionando..." : `Selecionar todos filtrados (${pageData.filteredCount.toLocaleString("pt-BR")})`}</span>
           </label>
           <label className="flex items-center gap-2 text-sm text-secondary">
             <span>Ordenar por</span>
@@ -1256,7 +1242,7 @@ export function AssociadosCardList({
         </div>
       </div>
 
-      {filteredRows.length === 0 ? (
+      {pageError || (!loading && pageData.filteredCount === 0) ? (
         <div className="mt-4 rounded-xl border border-warning bg-warning-soft px-4 py-4 text-sm text-warning">
           Nenhum associado encontrado com os filtros aplicados.
         </div>
@@ -1327,11 +1313,11 @@ export function AssociadosCardList({
       </div>
 
       <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
-        <button type="button" onClick={() => setPage(1)} disabled={currentPage === 1} className="rounded-lg border border-default bg-surface-secondary px-3 py-2 text-sm text-secondary disabled:opacity-40">«</button>
+        <button type="button" onClick={() => setPage(1)} disabled={loading || pageError || currentPage === 1} className="rounded-lg border border-default bg-surface-secondary px-3 py-2 text-sm text-secondary disabled:opacity-40">«</button>
         <button type="button" onClick={() => setPage((value) => Math.max(1, value - 1))} disabled={currentPage === 1} className="rounded-lg border border-default bg-surface-secondary px-3 py-2 text-sm text-secondary disabled:opacity-40">‹</button>
         <span className="rounded-lg border border-brand bg-brand-soft px-3 py-2 text-sm font-semibold text-brand">{currentPage}</span>
         <span className="px-1 text-sm text-muted">de {pageCount}</span>
-        <button type="button" onClick={() => setPage((value) => Math.min(pageCount, value + 1))} disabled={currentPage === pageCount} className="rounded-lg border border-default bg-surface-secondary px-3 py-2 text-sm text-secondary disabled:opacity-40">›</button>
+        <button type="button" onClick={() => setPage((value) => Math.min(pageCount, value + 1))} disabled={loading || pageError || currentPage === pageCount} className="rounded-lg border border-default bg-surface-secondary px-3 py-2 text-sm text-secondary disabled:opacity-40">›</button>
         <button type="button" onClick={() => setPage(pageCount)} disabled={currentPage === pageCount} className="rounded-lg border border-default bg-surface-secondary px-3 py-2 text-sm text-secondary disabled:opacity-40">»</button>
       </div>
     </>
