@@ -18,6 +18,15 @@ function formatDate(value: string | null | undefined) {
   return iso ? iso[3] + "/" + iso[2] + "/" + iso[1] : value;
 }
 
+const STATUS_LABELS: Record<string, string> = {
+  pending: "Pendente", aguardando: "Aguardando", processing: "Processando",
+  completed: "Concluído", error: "Erro", failed: "Falhou", retrying: "Tentando novamente"
+};
+const PAYMENT_LABELS: Record<string, string> = {
+  paid: "Pago", unpaid: "Não pago", agreed: "Acordado", excluded: "Excluída", pending: "Pendente"
+};
+const INSTALLMENT_LABELS: Record<string, string> = { clinico: "Clínico", orto: "Orto" };
+
 export async function POST(request: Request) {
   const auth = await requireApiUser(["administrador", "operador", "visualizador"]);
   if (!auth.ok) return auth.response;
@@ -59,11 +68,11 @@ export async function POST(request: Request) {
         cpf: item.member.cpf ? "***.***.***-" + item.member.cpf.slice(-2) : "",
         campaign: item.campaign.name,
         batch: item.batch.name,
-        status: item.processing_status,
+        status: STATUS_LABELS[item.processing_status] ?? item.processing_status,
         payment: item.payment_status === "paid" && item.total_pending_amount_cents > 0
-          ? "Pago com pendência" : item.payment_status ?? "-",
+          ? "Pago com pendência" : PAYMENT_LABELS[item.payment_status ?? ""] ?? item.payment_status ?? "-",
         receiptDescription: item.payment_status === "agreed" ? "-" : item.payment_description?.trim() || "-",
-        installmentType: item.installment_type ?? "",
+        installmentType: INSTALLMENT_LABELS[item.installment_type ?? ""] ?? item.installment_type ?? "",
         paymentDate: formatDate(item.payment_date_text),
         amountCents: item.installment_amount_cents,
         paidAmountCents: item.payment_amount_cents,
