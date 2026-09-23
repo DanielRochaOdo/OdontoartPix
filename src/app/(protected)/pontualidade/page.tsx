@@ -231,16 +231,21 @@ export default async function PunctualityPage({
             Parcelas em aberto são medidas em dias decorridos desde o vencimento, não em dias até a quitação. Ao combiná-las com pagamentos quitados, os indicadores misturam durações de naturezas diferentes. A comparação por forma de pagamento é exibida somente quando são selecionadas situações de parcelas pagas.
           </p>
         ) : null}
-        <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <div className={`mt-5 grid gap-3 sm:grid-cols-2 ${openOnly ? "xl:grid-cols-4" : "xl:grid-cols-5"}`}>
           <StatCard label={scopeTitle} value={decimal(report.total.averageDays) + " dias"} hint={scopeHint} />
           <StatCard label={openOnly ? "Parcelas em atraso" : includesOpen ? "Parcelas analisadas" : "Parcelas quitadas"}
-            value={number(report.total.count)} hint="Obrigações financeiras únicas analisadas" />
-          <StatCard label={openOnly ? "Parcelas vencidas" : "Pagas no prazo"}
-            value={openOnly ? "0" : number(report.total.onTimeCount)}
-            hint={openOnly ? "Não há quitação registrada" : percent(report.total.count ? report.total.onTimeCount / report.total.count * 100 : 0) + " das parcelas selecionadas"} />
-          <StatCard label={openOnly ? "Em atraso" : "Pagas com atraso"}
-            value={number(report.total.lateCount)}
-            hint={percent(report.total.lateRate) + " · " + number(report.total.lateCount) + " de " + number(report.total.count) + " parcelas"} />
+            value={number(report.total.count)} hint={includesOpen ? number(report.total.paidCount) + " quitadas · " + number(report.total.openCount) + " em aberto" : "Obrigações financeiras únicas analisadas"} />
+          {!openOnly ? (
+            <>
+              <StatCard label="Pagas no prazo" value={number(report.total.onTimeCount)}
+                hint={percent(report.total.paidCount ? report.total.onTimeCount / report.total.paidCount * 100 : 0) + " · " + number(report.total.onTimeCount) + " de " + number(report.total.paidCount) + " pagas"} />
+              <StatCard label="Pagas com atraso" value={number(report.total.paidCount - report.total.onTimeCount)}
+                hint={percent(report.total.paidCount ? (report.total.paidCount - report.total.onTimeCount) / report.total.paidCount * 100 : 0) + " · " + number(report.total.paidCount - report.total.onTimeCount) + " de " + number(report.total.paidCount) + " pagas"} />
+            </>
+          ) : (
+            <StatCard label="Parcelas vencidas" value={number(report.total.openCount)}
+              hint="Sem data de quitação; dias decorridos desde o vencimento" />
+          )}
           <StatCard label={openOnly ? "Valor em aberto" : includesOpen ? "Valor financeiro analisado" : "Valor recebido"}
             value={money(report.total.amountCents)} hint="Somatório financeiro das parcelas elegíveis" />
         </div>
