@@ -407,6 +407,7 @@ export async function getPaymentDateReconciliation(filters: PaymentFilters) {
       and ($1::date is null or payment_date >= $1::date)
       and ($2::date is null or payment_date <= $2::date)
       and ($3::text[] is null or plan = any($3::text[]))
+      and ($4::int[] is null or due_day = any($4::int[]))
       and ($5::text[] is null or method = any($5::text[]))
   `, queryValues(filters).slice(0, 6));
   const row = result.rows[0];
