@@ -777,61 +777,66 @@ export function AssociadosCardList({
     });
   }
 
-  function toggleAllFiltered() {
-    setSelectedIds((current) => {
-      const next = new Set(current);
-      if (allFilteredSelected) {
-        for (const row of filteredRows) next.delete(row.id);
-      } else {
-        for (const row of filteredRows) next.add(row.id);
-      }
-      return next;
+  async function idsFromFullFilter() {
+    // IDs de todas as páginas, não apenas das 50 parcelas presentes no navegador.
+    const response = await fetch("/api/associados/ids-filtrados", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filters: currentFilters })
     });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload?.success) {
+      throw new Error(payload?.error?.message ?? "Não foi possível consultar a seleção completa.");
+    }
+    return payload.data.memberIds as string[];
   }
 
-  function exportFilteredRows() {
-    if (filteredRows.length === 0) return;
+  async function toggleAllFiltered() {
+    if (loading || pageError || selectingAll) return;
+    if (allFilteredSelected) {
+      setSelectedIds(new Set());
+      return;
+    }
+    setSelectingAll(true);
+    setSelectionError(null);
+    try {
+      const allIds = await idsFromFullFilter();
+      setSelectedIds(new Set(allIds));
+    } catch (error) {
+      setSelectionError(error instanceof Error ? error.message : "Não foi possível selecionar todos os registros.");
+    } finally {
+      setSelectingAll(false);
+    }
+  }
 
-    const campaignLabels = new Map(options.campaign);
-    const batchLabels = new Map(options.batch);
-    const workbook = buildAssociadosWorkbook({
-      filters: [
-        { label: "Pesquisa geral", value: query.trim() || "Todos" },
-        { label: "Código associado", value: codeFilter.trim() || "Todos" },
-        { label: "Parcela", value: installmentFilter.trim() || "Todas" },
-        { label: "Data de vencimento", value: dateLabel },
-        { label: "Data de pagamento", value: paymentDateLabel },
-        { label: "Status", value: statusFilters.length ? statusFilters.map(statusLabel).join(", ") : "Todos" },
-        { label: "Pagamento", value: paymentFilters.length ? paymentFilters.map(paymentLabel).join(", ") : "Todos" },
-        { label: "Pago com pendência", value: paidPendingFilter === "yes" ? "Sim" : paidPendingFilter === "no" ? "Não" : "Todos" },
-        { label: "Tipo de pagamento", value: receiptFilters.length ? receiptFilters.join(", ") : "Todos" },
-        { label: "Tipo de parcela", value: installmentTypeFilters.length ? installmentTypeFilters.join(", ") : "Todos" },
-        { label: "Campanha", value: campaignFilters.length ? campaignFilters.map((id) => campaignLabels.get(id) ?? id).join(", ") : "Todas" },
-        { label: "Lote", value: batchFilters.length ? batchFilters.map((id) => batchLabels.get(id) ?? id).join(", ") : "Todos" }
-      ],
-      rows: filteredRows.map((row) => ({
-        name: row.name,
-        associatedCode: row.associatedCode,
-        installment: row.installment,
-        dueDate: row.dueDate || "",
-        cpf: row.cpf ? `***.***.***-${row.cpf.slice(-2)}` : "",
-        campaign: row.campaign,
-        batch: row.batch,
-        status: row.missingInstallment ? `Erro — ${INSTALLMENT_NOT_FOUND_LABEL}` : statusLabel(row.status),
-        payment: row.paidWithPending ? "Pago com pendência" : paymentLabel(row.payment),
-        receiptDescription: row.receiptDescription,
-        installmentType: row.installmentType === "-" ? "" : row.installmentType,
-        paymentDate: row.paymentDate === "-" ? "" : row.paymentDate,
-        amountCents: row.amount,
-        paidAmountCents: row.paidAmount,
-        pendingCents: row.pending
-      }))
-    });
-    XLSX.writeFile(
-      workbook,
-      `associados-filtrados-${new Date().toISOString().slice(0, 10)}.xlsx`,
-      { cellStyles: true }
-    );
+  async function exportFilteredRows() {
+    if (pageData.filteredCount === 0 || loading || pageError || exporting) return;
+    setExporting(true);
+    setSelectionError(null);
+    try {
+      const response = await fetch("/api/associados/exportar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filters: currentFilters, sort: sortKey, ascending })
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.error?.message ?? "Não foi possível exportar os associados.");
+      }
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = "associados-filtrados-" + new Date().toISOString().slice(0, 10) + ".xlsx";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+    } catch (error) {
+      setSelectionError(error instanceof Error ? error.message : "Não foi possível exportar.");
+    } finally {
+      setExporting(false);
+    }
   }
 
   async function reprocessSelected() {
@@ -877,11 +882,12 @@ export function AssociadosCardList({
   async function reprocessFilteredErrors() {
     if (!canShowErrorReprocess || bulkProgress?.active) return;
 
-    const memberIds = filteredRows.map((row) => row.id);
     setReprocessingErrors(true);
     setBulkError(null);
 
     try {
+      const memberIds = await idsFromFullFilter();
+      if (memberIds.length === 0) throw new Error("Nenhum registro corresponde aos filtros atuais.");
       const response = await fetch("/api/associados/reprocessar-erros-filtrados", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
