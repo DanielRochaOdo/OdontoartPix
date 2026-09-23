@@ -353,6 +353,7 @@ async function persistSuccess(input: {
         card_payment_link: installment.cardPaymentLink ?? null,
         situation: installment.situation ?? null,
         payment_description: installment.paymentDescription ?? null,
+        configured_payment_description: installment.configuredPaymentDescription ?? null,
         payment_date_text: installment.paymentDate ?? null,
         paid_amount_cents: installment.paidAmountCents,
         base_amount_cents: installment.baseAmountCents,
@@ -370,7 +371,7 @@ async function persistSuccess(input: {
         `insert into member_installments(
            campaign_batch_member_id, cod_usuario, cod_parcela, due_date_text,
            installment_type, boleto_code, pix_code, card_payment_link, situation,
-           payment_description, payment_date_text, paid_amount_cents,
+           payment_description, configured_payment_description, payment_date_text, paid_amount_cents,
            base_amount_cents, fine_amount_cents, interest_amount_cents,
            additional_amount_cents, discount_amount_cents, final_amount_cents,
            plan_type, observation, updated_at
@@ -378,7 +379,7 @@ async function persistSuccess(input: {
          select $1::uuid, row.cod_usuario, row.cod_parcela, row.due_date_text,
                 row.installment_type, row.boleto_code, row.pix_code,
                 row.card_payment_link, row.situation, row.payment_description,
-                row.payment_date_text, row.paid_amount_cents, row.base_amount_cents,
+                row.configured_payment_description, row.payment_date_text, row.paid_amount_cents, row.base_amount_cents,
                 row.fine_amount_cents, row.interest_amount_cents,
                 row.additional_amount_cents, row.discount_amount_cents,
                 row.final_amount_cents, row.plan_type, row.observation, now()
@@ -386,7 +387,7 @@ async function persistSuccess(input: {
              cod_usuario text, cod_parcela text, due_date_text text,
              installment_type text, boleto_code text, pix_code text,
              card_payment_link text, situation text, payment_description text,
-             payment_date_text text, paid_amount_cents bigint, base_amount_cents bigint,
+             configured_payment_description text, payment_date_text text, paid_amount_cents bigint, base_amount_cents bigint,
              fine_amount_cents bigint, interest_amount_cents bigint,
              additional_amount_cents bigint, discount_amount_cents bigint,
              final_amount_cents bigint, plan_type text, observation text

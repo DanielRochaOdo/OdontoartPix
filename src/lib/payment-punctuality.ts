@@ -1,6 +1,6 @@
 import { dbQuery } from "@/lib/db/pool";
 
-export type ReportTab = "geral" | "planos" | "vencimentos" | "formas";
+export type ReportTab = "geral" | "planos" | "vencimentos" | "formas" | "trocas";
 export type ReportScope = "paid" | "late" | "open";
 export type ReportDateBasis = "payment" | "due";
 export type PaymentPlan = "clinico" | "orto" | "sem-classificacao";
@@ -47,6 +47,7 @@ export type PaymentDetail = {
   dueDate: string;
   paymentDate: string | null;
   method: string;
+  configuredMethod: string | null;
   days: number;
   amountCents: number;
 };
@@ -149,7 +150,7 @@ export function readPaymentFilters(
     methods, scopes: scopes as ReportScope[],
     metric: readEnum(value("metric"), ["avg", "rate", "count", "amount"] as const, "avg"),
     order: readEnum(value("order"), ["desc", "asc"] as const, "desc"),
-    tab: readEnum(value("tab"), ["geral", "planos", "vencimentos", "formas"] as const, "geral"),
+    tab: readEnum(value("tab"), ["geral", "planos", "vencimentos", "formas", "trocas"] as const, "geral"),
     asOf: today
   };
 }
@@ -247,6 +248,7 @@ export const PAYMENT_SOURCE_SQL = `with candidate as (
          canonical.external_installment_code, canonical.installment_type,
          canonical.due_date_text, canonical.payment_date_text,
          canonical.payment_status, canonical.payment_description,
+         canonical.configured_payment_description,
          canonical.paid_amount_cents, canonical.pending_amount_cents,
          ${dateSql("canonical.due_date_text")} as due_raw,
          ${dateSql("canonical.payment_date_text")} as payment_raw
@@ -419,6 +421,121 @@ export async function getPaymentDateReconciliation(filters: PaymentFilters) {
   };
 }
 
+export type PaymentMethodChangeRow = {
+  configured: string;
+  received: string;
+  count: number;
+  amountCents: number;
+  averageDays: number;
+  lateRate: number;
+  changed: boolean;
+};
+
+export type PaymentMethodChangeReport = {
+  totalPaid: number;
+  compared: number;
+  changed: number;
+  unchanged: number;
+  withoutConfigured: number;
+  rows: PaymentMethodChangeRow[];
+};
+
+// Evita falsos positivos por caixa, acentuação e variações documentadas de
+// Pix/Boleto, mas não confunde métodos distintos (cartão, dinheiro, boleto, Pix).
+export function paymentMethodIdentity(value: string | null | undefined): string | null {
+  const text = value?.trim();
+  if (!text) return null;
+  const upper = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .toLocaleUpperCase("pt-BR").replace(/\s+/g, " ").trim();
+  if (upper === "PIX" || (PIX_DESCRIPTIONS as readonly string[]).includes(upper)) return "PIX";
+  if (upper === "BOLETO" || upper === "BOLETO BANCARIO") return "BOLETO BANCARIO";
+  return upper;
+}
+
+export function summarizePaymentMethodChanges(rows: Array<{
+  configured: string | null; received: string; count: number;
+  amountCents: number; averageDays: number; lateRate: number;
+}>): PaymentMethodChangeReport {
+  let totalPaid = 0;
+  let compared = 0;
+  let changed = 0;
+  let unchanged = 0;
+  let withoutConfigured = 0;
+  const pairs: PaymentMethodChangeRow[] = [];
+  for (const row of rows) {
+    totalPaid += row.count;
+    const expected = paymentMethodIdentity(row.configured);
+    const actual = paymentMethodIdentity(row.received);
+    if (!expected || expected === "NAO INFORMADO" || !actual || actual === "NAO INFORMADO") {
+      withoutConfigured += row.count;
+      continue;
+    }
+    const hasChanged = expected !== actual;
+    compared += row.count;
+    if (hasChanged) changed += row.count;
+    else unchanged += row.count;
+    pairs.push({
+      configured: row.configured!.trim(), received: row.received,
+      count: row.count, amountCents: row.amountCents, averageDays: row.averageDays,
+      lateRate: row.lateRate, changed: hasChanged
+    });
+  }
+  return { totalPaid, compared, changed, unchanged, withoutConfigured, rows: pairs };
+}
+
+export async function getPaymentMethodChanges(filters: PaymentFilters) {
+  const result = await dbQuery<{
+    configured: string | null; received: string; count: number;
+    amount_cents: number; average_days: number; late_count: number;
+  }>(PAYMENT_SOURCE_SQL + `
+    select nullif(trim(configured_payment_description), '') as configured,
+      method as received, count(*)::int as count,
+      coalesce(sum(report_amount_cents), 0)::float8 as amount_cents,
+      coalesce(round(avg(days)::numeric, 2), 0)::float8 as average_days,
+      count(*) filter (where days > 0)::int as late_count
+    from eligible
+    where payment_status = 'paid'
+    group by nullif(trim(configured_payment_description), ''), method
+  `, queryValues(filters));
+  return summarizePaymentMethodChanges(result.rows.map((row) => ({
+    configured: row.configured, received: row.received,
+    count: Number(row.count), amountCents: Number(row.amount_cents),
+    averageDays: Number(row.average_days),
+    lateRate: Number(row.count) ? Number(row.late_count) / Number(row.count) * 100 : 0
+  })));
+}
+
+export async function getPaymentMethodChangeDetails(filters: PaymentFilters, configured: string, received: string) {
+  if (!configured.trim() || !received.trim() || configured.length > 120 || received.length > 120) {
+    throw new Error("Forma de pagamento inválida.");
+  }
+  const result = await dbQuery<{
+    id: string; member_id: string; member_name: string | null;
+    external_installment_code: string; plan: string;
+    due_date: string; payment_date: string | null; method: string;
+    configured_payment_description: string | null; days: number; report_amount_cents: number;
+  }>(PAYMENT_SOURCE_SQL + `
+    select id, member_id, member_name, external_installment_code, plan,
+      to_char(due_date, 'YYYY-MM-DD') as due_date,
+      to_char(payment_date, 'YYYY-MM-DD') as payment_date,
+      method, configured_payment_description, days,
+      report_amount_cents::float8 as report_amount_cents
+    from eligible
+    where payment_status = 'paid'
+      and nullif(trim(configured_payment_description), '') = $9::text
+      and method = $10::text
+    order by days desc, payment_date desc, id
+    limit 50
+  `, [...queryValues(filters), configured, received]);
+  return result.rows.map((row): PaymentDetail => ({
+    id: row.id, memberId: row.member_id, memberName: row.member_name ?? "Associado sem nome",
+    code: row.external_installment_code, plan: labelForGroup("plan", row.plan),
+    dueDate: row.due_date, paymentDate: row.payment_date, method: row.method,
+    configuredMethod: row.configured_payment_description,
+    days: Number(row.days), amountCents: Number(row.report_amount_cents)
+  }));
+}
+
 export async function getPaymentMethods() {
   const result = await dbQuery<{ description: string | null }>(`
     select distinct payment_description as description
@@ -441,12 +558,13 @@ export async function getPaymentDetails(filters: PaymentFilters, kind: GroupKind
     id: string; member_id: string; member_name: string | null;
     external_installment_code: string; plan: string;
     due_date: string; payment_date: string | null; method: string;
+    configured_payment_description: string | null;
     days: number; report_amount_cents: number;
   }>(PAYMENT_SOURCE_SQL + `
     select id, member_id, member_name, external_installment_code, plan,
       to_char(due_date, 'YYYY-MM-DD') as due_date,
       case when payment_date is null then null else to_char(payment_date, 'YYYY-MM-DD') end as payment_date,
-      method, days, report_amount_cents::float8 as report_amount_cents
+      method, configured_payment_description, days, report_amount_cents::float8 as report_amount_cents
     from eligible
     where ($9::text = 'total'
       or ($9::text = 'plan' and plan = $10::text)
@@ -459,6 +577,7 @@ export async function getPaymentDetails(filters: PaymentFilters, kind: GroupKind
     id: row.id, memberId: row.member_id, memberName: row.member_name ?? "Associado sem nome",
     code: row.external_installment_code, plan: labelForGroup("plan", row.plan),
     dueDate: row.due_date, paymentDate: row.payment_date, method: row.method,
+    configuredMethod: row.configured_payment_description,
     days: Number(row.days), amountCents: Number(row.report_amount_cents)
   }));
 }

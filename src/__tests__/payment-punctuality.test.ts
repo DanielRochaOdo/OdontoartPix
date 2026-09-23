@@ -4,6 +4,8 @@ import { dbQuery } from "@/lib/db/pool";
 import {
   aggregatePaymentRows, delayDays, normalizePaymentMethod,
   getPaymentDateReconciliation, getPaymentDetails, getPaymentMethods, getPaymentReport,
+  getPaymentMethodChanges, getPaymentMethodChangeDetails,
+  paymentMethodIdentity, summarizePaymentMethodChanges,
   parseFinancialDate, paymentFilterSearch, readPaymentFilters, sortPaymentGroups,
   type ReportGroup
 } from "@/lib/payment-punctuality";
@@ -80,6 +82,21 @@ describe("Pontualidade de pagamentos", () => {
     expect(parseFinancialDate("31/02/2026")).toBeNull();
     expect(delayDays("2026-09-10", "2026-09-08")).toBe(0);
     expect(delayDays("2026-09-10", "2026-09-16")).toBe(6);
+  });
+
+  it("distingue o método configurado do recebido sem falsos positivos de acentuação e variações de Pix", () => {
+    expect(paymentMethodIdentity("BOLETO BANCÁRIO")).toBe("BOLETO BANCARIO");
+    expect(paymentMethodIdentity("Boleto")).toBe("BOLETO BANCARIO");
+    expect(paymentMethodIdentity("pix new odontologia - p4x")).toBe("PIX");
+    expect(paymentMethodIdentity("Pix")).toBe("PIX");
+    const data = summarizePaymentMethodChanges([
+      { configured: "BOLETO BANCARIO", received: "Pix", count: 2, amountCents: 15000, averageDays: 3, lateRate: 50 },
+      { configured: "BOLETO BANCÁRIO", received: "Boleto", count: 1, amountCents: 5000, averageDays: 0, lateRate: 0 },
+      { configured: "PIX - CLINICO", received: "Pix", count: 1, amountCents: 4000, averageDays: 0, lateRate: 0 },
+      { configured: null, received: "Pix", count: 4, amountCents: 40000, averageDays: 2, lateRate: 40 }
+    ]);
+    expect(data).toMatchObject({ totalPaid: 8, compared: 4, changed: 2, unchanged: 2, withoutConfigured: 4 });
+    expect(data.rows.filter((row) => row.changed)).toHaveLength(1);
   });
 
   it("usa somente descrições Pix reconhecidas pelo Dashboard", () => {
@@ -183,12 +200,43 @@ describe("Pontualidade integrada aos mesmos dados canônicos de Associados", () 
             `, [campaignId, batchId, memberId, code, canonical.rows[0].id, due]);
           }
         }
+        // O mesmo snapshot que o worker insere deve promover somente DescricaoPagamento
+        // da parcela-alvo para a obrigação canônica, preservando DescricaoRecebimento.
+        const link = await dbQuery<{ id: string; target_installment_ref_id: string }>(`
+          select id, target_installment_ref_id
+          from campaign_batch_members where campaign_id = $1
+            and target_installment_id = $2
+          order by id limit 1
+        `, [campaignId, id + "-0"]);
+        await dbQuery(`
+          insert into member_installments(
+            campaign_batch_member_id, cod_parcela, due_date_text,
+            payment_description, configured_payment_description, payment_date_text,
+            base_amount_cents, paid_amount_cents
+          ) values ($1, $2, '10/08/2026', $3, 'BOLETO BANCARIO', '22/09/2026', 10000, 10000)
+        `, [link.rows[0].id, id + "-0", method]);
+        const observed = await dbQuery<{ configured_payment_description: string | null; payment_description: string | null }>(
+          "select configured_payment_description, payment_description from member_target_installments where id = $1",
+          [link.rows[0].target_installment_ref_id]
+        );
+        expect(observed.rows[0]).toMatchObject({
+          configured_payment_description: "BOLETO BANCARIO", payment_description: method
+        });
         const filters = readPaymentFilters({
           period: "custom", from: "2026-09-22", to: "2026-09-22",
           dateBasis: "payment", method: [method], scopes: ["paid", "late"]
         }, "2026-09-23");
         const report = await getPaymentReport(filters);
         expect(report.total).toMatchObject({ count: 2, paidCount: 2, onTimeCount: 1, lateCount: 1 });
+        const changeReport = await getPaymentMethodChanges(filters);
+        expect(changeReport).toMatchObject({
+          totalPaid: 2, compared: 1, changed: 1, unchanged: 0, withoutConfigured: 1
+        });
+        const changeDetails = await getPaymentMethodChangeDetails(filters, "BOLETO BANCARIO", method);
+        expect(changeDetails).toHaveLength(1);
+        expect(changeDetails[0]).toMatchObject({
+          configuredMethod: "BOLETO BANCARIO", method, memberId: memberId
+        });
         expect((await getPaymentDetails(filters, "total", "all")).length).toBe(2);
         const reconciliation = await getPaymentDateReconciliation(filters);
         expect(reconciliation).toMatchObject({ matchedRows: 2, paidRows: 2, missingDueRows: 0, missingAmountRows: 0 });

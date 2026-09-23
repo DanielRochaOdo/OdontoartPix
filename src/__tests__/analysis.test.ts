@@ -79,6 +79,22 @@ describe("analyzeMonthlyResponse - contrato atual do ERP", () => {
     expect(result.installments[0]?.paidAmountCents).toBeNull();
   });
 
+  it("preserva a forma configurada em DescricaoPagamento sem alterar o recebimento", () => {
+    const result = analyzeMonthlyResponse(page({ data: [{
+      Id: "55", Valor: 100, ValorPago: 100,
+      DescricaoPagamento: "BOLETO BANCARIO",
+      DescricaoRecebimento: "PIX",
+      DataPagamento: "22/09/2026",
+      vencimento: "20/09/2026",
+      Observacao: "Mensagem separada"
+    }] }), "55");
+    expect(result.installments[0]).toMatchObject({
+      paymentDescription: "PIX",
+      configuredPaymentDescription: "BOLETO BANCARIO",
+      observation: "Mensagem separada"
+    });
+  });
+
   it("classifica como paid quando DescricaoRecebimento nao e ABERTO e ValorPago esta informado", () => {
     const result = analyzeMonthlyResponse(
       page({
