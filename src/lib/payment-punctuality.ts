@@ -445,8 +445,8 @@ export type PaymentMethodChangeReport = {
 export function paymentMethodIdentity(value: string | null | undefined): string | null {
   const text = value?.trim();
   if (!text) return null;
-  const upper = text.normalize("NFD").replace(/[\\u0300-\\u036f]/g, "")
-    .toLocaleUpperCase("pt-BR").replace(/\\s+/g, " ").trim();
+  const upper = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .toLocaleUpperCase("pt-BR").replace(/\s+/g, " ").trim();
   if (upper === "PIX" || (PIX_DESCRIPTIONS as readonly string[]).includes(upper)) return "PIX";
   if (upper === "BOLETO" || upper === "BOLETO BANCARIO") return "BOLETO BANCARIO";
   return upper;
