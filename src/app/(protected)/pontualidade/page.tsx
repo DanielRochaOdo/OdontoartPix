@@ -25,7 +25,10 @@ const LABEL_BY_METRIC: Record<ReportMetric, string> = {
 const number = (value: number) => value.toLocaleString("pt-BR");
 const decimal = (value: number) => value.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 2 });
 const money = (cents: number) => (cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-const percent = (value: number) => value.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + "%";
+const percent = (value: number) => value.toLocaleString("pt-BR", {
+  minimumFractionDigits: value > 0 && value < 0.1 || value > 99.9 && value < 100 ? 2 : 1,
+  maximumFractionDigits: 2
+}) + "%";
 const humanDate = (iso: string | null) => iso ? iso.slice(8, 10) + "/" + iso.slice(5, 7) + "/" + iso.slice(0, 4) : "—";
 
 function valueOf(group: ReportGroup, metric: ReportMetric) {
@@ -199,7 +202,9 @@ export default async function PunctualityPage({
       <PageHeader eyebrow="Relatórios financeiros" title="Pontualidade de Pagamentos"
         description="Análise das parcelas reais por plano, dia de vencimento e forma de pagamento." />
       <div className="mt-4 flex flex-wrap items-center gap-2 text-xs text-secondary">
-        <span className="rounded-full border border-subtle bg-surface-primary px-3 py-1.5">{periodLabel}</span>
+        <span className="rounded-full border border-subtle bg-surface-primary px-3 py-1.5">
+          {periodLabel}{filters.period !== "all" ? " · " + (filters.dateBasis === "payment" ? "Data do pagamento" : "Data do vencimento") : ""}
+        </span>
         <span className="rounded-full border border-subtle bg-surface-primary px-3 py-1.5">
           {scopeLabel}
         </span>
@@ -226,12 +231,16 @@ export default async function PunctualityPage({
             Parcelas em aberto são medidas em dias decorridos desde o vencimento, não em dias até a quitação. Ao combiná-las com pagamentos quitados, os indicadores misturam durações de naturezas diferentes. A comparação por forma de pagamento é exibida somente quando são selecionadas situações de parcelas pagas.
           </p>
         ) : null}
-        <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
           <StatCard label={scopeTitle} value={decimal(report.total.averageDays) + " dias"} hint={scopeHint} />
           <StatCard label={openOnly ? "Parcelas em atraso" : includesOpen ? "Parcelas analisadas" : "Parcelas quitadas"}
             value={number(report.total.count)} hint="Obrigações financeiras únicas analisadas" />
-          <StatCard label={openOnly ? "Taxa de vencidas" : includesOpen ? "Parcelas com atraso" : "Pagas após o vencimento"}
-            value={percent(report.total.lateRate)} hint={number(report.total.lateCount) + " de " + number(report.total.count) + " parcelas"} />
+          <StatCard label={openOnly ? "Parcelas vencidas" : "Pagas no prazo"}
+            value={openOnly ? "0" : number(report.total.onTimeCount)}
+            hint={openOnly ? "Não há quitação registrada" : percent(report.total.count ? report.total.onTimeCount / report.total.count * 100 : 0) + " das parcelas selecionadas"} />
+          <StatCard label={openOnly ? "Em atraso" : "Pagas com atraso"}
+            value={number(report.total.lateCount)}
+            hint={percent(report.total.lateRate) + " · " + number(report.total.lateCount) + " de " + number(report.total.count) + " parcelas"} />
           <StatCard label={openOnly ? "Valor em aberto" : includesOpen ? "Valor financeiro analisado" : "Valor recebido"}
             value={money(report.total.amountCents)} hint="Somatório financeiro das parcelas elegíveis" />
         </div>
@@ -295,7 +304,7 @@ export default async function PunctualityPage({
           </section>
         ) : null}
         <p className="mt-5 text-xs leading-relaxed text-muted">
-          Base: parcelas canônicas vinculadas a campanhas e lotes ativos, sem duplicar a mesma obrigação em vários lotes. Sem filtro temporal, considera todo o histórico de vencimentos até a data da consulta. O período personalizado se refere ao vencimento. Pagamentos sem data válida de quitação ou vencimento não entram na média; parcelas acordadas e excluídas não são consideradas pagas. A taxa de atraso usa somente as parcelas elegíveis no filtro atual. A modalidade informa a forma efetivamente utilizada, não a causa do atraso.
+          Base: parcelas canônicas vinculadas a campanhas e lotes ativos, sem duplicar a mesma obrigação em vários lotes. Sem período selecionado, considera todo o histórico de pagamentos registrado até a data da consulta. O período pode ser aplicado à data de pagamento (mesma referência temporal do filtro de Associados) ou ao vencimento. A quantidade de associados exibidos em Associados não equivale necessariamente à quantidade de parcelas pagas com datas válidas. Pagamentos sem data válida de quitação ou vencimento não entram na média; parcelas acordadas e excluídas não são consideradas pagas. A taxa de atraso usa somente as parcelas elegíveis no filtro atual. A modalidade informa a forma efetivamente utilizada, não a causa do atraso.
         </p>
       </section>
     </PageSurface>
