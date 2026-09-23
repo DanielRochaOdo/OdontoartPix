@@ -1,6 +1,6 @@
 import { dbQuery } from "@/lib/db/pool";
 
-export type ReportTab = "geral" | "planos" | "vencimentos" | "formas";
+export type ReportTab = "geral" | "planos" | "vencimentos" | "formas" | "trocas";
 export type ReportScope = "paid" | "late" | "open";
 export type ReportDateBasis = "payment" | "due";
 export type PaymentPlan = "clinico" | "orto" | "sem-classificacao";
@@ -149,7 +149,7 @@ export function readPaymentFilters(
     methods, scopes: scopes as ReportScope[],
     metric: readEnum(value("metric"), ["avg", "rate", "count", "amount"] as const, "avg"),
     order: readEnum(value("order"), ["desc", "asc"] as const, "desc"),
-    tab: readEnum(value("tab"), ["geral", "planos", "vencimentos", "formas"] as const, "geral"),
+    tab: readEnum(value("tab"), ["geral", "planos", "vencimentos", "formas", "trocas"] as const, "geral"),
     asOf: today
   };
 }
