@@ -256,7 +256,30 @@ const FILTERED_SCOPE_CTE = `with scoped_links as (
     )
 )`;
 
-export async function getDispatchList(): Promise<DispatchListItem[]> {
+export type DispatchPage = {
+  rows: DispatchListItem[];
+  totalCount: number;
+  filteredCount: number;
+  eligibleCount: number;
+  totals: { amount: number; pending: number; dispatches: number };
+};
+
+export type DispatchFilterOption = { value: string; label: string };
+export type DispatchFilterOptions = {
+  status: DispatchFilterOption[];
+  payment: DispatchFilterOption[];
+  receipt: DispatchFilterOption[];
+  installmentType: DispatchFilterOption[];
+  campaign: DispatchFilterOption[];
+  batch: DispatchFilterOption[];
+};
+
+// Sem paginação somente para operações completas no servidor, como exportação.
+// As telas devem usar getDispatchPage para nunca enviar a lista integral ao cliente.
+export async function getDispatchList(
+  filters: DispatchFilters = {},
+  pagination?: { page: number; size: number }
+): Promise<DispatchListItem[]> {
   const result = await dbQuery<{
     id: string;
     target_installment_ref_id: string;
@@ -305,8 +328,11 @@ export async function getDispatchList(): Promise<DispatchListItem[]> {
             campaign_names,
             batch_names
        from filtered
-      order by member_name asc nulls last, target_installment_id asc`,
-    scopeValues({}, [], false)
+      order by member_name asc nulls last, target_installment_id asc, target_installment_ref_id asc
+      ${pagination ? "limit $20 offset $21" : ""}`,
+    pagination
+      ? [...scopeValues(filters, [], false), pagination.size, (pagination.page - 1) * pagination.size]
+      : scopeValues(filters, [], false)
   );
 
   return result.rows.map((row) => ({
@@ -335,6 +361,77 @@ export async function getDispatchList(): Promise<DispatchListItem[]> {
     campaign: { name: row.campaign_names },
     batch: { name: row.batch_names }
   }));
+}
+
+
+export async function getDispatchPage(
+  filters: DispatchFilters = {},
+  page = 1
+): Promise<DispatchPage> {
+  const safePage = Number.isSafeInteger(page) ? Math.max(1, Math.min(page, 100_000)) : 1;
+  const values = scopeValues(filters, [], false);
+  const [summary, rows] = await Promise.all([
+    dbQuery<{
+      total_count: number;
+      filtered_count: number;
+      eligible_count: number;
+      amount_cents: number;
+      pending_cents: number;
+      dispatches: number;
+    }>(`${FILTERED_SCOPE_CTE}
+       select (select count(*)::int from base) as total_count,
+              count(*)::int as filtered_count,
+              count(*) filter (
+                where coalesce(payment_status, '') not in ('paid', 'agreed', 'excluded')
+                  and pending_amount_cents > 0
+              )::int as eligible_count,
+              coalesce(sum(amount_cents), 0)::float8 as amount_cents,
+              coalesce(sum(pending_amount_cents), 0)::float8 as pending_cents,
+              coalesce(sum(dispatch_count), 0)::float8 as dispatches
+         from filtered`, values),
+    getDispatchList(filters, { page: safePage, size: 50 })
+  ]);
+  const summaryRow = summary.rows[0];
+  return {
+    rows,
+    totalCount: Number(summaryRow?.total_count ?? 0),
+    filteredCount: Number(summaryRow?.filtered_count ?? 0),
+    eligibleCount: Number(summaryRow?.eligible_count ?? 0),
+    totals: {
+      amount: Number(summaryRow?.amount_cents ?? 0),
+      pending: Number(summaryRow?.pending_cents ?? 0),
+      dispatches: Number(summaryRow?.dispatches ?? 0)
+    }
+  };
+}
+
+export async function getDispatchFilterOptions(): Promise<DispatchFilterOptions> {
+  const result = await dbQuery<{
+    status: DispatchFilterOption[];
+    payment: DispatchFilterOption[];
+    receipt: DispatchFilterOption[];
+    installment_type: DispatchFilterOption[];
+    campaign: DispatchFilterOption[];
+    batch: DispatchFilterOption[];
+  }>(`${FILTERED_SCOPE_CTE}
+    select
+      coalesce(jsonb_agg(distinct jsonb_build_object('value', coalesce(processing_status, '-'), 'label', coalesce(processing_status, '-'))), '[]'::jsonb) as status,
+      coalesce(jsonb_agg(distinct jsonb_build_object('value', coalesce(payment_status, '-'), 'label', coalesce(payment_status, '-'))), '[]'::jsonb) as payment,
+      coalesce(jsonb_agg(distinct jsonb_build_object('value', receipt_description, 'label', receipt_description)), '[]'::jsonb) as receipt,
+      coalesce(jsonb_agg(distinct jsonb_build_object('value', coalesce(installment_type, '-'), 'label', coalesce(installment_type, '-'))), '[]'::jsonb) as installment_type,
+      coalesce(jsonb_agg(distinct jsonb_build_object('value', campaign_id, 'label', campaign_names)), '[]'::jsonb) as campaign,
+      coalesce(jsonb_agg(distinct jsonb_build_object('value', batch_id, 'label', batch_names)), '[]'::jsonb) as batch
+    from base`, scopeValues({}, [], false));
+  const options = result.rows[0];
+  const ordered = (rows: DispatchFilterOption[] = []) => rows.sort((a, b) => a.label.localeCompare(b.label, "pt-BR"));
+  return {
+    status: ordered(options?.status),
+    payment: ordered(options?.payment),
+    receipt: ordered(options?.receipt),
+    installmentType: ordered(options?.installment_type),
+    campaign: ordered(options?.campaign),
+    batch: ordered(options?.batch)
+  };
 }
 
 export async function getDispatchHistory(limit = 100): Promise<DispatchOperationHistoryItem[]> {
