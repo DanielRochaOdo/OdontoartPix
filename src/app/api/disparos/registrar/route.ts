@@ -6,7 +6,7 @@ import { fail, ok } from "@/lib/http/api-response";
 
 const BodySchema = z.object({
   requestKey: z.string().uuid(),
-  dispatchDate: z.string().regex(/^\\d{4}-\\d{2}-\\d{2}$/),
+  dispatchDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   filters: DispatchFiltersSchema.default({}),
   targetIds: z.array(z.string().uuid()).max(20_000).optional()
 });
