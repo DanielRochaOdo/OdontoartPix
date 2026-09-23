@@ -236,6 +236,7 @@ export function DispatchesDashboard({ initialPage, filterOptions, history, dispa
   const firstRequest = useRef(true);
   const [refreshToken, setRefreshToken] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [pageError, setPageError] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [tab, setTab] = useState<Tab>("installments");
   const [query, setQuery] = useState("");
@@ -319,7 +320,7 @@ export function DispatchesDashboard({ initialPage, filterOptions, history, dispa
 
   const pageCount = Math.max(1, Math.ceil(pageData.filteredCount / PAGE_SIZE));
   const currentPage = Math.min(page, pageCount);
-  const pageRows = filteredRows;
+  const pageRows = pageError ? [] : filteredRows;
   const eligiblePageRows = pageRows.filter(isEligible);
   const allPageSelected = eligiblePageRows.length > 0 && eligiblePageRows.every((row) => selectedIds.has(row.targetId));
   const totals = pageData.totals;
@@ -340,6 +341,7 @@ export function DispatchesDashboard({ initialPage, filterOptions, history, dispa
     }
     const controller = new AbortController();
     setLoading(true);
+    setPageError(false);
     setError(null);
     const timeout = window.setTimeout(async () => {
       try {
@@ -351,9 +353,15 @@ export function DispatchesDashboard({ initialPage, filterOptions, history, dispa
         });
         const payload = await response.json();
         if (!response.ok || !payload?.success) throw new Error(payload?.error?.message ?? "Falha na consulta.");
-        if (!controller.signal.aborted) setPageData(payload.data as DispatchPage);
+        if (!controller.signal.aborted) {
+          setPageData(payload.data as DispatchPage);
+          setPageError(false);
+        }
       } catch (error) {
-        if (!controller.signal.aborted) setError(error instanceof Error ? error.message : "Erro ao consultar a lista.");
+        if (!controller.signal.aborted) {
+          setPageError(true);
+          setError(error instanceof Error ? error.message : "Erro ao consultar a lista.");
+        }
       } finally {
         if (!controller.signal.aborted) setLoading(false);
       }
@@ -397,7 +405,7 @@ export function DispatchesDashboard({ initialPage, filterOptions, history, dispa
   async function registerDispatches(mode: "selected" | "filtered") {
     const targets = mode === "selected" ? [...selectedIds] : undefined;
     const count = mode === "selected" ? selectedIds.size : pageData.eligibleCount;
-    if (!canRegister || count === 0 || busy || loading) return;
+    if (!canRegister || count === 0 || busy || loading || pageError) return;
     if (!window.confirm(`Registrar disparo em ${formatCount(count)} parcela${count === 1 ? "" : "s"}?\n\nData do disparo: ${formatDate(todayKey())}`)) return;
     setBusy(true); setError(null); setNotice(null);
     try {
@@ -444,7 +452,7 @@ export function DispatchesDashboard({ initialPage, filterOptions, history, dispa
   }
 
   async function exportXlsx() {
-    if (!pageData.filteredCount || loading || exporting) return;
+    if (!pageData.filteredCount || loading || pageError || exporting) return;
     setExporting(true);
     setError(null);
     try {
@@ -528,11 +536,11 @@ export function DispatchesDashboard({ initialPage, filterOptions, history, dispa
 
           <div className="mt-4 overflow-hidden rounded-2xl border border-default bg-surface-primary shadow-sm">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-subtle p-3">
-              <label className="flex items-center gap-2 text-sm font-medium text-secondary"><input type="checkbox" checked={allPageSelected} onChange={togglePage} disabled={loading || eligiblePageRows.length === 0} className="h-4 w-4 rounded border-default" />{formatCount(selectedIds.size)} selecionadas</label>
-              <div className="flex flex-wrap gap-2"><button type="button" onClick={() => void registerDispatches("selected")} disabled={!canRegister || busy || loading || selectedIds.size === 0} className="rounded-lg border border-brand bg-brand-soft px-3 py-2 text-xs font-semibold text-brand disabled:opacity-40">Registrar disparos nas selecionadas</button><button type="button" onClick={() => void registerDispatches("filtered")} disabled={!canRegister || busy || loading || pageData.eligibleCount === 0} className="rounded-lg bg-brand px-3 py-2 text-xs font-semibold text-inverse disabled:opacity-40">Registrar disparos em todo o resultado ({formatCount(pageData.eligibleCount)})</button><button type="button" onClick={() => void exportXlsx()} disabled={loading || exporting || pageData.filteredCount === 0} className="rounded-lg border border-default bg-surface-secondary px-3 py-2 text-xs font-semibold text-secondary disabled:opacity-40">{exporting ? "Exportando..." : `Exportar XLSX (${formatCount(pageData.filteredCount)})`}</button></div>
+              <label className="flex items-center gap-2 text-sm font-medium text-secondary"><input type="checkbox" checked={allPageSelected} onChange={togglePage} disabled={loading || pageError || eligiblePageRows.length === 0} className="h-4 w-4 rounded border-default" />{formatCount(selectedIds.size)} selecionadas</label>
+              <div className="flex flex-wrap gap-2"><button type="button" onClick={() => void registerDispatches("selected")} disabled={!canRegister || busy || loading || pageError || selectedIds.size === 0} className="rounded-lg border border-brand bg-brand-soft px-3 py-2 text-xs font-semibold text-brand disabled:opacity-40">Registrar disparos nas selecionadas</button><button type="button" onClick={() => void registerDispatches("filtered")} disabled={!canRegister || busy || loading || pageError || pageData.eligibleCount === 0} className="rounded-lg bg-brand px-3 py-2 text-xs font-semibold text-inverse disabled:opacity-40">Registrar disparos em todo o resultado ({formatCount(pageData.eligibleCount)})</button><button type="button" onClick={() => void exportXlsx()} disabled={loading || pageError || exporting || pageData.filteredCount === 0} className="rounded-lg border border-default bg-surface-secondary px-3 py-2 text-xs font-semibold text-secondary disabled:opacity-40">{exporting ? "Exportando..." : `Exportar XLSX (${formatCount(pageData.filteredCount)})`}</button></div>
             </div>
-            <div className="overflow-x-auto"><table className="w-full min-w-[1500px] text-left text-xs"><thead className="bg-surface-secondary text-[10px] uppercase tracking-wide text-muted"><tr><th className="px-3 py-3">Sel.</th><th className="px-3 py-3">Associado</th><th className="px-3 py-3">Vencimento</th><th className="px-3 py-3">Código</th><th className="px-3 py-3">Parcela</th><th className="px-3 py-3">Tipo de pagto</th><th className="px-3 py-3">Tipo parcela</th><th className="px-3 py-3">Campanha</th><th className="px-3 py-3">Lote</th><th className="px-3 py-3 text-right">Valor</th><th className="px-3 py-3 text-right">Valor pago</th><th className="px-3 py-3 text-right">Pendência</th><th className="px-3 py-3">Pagamento</th><th className="px-3 py-3 text-center">Qtde disparos</th><th className="px-3 py-3">Último disparo</th></tr></thead><tbody className="divide-y divide-subtle">{pageRows.map((row) => <tr key={row.targetId} className="hover:bg-surface-hover"><td className="px-3 py-3"><input type="checkbox" checked={selectedIds.has(row.targetId)} onChange={() => toggleRow(row)} disabled={loading || !isEligible(row)} className="h-4 w-4 rounded border-default disabled:opacity-30" /></td><td className="px-3 py-3"><div className="font-semibold text-primary">{row.name}</div><div className="mt-1 text-[10px] text-muted">{row.cpf || "-"}</div></td><td className="px-3 py-3 text-secondary">{row.dueDate}</td><td className="px-3 py-3 text-secondary">{row.associatedCode || "-"}</td><td className="px-3 py-3 text-secondary">{row.installment || "-"}</td><td className="px-3 py-3 text-secondary">{row.receipt}</td><td className="px-3 py-3 text-secondary">{row.installmentType}</td><td className="max-w-[150px] px-3 py-3 text-secondary"><span className="block truncate" title={row.campaign}>{row.campaign}</span></td><td className="max-w-[150px] px-3 py-3 text-secondary"><span className="block truncate" title={row.batch}>{row.batch}</span></td><td className="px-3 py-3 text-right font-medium text-primary">{formatMoney(row.amount)}</td><td className="px-3 py-3 text-right text-secondary">{formatMoney(row.paidAmount ?? 0)}</td><td className={`px-3 py-3 text-right font-semibold ${row.pending > 0 ? "text-danger" : "text-success"}`}>{formatMoney(row.pending)}</td><td className="px-3 py-3"><span className={`rounded-full border px-2 py-1 text-[10px] font-semibold ${row.payment === "paid" ? "border-success bg-success-soft text-success" : "border-danger bg-danger-soft text-danger"}`}>{paymentLabel(row.payment)}</span></td><td className="px-3 py-3 text-center font-semibold text-primary">{formatCount(row.dispatchCount)}</td><td className="px-3 py-3 text-secondary">{row.lastDispatchDate}</td></tr>)}</tbody></table></div>
-            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-subtle p-3 text-xs text-muted"><span>{loading ? "Atualizando registros..." : `Exibindo ${formatCount(pageData.filteredCount)} parcelas · Página ${currentPage} de ${pageCount} · ${formatCount(pageRows.length)} nesta página`}</span><div className="flex items-center gap-2"><button type="button" onClick={() => setPage((value) => Math.max(1, value - 1))} disabled={loading || currentPage <= 1} className="rounded-lg border border-default px-3 py-2 disabled:opacity-30">Anterior</button><button type="button" onClick={() => setPage((value) => Math.min(pageCount, value + 1))} disabled={loading || currentPage >= pageCount} className="rounded-lg border border-default px-3 py-2 disabled:opacity-30">Próxima</button></div></div>
+            <div className="overflow-x-auto"><table className="w-full min-w-[1500px] text-left text-xs"><thead className="bg-surface-secondary text-[10px] uppercase tracking-wide text-muted"><tr><th className="px-3 py-3">Sel.</th><th className="px-3 py-3">Associado</th><th className="px-3 py-3">Vencimento</th><th className="px-3 py-3">Código</th><th className="px-3 py-3">Parcela</th><th className="px-3 py-3">Tipo de pagto</th><th className="px-3 py-3">Tipo parcela</th><th className="px-3 py-3">Campanha</th><th className="px-3 py-3">Lote</th><th className="px-3 py-3 text-right">Valor</th><th className="px-3 py-3 text-right">Valor pago</th><th className="px-3 py-3 text-right">Pendência</th><th className="px-3 py-3">Pagamento</th><th className="px-3 py-3 text-center">Qtde disparos</th><th className="px-3 py-3">Último disparo</th></tr></thead><tbody className="divide-y divide-subtle">{pageRows.map((row) => <tr key={row.targetId} className="hover:bg-surface-hover"><td className="px-3 py-3"><input type="checkbox" checked={selectedIds.has(row.targetId)} onChange={() => toggleRow(row)} disabled={loading || pageError || !isEligible(row)} className="h-4 w-4 rounded border-default disabled:opacity-30" /></td><td className="px-3 py-3"><div className="font-semibold text-primary">{row.name}</div><div className="mt-1 text-[10px] text-muted">{row.cpf || "-"}</div></td><td className="px-3 py-3 text-secondary">{row.dueDate}</td><td className="px-3 py-3 text-secondary">{row.associatedCode || "-"}</td><td className="px-3 py-3 text-secondary">{row.installment || "-"}</td><td className="px-3 py-3 text-secondary">{row.receipt}</td><td className="px-3 py-3 text-secondary">{row.installmentType}</td><td className="max-w-[150px] px-3 py-3 text-secondary"><span className="block truncate" title={row.campaign}>{row.campaign}</span></td><td className="max-w-[150px] px-3 py-3 text-secondary"><span className="block truncate" title={row.batch}>{row.batch}</span></td><td className="px-3 py-3 text-right font-medium text-primary">{formatMoney(row.amount)}</td><td className="px-3 py-3 text-right text-secondary">{formatMoney(row.paidAmount ?? 0)}</td><td className={`px-3 py-3 text-right font-semibold ${row.pending > 0 ? "text-danger" : "text-success"}`}>{formatMoney(row.pending)}</td><td className="px-3 py-3"><span className={`rounded-full border px-2 py-1 text-[10px] font-semibold ${row.payment === "paid" ? "border-success bg-success-soft text-success" : "border-danger bg-danger-soft text-danger"}`}>{paymentLabel(row.payment)}</span></td><td className="px-3 py-3 text-center font-semibold text-primary">{formatCount(row.dispatchCount)}</td><td className="px-3 py-3 text-secondary">{row.lastDispatchDate}</td></tr>)}</tbody></table></div>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-subtle p-3 text-xs text-muted"><span>{loading ? "Atualizando registros..." : `Exibindo ${formatCount(pageData.filteredCount)} parcelas · Página ${currentPage} de ${pageCount} · ${formatCount(pageRows.length)} nesta página`}</span><div className="flex items-center gap-2"><button type="button" onClick={() => setPage((value) => Math.max(1, value - 1))} disabled={loading || pageError || currentPage <= 1} className="rounded-lg border border-default px-3 py-2 disabled:opacity-30">Anterior</button><button type="button" onClick={() => setPage((value) => Math.min(pageCount, value + 1))} disabled={loading || pageError || currentPage >= pageCount} className="rounded-lg border border-default px-3 py-2 disabled:opacity-30">Próxima</button></div></div>
           </div>
         </>
       ) : (
