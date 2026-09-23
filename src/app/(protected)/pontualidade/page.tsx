@@ -3,7 +3,7 @@ import { PageHeader } from "@/components/page-header";
 import { PageSurface } from "@/components/page-surface";
 import { PunctualityFilters } from "@/components/punctuality-filters";
 import {
-  getPaymentDetails, getPaymentMethods, getPaymentReport,
+  getPaymentDateReconciliation, getPaymentDetails, getPaymentMethods, getPaymentReport,
   paymentFilterSearch, readPaymentFilters, sortPaymentGroups,
   type GroupKind, type PaymentFilters, type ReportGroup, type ReportMetric, type ReportTab
 } from "@/lib/payment-punctuality";
@@ -150,8 +150,11 @@ export default async function PunctualityPage({
 
   let report: Awaited<ReturnType<typeof getPaymentReport>>;
   let methods: string[];
+  let reconciliation: Awaited<ReturnType<typeof getPaymentDateReconciliation>>;
   try {
-    [report, methods] = await Promise.all([getPaymentReport(filters), getPaymentMethods()]);
+    [report, methods, reconciliation] = await Promise.all([
+      getPaymentReport(filters), getPaymentMethods(), getPaymentDateReconciliation(filters)
+    ]);
   } catch (error) {
     console.error("[PUNCTUALITY_REPORT_FAILED]", { message: error instanceof Error ? error.message : "Erro desconhecido" });
     return (
@@ -249,6 +252,22 @@ export default async function PunctualityPage({
           <StatCard label={openOnly ? "Valor em aberto" : includesOpen ? "Valor financeiro analisado" : "Valor recebido"}
             value={money(report.total.amountCents)} hint="Somatório financeiro das parcelas elegíveis" />
         </div>
+
+        {reconciliation ? (
+          <div className="mt-4 rounded-xl border border-info bg-info-soft p-4 text-xs leading-relaxed text-info" role="status">
+            <strong>Conferência por data de pagamento:</strong> {number(reconciliation.matchedRows)} parcelas com pagamento datado
+            no intervalo selecionado, das quais {number(reconciliation.paidRows)} têm situação “paga”.
+            {reconciliation.missingDueRows || reconciliation.missingAmountRows ? (
+              <span> Entre as pagas, {number(reconciliation.missingDueRows)} não têm vencimento válido
+                e {number(reconciliation.missingAmountRows)} não têm valor pago informado; essas ocorrências
+                não podem ser classificadas com segurança como pontuais ou atrasadas.
+              </span>
+            ) : null}
+            <span> O relatório contabiliza somente parcelas pagas classificáveis nas situações escolhidas.
+              O módulo Associados também pode exibir outros status nessa mesma data.
+            </span>
+          </div>
+        ) : null}
 
         {filters.tab === "geral" ? (
           <div className="mt-5 grid gap-4 xl:grid-cols-3">
