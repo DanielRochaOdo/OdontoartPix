@@ -4,6 +4,7 @@ import { PageSurface } from "@/components/page-surface";
 import { PunctualityFilters } from "@/components/punctuality-filters";
 import {
   getPaymentDateReconciliation, getPaymentDetails, getPaymentMethods, getPaymentReport,
+  getPaymentMethodChanges, getPaymentMethodChangeDetails,
   paymentFilterSearch, readPaymentFilters, sortPaymentGroups,
   type GroupKind, type PaymentFilters, type ReportGroup, type ReportMetric, type ReportTab
 } from "@/lib/payment-punctuality";
@@ -14,7 +15,8 @@ const TABS: Array<{ key: ReportTab; label: string; description: string }> = [
   { key: "geral", label: "Visão geral", description: "Panorama da pontualidade dos recebimentos." },
   { key: "planos", label: "Planos", description: "Comparativo entre Clínico e Orto." },
   { key: "vencimentos", label: "Vencimentos", description: "Dias do mês com maior atraso e média por vencimento." },
-  { key: "formas", label: "Formas de pagamento", description: "Tempo até a quitação conforme a modalidade recebida." }
+  { key: "formas", label: "Formas de pagamento", description: "Tempo até a quitação conforme a modalidade recebida." },
+  { key: "trocas", label: "Troca de pagamento", description: "Comparação da forma configurada no ERP com a forma realmente utilizada em cada parcela paga." }
 ];
 
 const LABEL_BY_METRIC: Record<ReportMetric, string> = {
@@ -172,6 +174,19 @@ export default async function PunctualityPage({
   const dues = sortPaymentGroups(all.filter((item) => item.kind === "due"), filters);
   const paymentMethods = sortPaymentGroups(all.filter((item) => item.kind === "method"), filters);
   const current = TABS.find((item) => item.key === filters.tab)!;
+  const showAllChanges = params.show === "all";
+  const changeReport = filters.tab === "trocas" ? await getPaymentMethodChanges(filters) : null;
+  const sortedChangeRows = changeReport ? [...changeReport.rows].filter((row) => showAllChanges || row.changed).sort((left, right) => {
+    const value = (row: typeof left) => filters.metric === "count" ? row.count
+      : filters.metric === "amount" ? row.amountCents
+      : filters.metric === "rate" ? row.lateRate : row.averageDays;
+    return (filters.order === "desc" ? -1 : 1) * (value(left) - value(right)) ||
+      left.configured.localeCompare(right.configured, "pt-BR") || left.received.localeCompare(right.received, "pt-BR");
+  }) : [];
+  const changeFrom = typeof params.changeFrom === "string" ? params.changeFrom : "";
+  const changeTo = typeof params.changeTo === "string" ? params.changeTo : "";
+  const selectedChange = changeReport?.rows.find((row) => row.configured === changeFrom && row.received === changeTo);
+  const changeDetails = selectedChange ? await getPaymentMethodChangeDetails(filters, changeFrom, changeTo) : [];
   const detailKindParam = typeof params.detailKind === "string" ? params.detailKind : "";
   const detailKey = typeof params.detailKey === "string" ? params.detailKey : "";
   const detailKind = ["plan", "due", "method", "total"].includes(detailKindParam) && detailKey
@@ -267,6 +282,114 @@ export default async function PunctualityPage({
               O módulo Associados também pode exibir outros status nessa mesma data.
             </span>
           </div>
+        ) : null}
+
+        {filters.tab === "trocas" && changeReport ? (
+          <section className="mt-5 space-y-4" aria-label="Mudança entre forma configurada e utilizada">
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <StatCard label="Parcelas comparáveis" value={number(changeReport.compared)}
+                hint={number(changeReport.totalPaid) + " parcelas pagas no filtro atual"} />
+              <StatCard label="Forma de pagamento alterada" value={number(changeReport.changed)}
+                hint={percent(changeReport.compared ? changeReport.changed / changeReport.compared * 100 : 0) + " das parcelas com as duas formas conhecidas"} />
+              <StatCard label="Mesma forma configurada" value={number(changeReport.unchanged)}
+                hint="Método previsto e método recebido equivalentes" />
+              <StatCard label="Sem informação para comparar" value={number(changeReport.withoutConfigured)}
+                hint="Descrições configurada/recebida ausentes; não classificadas como mudança" />
+            </div>
+            <div className="rounded-xl border border-info bg-info-soft px-4 py-3 text-xs leading-relaxed text-info">
+              Comparamos <strong>DescricaoPagamento</strong> (forma configurada no ERP para a parcela)
+              com <strong>DescricaoRecebimento</strong> (forma efetivamente utilizada).
+              Descrições Pix equivalentes e variações de boleto bancário não contam como troca.
+              Dados de configurações anteriores à implantação podem não estar armazenados: são apresentados
+              como não informados até uma nova consulta ao ERP, sem inferência a partir da forma recebida.
+              A comparação considera exclusivamente parcelas pagas com datas elegíveis nos filtros.
+            </div>
+            <div className="odonto-card overflow-hidden">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-subtle p-4 sm:px-5">
+                <div>
+                  <h3 className="text-sm font-bold text-primary">Origem → forma utilizada</h3>
+                  <p className="mt-1 text-xs text-secondary">Clique em uma linha para conferir os associados e as parcelas. O percentual do card usa apenas as parcelas comparáveis.</p>
+                </div>
+                <Link className="rounded-lg border border-default px-3 py-2 text-xs font-semibold text-secondary hover:bg-surface-hover"
+                  href={paymentFilterSearch(filters, { show: showAllChanges ? "" : "all", changeFrom: "", changeTo: "" })}>
+                  {showAllChanges ? "Mostrar somente alterações" : "Mostrar alterações e formas mantidas"}
+                </Link>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[700px] border-collapse text-left text-xs">
+                  <thead className="bg-surface-secondary text-secondary">
+                    <tr>
+                      {["Forma configurada", "Forma utilizada", "Comparação", "Parcelas", "Atraso médio", "Valor recebido"].map((name) => (
+                        <th key={name} scope="col" className="px-4 py-3">{name}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortedChangeRows.map((row) => (
+                      <tr key={JSON.stringify([row.configured, row.received])} className="border-t border-subtle hover:bg-surface-hover">
+                        <td className="p-0 font-semibold text-primary">
+                          <Link className="block px-4 py-3 underline-offset-4 hover:text-brand hover:underline"
+                            href={paymentFilterSearch(filters, {
+                              show: showAllChanges ? "all" : "",
+                              changeFrom: row.configured, changeTo: row.received
+                            }) + "#troca-detalhamento"}>{row.configured} ↗</Link>
+                        </td>
+                        <td className="px-4 py-3">{row.received}</td>
+                        <td className="px-4 py-3">
+                          <span className={row.changed ? "font-semibold text-warning" : "text-success"}>
+                            {row.changed ? "Alterada" : "Mantida"}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 tabular-nums">{number(row.count)}</td>
+                        <td className="px-4 py-3 tabular-nums">{decimal(row.averageDays)} dias</td>
+                        <td className="px-4 py-3 tabular-nums">{money(row.amountCents)}</td>
+                      </tr>
+                    ))}
+                    {!sortedChangeRows.length ? (
+                      <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-muted">
+                        {changeReport.compared === 0 ? "Nenhuma parcela possui as duas formas de pagamento registradas neste filtro."
+                          : "Não foram encontradas trocas de forma de pagamento neste filtro."}
+                      </td></tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            {selectedChange ? (
+              <section id="troca-detalhamento" className="odonto-card overflow-hidden">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-subtle p-4">
+                  <div>
+                    <h3 className="text-sm font-bold text-primary">
+                      Parcelas · {selectedChange.configured} → {selectedChange.received}
+                    </h3>
+                    <p className="mt-1 text-xs text-secondary">Exibindo até 50 parcelas, sem duplicar uma obrigação por lote/campanha.</p>
+                  </div>
+                  <Link className="rounded-lg border border-default px-3 py-2 text-xs text-secondary hover:bg-surface-hover"
+                    href={paymentFilterSearch(filters, { show: showAllChanges ? "all" : "" })}>Fechar detalhes</Link>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[800px] border-collapse text-left text-xs">
+                    <thead className="bg-surface-secondary text-secondary">
+                      <tr>{["Associado", "Parcela", "Plano", "Vencimento", "Pagamento", "Forma configurada", "Forma recebida", "Dias de atraso"].map((label) =>
+                        <th scope="col" key={label} className="px-4 py-3">{label}</th>)}</tr>
+                    </thead>
+                    <tbody>{changeDetails.map((item) => (
+                      <tr key={item.id} className="border-t border-subtle hover:bg-surface-hover">
+                        <td className="px-4 py-3 font-semibold text-primary">{item.memberName}</td>
+                        <td className="px-4 py-3">{item.code}</td>
+                        <td className="px-4 py-3">{item.plan}</td>
+                        <td className="px-4 py-3 tabular-nums">{humanDate(item.dueDate)}</td>
+                        <td className="px-4 py-3 tabular-nums">{humanDate(item.paymentDate)}</td>
+                        <td className="px-4 py-3">{item.configuredMethod ?? "Não informado"}</td>
+                        <td className="px-4 py-3">{item.method}</td>
+                        <td className="px-4 py-3 tabular-nums">{number(item.days)}</td>
+                      </tr>
+                    ))}</tbody>
+                  </table>
+                </div>
+              </section>
+            ) : null}
+          </section>
         ) : null}
 
         {filters.tab === "geral" ? (
