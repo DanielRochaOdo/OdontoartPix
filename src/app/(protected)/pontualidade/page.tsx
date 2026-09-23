@@ -408,12 +408,12 @@ export default async function PunctualityPage({
             <BarRanking title="Dias do mês" groups={dues} filters={filters} limit={31} />
             <RankingTable kind="due" groups={dues} filters={filters} />
           </div>
-        ) : (
+        ) : filters.tab === "formas" ? (
           <div className="mt-5 grid gap-4 xl:grid-cols-[minmax(260px,0.9fr)_minmax(0,1.7fr)]">
             <BarRanking title="Modalidades de recebimento" groups={includesOpen ? [] : paymentMethods} filters={filters} limit={30} />
             <RankingTable kind="method" groups={includesOpen ? [] : paymentMethods} filters={filters} />
           </div>
-        )}
+        ) : null}
 
         {selectedGroup ? (
           <section id="detalhamento" className="odonto-card mt-5 overflow-hidden" aria-label="Detalhamento de parcelas">
