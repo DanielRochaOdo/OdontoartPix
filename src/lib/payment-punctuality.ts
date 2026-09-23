@@ -47,6 +47,7 @@ export type PaymentDetail = {
   dueDate: string;
   paymentDate: string | null;
   method: string;
+  configuredMethod: string | null;
   days: number;
   amountCents: number;
 };
@@ -247,6 +248,7 @@ export const PAYMENT_SOURCE_SQL = `with candidate as (
          canonical.external_installment_code, canonical.installment_type,
          canonical.due_date_text, canonical.payment_date_text,
          canonical.payment_status, canonical.payment_description,
+         canonical.configured_payment_description,
          canonical.paid_amount_cents, canonical.pending_amount_cents,
          ${dateSql("canonical.due_date_text")} as due_raw,
          ${dateSql("canonical.payment_date_text")} as payment_raw
@@ -441,12 +443,13 @@ export async function getPaymentDetails(filters: PaymentFilters, kind: GroupKind
     id: string; member_id: string; member_name: string | null;
     external_installment_code: string; plan: string;
     due_date: string; payment_date: string | null; method: string;
+    configured_payment_description: string | null;
     days: number; report_amount_cents: number;
   }>(PAYMENT_SOURCE_SQL + `
     select id, member_id, member_name, external_installment_code, plan,
       to_char(due_date, 'YYYY-MM-DD') as due_date,
       case when payment_date is null then null else to_char(payment_date, 'YYYY-MM-DD') end as payment_date,
-      method, days, report_amount_cents::float8 as report_amount_cents
+      method, configured_payment_description, days, report_amount_cents::float8 as report_amount_cents
     from eligible
     where ($9::text = 'total'
       or ($9::text = 'plan' and plan = $10::text)
@@ -459,6 +462,7 @@ export async function getPaymentDetails(filters: PaymentFilters, kind: GroupKind
     id: row.id, memberId: row.member_id, memberName: row.member_name ?? "Associado sem nome",
     code: row.external_installment_code, plan: labelForGroup("plan", row.plan),
     dueDate: row.due_date, paymentDate: row.payment_date, method: row.method,
+    configuredMethod: row.configured_payment_description,
     days: Number(row.days), amountCents: Number(row.report_amount_cents)
   }));
 }
