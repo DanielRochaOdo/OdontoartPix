@@ -2,10 +2,8 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
-import * as XLSX from "xlsx-js-style";
-import { buildAssociadosWorkbook } from "@/lib/export-workbooks";
-import type { AssociadoCardListItem } from "@/lib/associados-card-read";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { AssociadosFilterOptions, AssociadosFilters, AssociadosPage } from "@/lib/associados-paginated";
 import { emitMetricsSync } from "@/lib/metrics-sync";
 import {
   isPaidWithPending,
@@ -465,11 +463,13 @@ function CardActions({ row }: { row: Row }) {
 }
 
 export function AssociadosCardList({
-  members,
+  initialPage,
+  filterOptions,
   initialFilters,
   canReprocessErrors = false
 }: {
-  members: AssociadoCardListItem[];
+  initialPage: AssociadosPage;
+  filterOptions: AssociadosFilterOptions;
   canReprocessErrors?: boolean;
   initialFilters?: {
     query?: string;
@@ -488,6 +488,14 @@ export function AssociadosCardList({
   };
 }) {
   const router = useRouter();
+  const [pageData, setPageData] = useState(initialPage);
+  const members = pageData.rows;
+  const firstRequest = useRef(true);
+  const [refreshToken, setRefreshToken] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [pageError, setPageError] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [selectingAll, setSelectingAll] = useState(false);
   const [query, setQuery] = useState(initialFilters?.query ?? "");
   const [codeFilter, setCodeFilter] = useState(initialFilters?.code ?? "");
   const [installmentFilter, setInstallmentFilter] = useState(initialFilters?.installment ?? "");
@@ -567,117 +575,80 @@ export function AssociadosCardList({
     [members]
   );
 
-  const options = useMemo(
-    () => ({
-      status: [...new Set(rows.map((row) => row.status))].sort(),
-      payment: [...new Set(rows.map((row) => row.payment))].sort(),
-      receipt: [...new Set(rows.map((row) => row.receiptDescription))].sort((a, b) => a.localeCompare(b, "pt-BR")),
-      installmentType: [...new Set(rows.map((row) => row.installmentType).filter((value) => value !== "-"))].sort((a, b) => a.localeCompare(b, "pt-BR")),
-      campaign: [...new Map(rows.map((row) => [row.campaignId, row.campaign])).entries()],
-      batch: [...new Map(rows.map((row) => [row.batchId, row.batch])).entries()]
-    }),
-    [rows]
-  );
+  // Os menus recebem opções do conjunto completo, não apenas da página de 50.
+  const options = useMemo(() => ({
+    status: [...new Set(filterOptions.status.map((item) => normalizeStatus(item.value)))].sort(),
+    payment: [...new Set(filterOptions.payment.map((item) => normalizePayment(item.value)))].sort(),
+    receipt: filterOptions.receipt.map((item) => item.value),
+    installmentType: filterOptions.installmentType.map((item) => item.value).filter((value) => value !== "-"),
+    campaign: filterOptions.campaign.map((item): [string, string] => [item.value, item.label]),
+    batch: filterOptions.batch.map((item): [string, string] => [item.value, item.label])
+  }), [filterOptions]);
 
-  const filteredRows = useMemo(
-    () =>
-      rows
-        .filter((row) => {
-          const search = [
-            row.name,
-            row.cpf,
-            row.associatedCode,
-            row.installment,
-            row.installmentType,
-            row.dueDate,
-            row.campaign,
-            row.batch,
-            row.status,
-            row.payment,
-            row.paidWithPending ? "pago com pendencia" : "",
-            row.receiptDescription,
-            row.paymentDate,
-            row.missingInstallment ? INSTALLMENT_NOT_FOUND_LABEL : ""
-          ]
-            .join(" ")
-            .toLowerCase();
+  const currentFilters = useMemo<AssociadosFilters>(() => ({
+    query, code: codeFilter, installment: installmentFilter,
+    dueDateFrom, dueDateTo, paymentDateFrom, paymentDateTo,
+    status: statusFilters, payment: paymentFilters, paidPending: paidPendingFilter,
+    receipt: receiptFilters, installmentType: installmentTypeFilters,
+    campaign: campaignFilters, batch: batchFilters
+  }), [query, codeFilter, installmentFilter, dueDateFrom, dueDateTo,
+    paymentDateFrom, paymentDateTo, statusFilters, paymentFilters, paidPendingFilter,
+    receiptFilters, installmentTypeFilters, campaignFilters, batchFilters]);
 
-          const rowDate = dateKey(row.dueDate);
-          const matchesDate =
-            (!dueDateFrom && !dueDateTo) ||
-            (Boolean(rowDate) &&
-              (!dueDateFrom || rowDate >= dueDateFrom) &&
-              (!dueDateTo || rowDate <= dueDateTo));
-
-          const rowPaymentDate = dateKey(row.paymentDate);
-          const matchesPaymentDate =
-            (!paymentDateFrom && !paymentDateTo) ||
-            (Boolean(rowPaymentDate) &&
-              (!paymentDateFrom || rowPaymentDate >= paymentDateFrom) &&
-              (!paymentDateTo || rowPaymentDate <= paymentDateTo));
-
-          return (
-            (!query.trim() || search.includes(query.trim().toLowerCase())) &&
-            (!codeFilter.trim() || row.associatedCode === codeFilter.trim()) &&
-            (!installmentFilter.trim() || row.installment === installmentFilter.trim()) &&
-            matchesDate &&
-            matchesPaymentDate &&
-            (statusFilters.length === 0 || statusFilters.includes(row.status)) &&
-            (paymentFilters.length === 0 || paymentFilters.includes(row.payment)) &&
-            matchesPaidPendingFilter(row.payment, row.pending, paidPendingFilter) &&
-            (receiptFilters.length === 0 || receiptFilters.includes(row.receiptDescription)) &&
-            (installmentTypeFilters.length === 0 || installmentTypeFilters.includes(row.installmentType)) &&
-            (campaignFilters.length === 0 || campaignFilters.includes(row.campaignId)) &&
-            (batchFilters.length === 0 || batchFilters.includes(row.batchId))
-          );
-        })
-        .sort((a, b) => {
-          const left = a[sortKey];
-          const right = b[sortKey];
-          const result =
-            typeof left === "number" && typeof right === "number"
-              ? left - right
-              : String(left).localeCompare(String(right), "pt-BR", {
-                  numeric: true,
-                  sensitivity: "base"
-                });
-          return ascending ? result : -result;
-        }),
-    [
-      ascending,
-      batchFilters,
-      campaignFilters,
-      codeFilter,
-      dueDateFrom,
-      dueDateTo,
-      installmentFilter,
-      installmentTypeFilters,
-      paidPendingFilter,
-      paymentDateFrom,
-      paymentDateTo,
-      paymentFilters,
-      query,
-      receiptFilters,
-      rows,
-      sortKey,
-      statusFilters
-    ]
-  );
-
-  const pageCount = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE));
+  const filteredRows = rows;
+  const pageCount = Math.max(1, Math.ceil(pageData.filteredCount / PAGE_SIZE));
   const currentPage = Math.min(page, pageCount);
-  const paginatedRows = useMemo(
-    () => filteredRows.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE),
-    [currentPage, filteredRows]
-  );
-  const allFilteredSelected =
-    filteredRows.length > 0 && filteredRows.every((row) => selectedIds.has(row.id));
+  const paginatedRows = pageError ? [] : filteredRows;
+  const allFilteredSelected = pageData.filteredCount > 0 && selectedIds.size === pageData.filteredCount;
   const selectedCount = selectedIds.size;
   const canShowErrorReprocess =
     canReprocessErrors &&
     statusFilters.length === 1 &&
     statusFilters[0] === "error" &&
-    filteredRows.length > 0;
+    pageData.filteredCount > 0 && !pageError;
+
+  const previousFilters = useRef(JSON.stringify(currentFilters));
+  useEffect(() => {
+    const filtersKey = JSON.stringify(currentFilters);
+    if (previousFilters.current !== filtersKey) {
+      setSelectedIds(new Set());
+      previousFilters.current = filtersKey;
+    }
+    if (firstRequest.current) {
+      firstRequest.current = false;
+      return;
+    }
+    const controller = new AbortController();
+    setLoading(true);
+    setPageError(false);
+    const timeout = window.setTimeout(async () => {
+      try {
+        const response = await fetch("/api/associados/lista", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ filters: currentFilters, page, sort: sortKey, ascending }),
+          signal: controller.signal
+        });
+        const payload = await response.json();
+        if (!response.ok || !payload?.success) throw new Error(payload?.error?.message ?? "Falha ao consultar a lista.");
+        if (!controller.signal.aborted) {
+          setPageData(payload.data as AssociadosPage);
+          setPageError(false);
+        }
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setPageError(true);
+          setSelectionError(error instanceof Error ? error.message : "Não foi possível atualizar os associados.");
+        }
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
+    }, 200);
+    return () => {
+      controller.abort();
+      window.clearTimeout(timeout);
+    };
+  }, [currentFilters, page, sortKey, ascending, refreshToken]);
 
   const completionPercentage = bulkProgress
     ? bulkProgress.requestedCount === 0
