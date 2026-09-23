@@ -1,4 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
+import { dbQuery } from "@/lib/db/pool";
 import {
   aggregatePaymentRows, delayDays, normalizePaymentMethod,
   getPaymentDateReconciliation, getPaymentDetails, getPaymentMethods, getPaymentReport,
@@ -133,4 +135,69 @@ describe("Consulta SQL de pontualidade", () => {
     const reconciliation = await getPaymentDateReconciliation(dated);
     expect(reconciliation).toMatchObject({ matchedRows: expect.any(Number), paidRows: expect.any(Number) });
   });
+});
+
+describe("Pontualidade integrada aos mesmos dados canônicos de Associados", () => {
+  it.skipIf(process.env.CI !== "true" || process.env.DATABASE_NAME !== "odontoart_pix_ci")(
+    "classifica pagamentos registrados no mesmo dia independentemente do vencimento e não duplica lotes",
+    async () => {
+      const id = randomUUID();
+      const method = "PONTUALIDADE-TESTE-" + id;
+      let campaignId: string | null = null;
+      let memberId: string | null = null;
+      try {
+        const member = await dbQuery<{ id: string }>(
+          "insert into members(cpf, cpf_hash, name) values ($1, $2, $3) returning id",
+          ["CI-" + id, id, "Teste de pontualidade"]
+        );
+        memberId = member.rows[0].id;
+        const campaign = await dbQuery<{ id: string }>(
+          "insert into campaigns(name) values ($1) returning id", ["CI Pontualidade " + id]
+        );
+        campaignId = campaign.rows[0].id;
+        const firstBatch = await dbQuery<{ id: string }>(
+          "insert into campaign_batches(campaign_id, name) values ($1, $2) returning id",
+          [campaignId, "CI A " + id]
+        );
+        const secondBatch = await dbQuery<{ id: string }>(
+          "insert into campaign_batches(campaign_id, name) values ($1, $2) returning id",
+          [campaignId, "CI B " + id]
+        );
+        for (const [index, due] of ["10/08/2026", "10/10/2026"].entries()) {
+          const code = id + "-" + index;
+          const canonical = await dbQuery<{ id: string }>(`
+            insert into member_target_installments(
+              member_id, external_installment_code, installment_type, due_date_text,
+              payment_date_text, amount_cents, paid_amount_cents, pending_amount_cents,
+              payment_status, payment_description, payment_status_source
+            ) values ($1, $2, 'clinico', $3, '22/09/2026', 10000, 10000, 0, 'paid', $4, 'erp_explicit')
+            returning id
+          `, [memberId, code, due, method]);
+          for (const batchId of [firstBatch.rows[0].id, secondBatch.rows[0].id]) {
+            await dbQuery(`
+              insert into campaign_batch_members(
+                campaign_id, batch_id, member_id, target_installment_id, target_installment_ref_id,
+                due_date_text, installment_amount_cents, payment_amount_cents,
+                total_pending_amount_cents, payment_status, payment_status_source, processing_status
+              ) values ($1, $2, $3, $4, $5, $6, 10000, 10000, 0, 'paid', 'erp_explicit', 'completed')
+            `, [campaignId, batchId, memberId, code, canonical.rows[0].id, due]);
+          }
+        }
+        const filters = readPaymentFilters({
+          period: "custom", from: "2026-09-22", to: "2026-09-22",
+          dateBasis: "payment", method: [method], scopes: ["paid", "late"]
+        }, "2026-09-23");
+        const report = await getPaymentReport(filters);
+        expect(report.total).toMatchObject({ count: 2, paidCount: 2, onTimeCount: 1, lateCount: 1 });
+        expect((await getPaymentDetails(filters, "total", "all")).length).toBe(2);
+        const reconciliation = await getPaymentDateReconciliation(filters);
+        expect(reconciliation).toMatchObject({ matchedRows: 2, paidRows: 2, missingDueRows: 0, missingAmountRows: 0 });
+        const byDue = await getPaymentReport({ ...filters, dateBasis: "due" });
+        expect(byDue.total.count).toBe(0);
+      } finally {
+        if (campaignId) await dbQuery("delete from campaigns where id = $1", [campaignId]);
+        if (memberId) await dbQuery("delete from members where id = $1", [memberId]);
+      }
+    }
+  );
 });
