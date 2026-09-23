@@ -997,7 +997,7 @@ export function AssociadosCardList({
             <button
               type="button"
               onClick={reprocessSelected}
-              disabled={selectedCount === 0 || reprocessingSelected}
+              disabled={loading || pageError || selectedCount === 0 || reprocessingSelected}
               className="rounded-lg border border-brand bg-brand-soft px-3 py-2 text-sm font-semibold text-brand transition hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-50"
             >
               {reprocessingSelected ? "Enviando..." : `Reprocessar selecionados (${selectedCount})`}
@@ -1005,8 +1005,8 @@ export function AssociadosCardList({
             {canShowErrorReprocess || bulkProgress?.active ? (
               <button
                 type="button"
-                onClick={reprocessFilteredErrors}
-                disabled={reprocessingErrors || bulkProgress?.active || !canShowErrorReprocess}
+                onClick={() => void reprocessFilteredErrors()}
+                disabled={loading || pageError || reprocessingErrors || bulkProgress?.active || !canShowErrorReprocess}
                 className="rounded-lg border border-warning bg-warning-soft px-3 py-2 text-sm font-medium text-warning disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {reprocessingErrors ? "Criando snapshot..." : bulkProgress?.active ? "Reprocessando..." : "Reprocessar erros"}
@@ -1014,11 +1014,11 @@ export function AssociadosCardList({
             ) : null}
             <button
               type="button"
-              onClick={exportFilteredRows}
-              disabled={filteredRows.length === 0}
+              onClick={() => void exportFilteredRows()}
+              disabled={loading || pageError || exporting || pageData.filteredCount === 0}
               className="rounded-lg border border-brand bg-brand-soft px-3 py-2 text-sm font-semibold text-brand transition hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-50"
             >
-              Exportar XLSX ({filteredRows.length})
+              {exporting ? "Exportando..." : `Exportar XLSX (${pageData.filteredCount.toLocaleString("pt-BR")})`}
             </button>
             <button type="button" onClick={clearAllFilters} className="rounded-lg border border-default bg-surface-secondary px-3 py-2 text-sm font-medium text-secondary transition hover:bg-surface-hover hover:text-primary">
               Limpar
@@ -1194,8 +1194,8 @@ export function AssociadosCardList({
 
       <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div className="text-sm text-secondary">
-          <div>Exibindo {filteredRows.length} de {rows.length} associados.</div>
-          <div className="mt-1 text-xs text-muted">Pagina {currentPage} de {pageCount} · Ate {PAGE_SIZE} registros por pagina.</div>
+          <div>{pageError ? "Não foi possível atualizar a contagem." : `Exibindo ${pageData.filteredCount.toLocaleString("pt-BR")} de ${pageData.totalCount.toLocaleString("pt-BR")} associados.`}</div>
+          <div className="mt-1 text-xs text-muted">{loading ? "Atualizando registros..." : `Pagina ${currentPage} de ${pageCount} · ${paginatedRows.length} registros nesta página (até ${PAGE_SIZE}).`}</div>
           {selectedCount > 0 ? <div className="mt-1 text-xs font-medium text-brand">{selectedCount} registro(s) selecionado(s).</div> : null}
         </div>
         <div className="flex flex-wrap items-center gap-3">
@@ -1203,11 +1203,11 @@ export function AssociadosCardList({
             <input
               type="checkbox"
               checked={allFilteredSelected}
-              onChange={toggleAllFiltered}
-              disabled={filteredRows.length === 0}
+              onChange={() => void toggleAllFiltered()}
+              disabled={loading || pageError || selectingAll || pageData.filteredCount === 0}
               className="h-4 w-4 rounded border-default"
             />
-            <span>Selecionar todos filtrados ({filteredRows.length})</span>
+            <span>{selectingAll ? "Selecionando..." : `Selecionar todos filtrados (${pageData.filteredCount.toLocaleString("pt-BR")})`}</span>
           </label>
           <label className="flex items-center gap-2 text-sm text-secondary">
             <span>Ordenar por</span>
@@ -1233,7 +1233,7 @@ export function AssociadosCardList({
         </div>
       </div>
 
-      {filteredRows.length === 0 ? (
+      {pageError || (!loading && pageData.filteredCount === 0) ? (
         <div className="mt-4 rounded-xl border border-warning bg-warning-soft px-4 py-4 text-sm text-warning">
           Nenhum associado encontrado com os filtros aplicados.
         </div>
@@ -1304,11 +1304,11 @@ export function AssociadosCardList({
       </div>
 
       <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
-        <button type="button" onClick={() => setPage(1)} disabled={currentPage === 1} className="rounded-lg border border-default bg-surface-secondary px-3 py-2 text-sm text-secondary disabled:opacity-40">«</button>
+        <button type="button" onClick={() => setPage(1)} disabled={loading || pageError || currentPage === 1} className="rounded-lg border border-default bg-surface-secondary px-3 py-2 text-sm text-secondary disabled:opacity-40">«</button>
         <button type="button" onClick={() => setPage((value) => Math.max(1, value - 1))} disabled={currentPage === 1} className="rounded-lg border border-default bg-surface-secondary px-3 py-2 text-sm text-secondary disabled:opacity-40">‹</button>
         <span className="rounded-lg border border-brand bg-brand-soft px-3 py-2 text-sm font-semibold text-brand">{currentPage}</span>
         <span className="px-1 text-sm text-muted">de {pageCount}</span>
-        <button type="button" onClick={() => setPage((value) => Math.min(pageCount, value + 1))} disabled={currentPage === pageCount} className="rounded-lg border border-default bg-surface-secondary px-3 py-2 text-sm text-secondary disabled:opacity-40">›</button>
+        <button type="button" onClick={() => setPage((value) => Math.min(pageCount, value + 1))} disabled={loading || pageError || currentPage === pageCount} className="rounded-lg border border-default bg-surface-secondary px-3 py-2 text-sm text-secondary disabled:opacity-40">›</button>
         <button type="button" onClick={() => setPage(pageCount)} disabled={currentPage === pageCount} className="rounded-lg border border-default bg-surface-secondary px-3 py-2 text-sm text-secondary disabled:opacity-40">»</button>
       </div>
     </>
