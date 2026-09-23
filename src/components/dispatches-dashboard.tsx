@@ -233,6 +233,15 @@ export function DispatchesDashboard({ initialPage, filterOptions, history, dispa
   const router = useRouter();
   const [pageData, setPageData] = useState(initialPage);
   const rows = pageData.rows;
+  const lastInitialPage = useRef(initialPage);
+  useEffect(() => {
+    // router.refresh() renova os dados SSR; recarrega também os filtros atuais
+    // sem substituir o resultado filtrado por uma página inicial sem filtros.
+    if (lastInitialPage.current !== initialPage) {
+      lastInitialPage.current = initialPage;
+      setRefreshToken((value) => value + 1);
+    }
+  }, [initialPage]);
   const firstRequest = useRef(true);
   const [refreshToken, setRefreshToken] = useState(0);
   const [loading, setLoading] = useState(false);
