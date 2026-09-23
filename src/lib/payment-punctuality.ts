@@ -388,6 +388,36 @@ export function sortPaymentGroups(groups: ReportGroup[], filters: PaymentFilters
   });
 }
 
+// Diagnóstico de reconciliação com a lista de Associados. A lista aplica a
+// data do pagamento a todos os status; pontualidade só classifica parcelas
+// quitadas que possuam vencimento, quitação e valor pago válidos.
+export async function getPaymentDateReconciliation(filters: PaymentFilters) {
+  if (filters.dateBasis !== "payment" || filters.period === "all" || filters.dues.length ||
+    !filters.scopes.includes("paid") && !filters.scopes.includes("late")) return null;
+  const source = PAYMENT_SOURCE_SQL.slice(0, PAYMENT_SOURCE_SQL.indexOf(", selected as ("));
+  const result = await dbQuery<{
+    matched_rows: number; paid_rows: number; missing_due_rows: number; missing_amount_rows: number;
+  }>(source + `
+    select count(*)::int as matched_rows,
+      count(*) filter (where payment_status = 'paid')::int as paid_rows,
+      count(*) filter (where payment_status = 'paid' and due_date is null)::int as missing_due_rows,
+      count(*) filter (where payment_status = 'paid' and paid_amount_cents is null)::int as missing_amount_rows
+    from normalized
+    where payment_date is not null and payment_date <= $6::date
+      and ($1::date is null or payment_date >= $1::date)
+      and ($2::date is null or payment_date <= $2::date)
+      and ($3::text[] is null or plan = any($3::text[]))
+      and ($5::text[] is null or method = any($5::text[]))
+  `, queryValues(filters));
+  const row = result.rows[0];
+  return {
+    matchedRows: Number(row?.matched_rows ?? 0),
+    paidRows: Number(row?.paid_rows ?? 0),
+    missingDueRows: Number(row?.missing_due_rows ?? 0),
+    missingAmountRows: Number(row?.missing_amount_rows ?? 0)
+  };
+}
+
 export async function getPaymentMethods() {
   const result = await dbQuery<{ description: string | null }>(`
     select distinct payment_description as description
