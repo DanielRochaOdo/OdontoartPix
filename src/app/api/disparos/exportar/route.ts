@@ -12,9 +12,9 @@ const BodySchema = z.object({ filters: DispatchFiltersSchema.default({}) });
 
 function formatDate(value: string | null | undefined) {
   if (!value) return "";
-  const br = value.match(/^(\\d{1,2})[/-](\\d{1,2})[/-](\\d{4})$/);
+  const br = value.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
   if (br) return br[1].padStart(2, "0") + "/" + br[2].padStart(2, "0") + "/" + br[3];
-  const iso = value.match(/^(\\d{4})-(\\d{2})-(\\d{2})/);
+  const iso = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
   return iso ? iso[3] + "/" + iso[2] + "/" + iso[1] : value;
 }
 
