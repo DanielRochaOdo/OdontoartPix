@@ -87,14 +87,15 @@ function MultiSelectFilter({
 }
 
 function SingleSelect({
-  name, label, selected, options
+  name, label, selected, options, onChange
 }: {
   name: string; label: string; selected: string; options: Option[];
+  onChange?: (value: string) => void;
 }) {
   return (
     <label className="flex min-w-0 flex-col gap-1.5 text-xs font-semibold text-secondary">
       {label}
-      <select name={name} defaultValue={selected} className="odonto-control w-full px-3 py-2 text-[13px]">
+      <select name={name} defaultValue={selected} onChange={(event) => onChange?.(event.target.value)} className="odonto-control w-full px-3 py-2 text-[13px]">
         {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
       </select>
     </label>
@@ -119,6 +120,9 @@ export function PunctualityFilters({ filters, methods }: { filters: PaymentFilte
   const [dues, setDues] = useState<string[]>(filters.dues.map(String));
   const [selectedMethods, setSelectedMethods] = useState<string[]>(filters.methods);
   const [scopes, setScopes] = useState<string[]>(filters.scopes);
+  const [period, setPeriod] = useState(filters.period);
+  const [customFrom, setCustomFrom] = useState(filters.period === "custom" ? filters.from : "");
+  const [customTo, setCustomTo] = useState(filters.period === "custom" ? filters.to : "");
 
   return (
     <form action="/pontualidade" method="get" className="odonto-card mt-6 p-4 sm:p-5">
@@ -137,7 +141,7 @@ export function PunctualityFilters({ filters, methods }: { filters: PaymentFilte
         </Link>
       </div>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-        <SingleSelect name="period" label="Período da análise" selected={filters.period} options={[
+        <SingleSelect name="period" label="Período da análise" selected={filters.period} onChange={setPeriod} options={[
           { value: "all", label: "Todo o histórico" },
           { value: "30d", label: "Últimos 30 dias" },
           { value: "3m", label: "Últimos 3 meses" },
@@ -183,18 +187,24 @@ export function PunctualityFilters({ filters, methods }: { filters: PaymentFilte
         </div>
       </div>
       {!scopes.length && <p role="alert" className="mt-2 text-xs text-danger">Selecione ao menos uma situação de pagamento.</p>}
-      <div className="mt-4 grid gap-3 border-t border-subtle pt-4 sm:grid-cols-2">
-        <label className="flex flex-col gap-1.5 text-xs font-semibold text-secondary">
-          Data inicial (período personalizado)
-          <input type="date" name="from" defaultValue={filters.period === "custom" ? filters.from : ""}
-            className="odonto-control w-full px-3 py-2 text-[13px]" />
-        </label>
-        <label className="flex flex-col gap-1.5 text-xs font-semibold text-secondary">
-          Data final (período personalizado)
-          <input type="date" name="to" defaultValue={filters.period === "custom" ? filters.to : ""}
-            className="odonto-control w-full px-3 py-2 text-[13px]" />
-        </label>
-      </div>
+      {period === "custom" ? (
+        <div className="mt-4 grid gap-3 border-t border-subtle pt-4 sm:grid-cols-2">
+          <label className="flex flex-col gap-1.5 text-xs font-semibold text-secondary">
+            Data inicial
+            <input type="date" name="from" value={customFrom}
+              onChange={(event) => setCustomFrom(event.target.value)}
+              max={customTo || undefined}
+              className="odonto-control w-full px-3 py-2 text-[13px]" />
+          </label>
+          <label className="flex flex-col gap-1.5 text-xs font-semibold text-secondary">
+            Data final
+            <input type="date" name="to" value={customTo}
+              onChange={(event) => setCustomTo(event.target.value)}
+              min={customFrom || undefined}
+              className="odonto-control w-full px-3 py-2 text-[13px]" />
+          </label>
+        </div>
+      ) : null}
       <p className="mt-3 text-xs leading-relaxed text-muted">
         O período usa a data de pagamento para parcelas quitadas, como em Associados, ou a data de vencimento, conforme a opção acima. Parcelas em aberto sempre usam o vencimento. Sem seleção de plano, dia ou forma de pagamento, todas as opções são consideradas.
       </p>
