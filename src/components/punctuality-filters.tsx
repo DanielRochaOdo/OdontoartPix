@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import type { PaymentFilters, PaymentPlan, ReportScope } from "@/lib/payment-punctuality";
+import type { PaymentFilters } from "@/lib/payment-punctuality";
 
 type Option = { value: string; label: string };
 
@@ -137,13 +137,17 @@ export function PunctualityFilters({ filters, methods }: { filters: PaymentFilte
         </Link>
       </div>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-        <SingleSelect name="period" label="Período de vencimento" selected={filters.period} options={[
+        <SingleSelect name="period" label="Período da análise" selected={filters.period} options={[
           { value: "all", label: "Todo o histórico" },
           { value: "30d", label: "Últimos 30 dias" },
           { value: "3m", label: "Últimos 3 meses" },
           { value: "6m", label: "Últimos 6 meses" },
           { value: "12m", label: "Últimos 12 meses" },
           { value: "custom", label: "Personalizado" }
+        ]} />
+        <SingleSelect name="dateBasis" label="Filtrar datas por" selected={filters.dateBasis} options={[
+          { value: "payment", label: "Data de pagamento (como em Associados)" },
+          { value: "due", label: "Data de vencimento" }
         ]} />
         <div className="flex min-w-0 flex-col gap-1.5 text-xs font-semibold text-secondary">
           Plano
@@ -181,18 +185,18 @@ export function PunctualityFilters({ filters, methods }: { filters: PaymentFilte
       {!scopes.length && <p role="alert" className="mt-2 text-xs text-danger">Selecione ao menos uma situação de pagamento.</p>}
       <div className="mt-4 grid gap-3 border-t border-subtle pt-4 sm:grid-cols-2">
         <label className="flex flex-col gap-1.5 text-xs font-semibold text-secondary">
-          Data inicial (somente período personalizado)
+          Data inicial (período personalizado)
           <input type="date" name="from" defaultValue={filters.period === "custom" ? filters.from : ""}
             className="odonto-control w-full px-3 py-2 text-[13px]" />
         </label>
         <label className="flex flex-col gap-1.5 text-xs font-semibold text-secondary">
-          Data final (somente período personalizado)
+          Data final (período personalizado)
           <input type="date" name="to" defaultValue={filters.period === "custom" ? filters.to : ""}
             className="odonto-control w-full px-3 py-2 text-[13px]" />
         </label>
       </div>
       <p className="mt-3 text-xs leading-relaxed text-muted">
-        Sem seleção de plano, vencimento ou forma de pagamento, todos são considerados. Período, indicador e ordem são escolhas únicas; os demais filtros aceitam várias opções.
+        O período usa a data de pagamento para parcelas quitadas, como em Associados, ou a data de vencimento, conforme a opção acima. Parcelas em aberto sempre usam o vencimento. Sem seleção de plano, dia ou forma de pagamento, todas as opções são consideradas.
       </p>
     </form>
   );

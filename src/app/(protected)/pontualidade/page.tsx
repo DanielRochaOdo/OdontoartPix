@@ -3,7 +3,7 @@ import { PageHeader } from "@/components/page-header";
 import { PageSurface } from "@/components/page-surface";
 import { PunctualityFilters } from "@/components/punctuality-filters";
 import {
-  getPaymentDetails, getPaymentMethods, getPaymentReport,
+  getPaymentDateReconciliation, getPaymentDetails, getPaymentMethods, getPaymentReport,
   paymentFilterSearch, readPaymentFilters, sortPaymentGroups,
   type GroupKind, type PaymentFilters, type ReportGroup, type ReportMetric, type ReportTab
 } from "@/lib/payment-punctuality";
@@ -25,7 +25,10 @@ const LABEL_BY_METRIC: Record<ReportMetric, string> = {
 const number = (value: number) => value.toLocaleString("pt-BR");
 const decimal = (value: number) => value.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 2 });
 const money = (cents: number) => (cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-const percent = (value: number) => value.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + "%";
+const percent = (value: number) => value.toLocaleString("pt-BR", {
+  minimumFractionDigits: value > 0 && value < 0.1 || value > 99.9 && value < 100 ? 2 : 1,
+  maximumFractionDigits: 2
+}) + "%";
 const humanDate = (iso: string | null) => iso ? iso.slice(8, 10) + "/" + iso.slice(5, 7) + "/" + iso.slice(0, 4) : "—";
 
 function valueOf(group: ReportGroup, metric: ReportMetric) {
@@ -147,8 +150,11 @@ export default async function PunctualityPage({
 
   let report: Awaited<ReturnType<typeof getPaymentReport>>;
   let methods: string[];
+  let reconciliation: Awaited<ReturnType<typeof getPaymentDateReconciliation>>;
   try {
-    [report, methods] = await Promise.all([getPaymentReport(filters), getPaymentMethods()]);
+    [report, methods, reconciliation] = await Promise.all([
+      getPaymentReport(filters), getPaymentMethods(), getPaymentDateReconciliation(filters)
+    ]);
   } catch (error) {
     console.error("[PUNCTUALITY_REPORT_FAILED]", { message: error instanceof Error ? error.message : "Erro desconhecido" });
     return (
@@ -199,7 +205,9 @@ export default async function PunctualityPage({
       <PageHeader eyebrow="Relatórios financeiros" title="Pontualidade de Pagamentos"
         description="Análise das parcelas reais por plano, dia de vencimento e forma de pagamento." />
       <div className="mt-4 flex flex-wrap items-center gap-2 text-xs text-secondary">
-        <span className="rounded-full border border-subtle bg-surface-primary px-3 py-1.5">{periodLabel}</span>
+        <span className="rounded-full border border-subtle bg-surface-primary px-3 py-1.5">
+          {periodLabel}{filters.period !== "all" ? " · " + (filters.dateBasis === "payment" ? "Data do pagamento" : "Data do vencimento") : ""}
+        </span>
         <span className="rounded-full border border-subtle bg-surface-primary px-3 py-1.5">
           {scopeLabel}
         </span>
@@ -226,15 +234,40 @@ export default async function PunctualityPage({
             Parcelas em aberto são medidas em dias decorridos desde o vencimento, não em dias até a quitação. Ao combiná-las com pagamentos quitados, os indicadores misturam durações de naturezas diferentes. A comparação por forma de pagamento é exibida somente quando são selecionadas situações de parcelas pagas.
           </p>
         ) : null}
-        <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className={`mt-5 grid gap-3 sm:grid-cols-2 ${openOnly ? "xl:grid-cols-4" : "xl:grid-cols-5"}`}>
           <StatCard label={scopeTitle} value={decimal(report.total.averageDays) + " dias"} hint={scopeHint} />
           <StatCard label={openOnly ? "Parcelas em atraso" : includesOpen ? "Parcelas analisadas" : "Parcelas quitadas"}
-            value={number(report.total.count)} hint="Obrigações financeiras únicas analisadas" />
-          <StatCard label={openOnly ? "Taxa de vencidas" : includesOpen ? "Parcelas com atraso" : "Pagas após o vencimento"}
-            value={percent(report.total.lateRate)} hint={number(report.total.lateCount) + " de " + number(report.total.count) + " parcelas"} />
+            value={number(report.total.count)} hint={includesOpen ? number(report.total.paidCount) + " quitadas · " + number(report.total.openCount) + " em aberto" : "Obrigações financeiras únicas analisadas"} />
+          {!openOnly ? (
+            <>
+              <StatCard label="Pagas no prazo" value={number(report.total.onTimeCount)}
+                hint={percent(report.total.paidCount ? report.total.onTimeCount / report.total.paidCount * 100 : 0) + " · " + number(report.total.onTimeCount) + " de " + number(report.total.paidCount) + " pagas"} />
+              <StatCard label="Pagas com atraso" value={number(report.total.paidCount - report.total.onTimeCount)}
+                hint={percent(report.total.paidCount ? (report.total.paidCount - report.total.onTimeCount) / report.total.paidCount * 100 : 0) + " · " + number(report.total.paidCount - report.total.onTimeCount) + " de " + number(report.total.paidCount) + " pagas"} />
+            </>
+          ) : (
+            <StatCard label="Parcelas vencidas" value={number(report.total.openCount)}
+              hint="Sem data de quitação; dias decorridos desde o vencimento" />
+          )}
           <StatCard label={openOnly ? "Valor em aberto" : includesOpen ? "Valor financeiro analisado" : "Valor recebido"}
             value={money(report.total.amountCents)} hint="Somatório financeiro das parcelas elegíveis" />
         </div>
+
+        {reconciliation ? (
+          <div className="mt-4 rounded-xl border border-info bg-info-soft p-4 text-xs leading-relaxed text-info" role="status">
+            <strong>Conferência por data de pagamento:</strong> {number(reconciliation.matchedRows)} parcelas com pagamento datado
+            no intervalo selecionado, das quais {number(reconciliation.paidRows)} têm situação “paga”.
+            {reconciliation.missingDueRows || reconciliation.missingAmountRows ? (
+              <span> Entre as pagas, {number(reconciliation.missingDueRows)} não têm vencimento válido
+                e {number(reconciliation.missingAmountRows)} não têm valor pago informado; essas ocorrências
+                não podem ser classificadas com segurança como pontuais ou atrasadas.
+              </span>
+            ) : null}
+            <span> O relatório contabiliza somente parcelas pagas classificáveis nas situações escolhidas.
+              O módulo Associados também pode exibir outros status nessa mesma data.
+            </span>
+          </div>
+        ) : null}
 
         {filters.tab === "geral" ? (
           <div className="mt-5 grid gap-4 xl:grid-cols-3">
@@ -295,7 +328,7 @@ export default async function PunctualityPage({
           </section>
         ) : null}
         <p className="mt-5 text-xs leading-relaxed text-muted">
-          Base: parcelas canônicas vinculadas a campanhas e lotes ativos, sem duplicar a mesma obrigação em vários lotes. Sem filtro temporal, considera todo o histórico de vencimentos até a data da consulta. O período personalizado se refere ao vencimento. Pagamentos sem data válida de quitação ou vencimento não entram na média; parcelas acordadas e excluídas não são consideradas pagas. A taxa de atraso usa somente as parcelas elegíveis no filtro atual. A modalidade informa a forma efetivamente utilizada, não a causa do atraso.
+          Base: parcelas canônicas vinculadas a campanhas e lotes ativos, sem duplicar a mesma obrigação em vários lotes. Sem período selecionado, considera todo o histórico de pagamentos registrado até a data da consulta. O período pode ser aplicado à data de pagamento (mesma referência temporal do filtro de Associados) ou ao vencimento. A quantidade de associados exibidos em Associados não equivale necessariamente à quantidade de parcelas pagas com datas válidas. Pagamentos sem data válida de quitação ou vencimento não entram na média; parcelas acordadas e excluídas não são consideradas pagas. A taxa de atraso usa somente as parcelas elegíveis no filtro atual. A modalidade informa a forma efetivamente utilizada, não a causa do atraso.
         </p>
       </section>
     </PageSurface>

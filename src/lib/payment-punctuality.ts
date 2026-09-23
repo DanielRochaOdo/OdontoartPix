@@ -2,6 +2,7 @@ import { dbQuery } from "@/lib/db/pool";
 
 export type ReportTab = "geral" | "planos" | "vencimentos" | "formas";
 export type ReportScope = "paid" | "late" | "open";
+export type ReportDateBasis = "payment" | "due";
 export type PaymentPlan = "clinico" | "orto" | "sem-classificacao";
 export type ReportMetric = "avg" | "rate" | "count" | "amount";
 export type ReportOrder = "desc" | "asc";
@@ -9,6 +10,7 @@ export type GroupKind = "total" | "plan" | "due" | "method";
 
 export type PaymentFilters = {
   period: "12m" | "30d" | "3m" | "6m" | "all" | "custom";
+  dateBasis: ReportDateBasis;
   from: string;
   to: string;
   plans: PaymentPlan[];
@@ -27,6 +29,9 @@ export type ReportGroup = {
   label: string;
   count: number;
   lateCount: number;
+  onTimeCount: number;
+  paidCount: number;
+  openCount: number;
   averageDays: number;
   lateAverageDays: number;
   amountCents: number;
@@ -101,6 +106,7 @@ export function readPaymentFilters(
     return raw === undefined ? [] : (Array.isArray(raw) ? raw : [raw]).map((item) => item.trim()).filter(Boolean);
   };
   const period = readEnum(value("period"), ["12m", "30d", "3m", "6m", "all", "custom"] as const, "all");
+  const dateBasis = readEnum(value("dateBasis"), ["payment", "due"] as const, "payment");
   const customFrom = value("from") ?? "";
   const customTo = value("to") ?? "";
   if (period === "custom" && (
@@ -137,7 +143,7 @@ export function readPaymentFilters(
     throw new Error("Situação de pagamento inválida.");
   }
   return {
-    period, from, to,
+    period, dateBasis, from, to,
     plans: requestedPlans as PaymentPlan[],
     dues: [...new Set(requestedDues.map(Number))],
     methods, scopes: scopes as ReportScope[],
@@ -150,7 +156,7 @@ export function readPaymentFilters(
 
 export function paymentFilterSearch(filters: PaymentFilters, updates: Record<string, string> = {}) {
   const params = new URLSearchParams({
-    period: filters.period, metric: filters.metric, order: filters.order, tab: filters.tab
+    period: filters.period, dateBasis: filters.dateBasis, metric: filters.metric, order: filters.order, tab: filters.tab
   });
   for (const plan of filters.plans) params.append("plan", plan);
   for (const due of filters.dues) params.append("due", String(due));
@@ -202,7 +208,7 @@ export function aggregatePaymentRows(rows: Array<{
   const selected = rows.flatMap((row) => {
     const due = parseFinancialDate(row.due_date_text);
     const paid = parseFinancialDate(row.payment_date_text);
-    if (!due || (filters.from && due < filters.from) || (filters.to && due > filters.to) || due > filters.asOf) return [];
+    if (!due) return [];
     if (filters.plans.length && !filters.plans.includes((row.installment_type ?? "sem-classificacao") as PaymentPlan)) return [];
     if (filters.dues.length && !filters.dues.includes(Number(due.slice(8, 10)))) return [];
     const method = normalizePaymentMethod(row.payment_description);
@@ -210,6 +216,8 @@ export function aggregatePaymentRows(rows: Array<{
     const isPaid = row.payment_status === "paid" && paid !== null &&
       paid <= filters.asOf && row.paid_amount_cents !== null;
     if (!isOpen && !isPaid) return [];
+    const rangeDate = !isOpen && filters.dateBasis === "payment" ? paid! : due;
+    if ((filters.from && rangeDate < filters.from) || (filters.to && rangeDate > filters.to)) return [];
     if (!isOpen && filters.methods.length && !filters.methods.includes(method)) return [];
     const days = isOpen ? delayDays(due, filters.asOf) : delayDays(due, paid!);
     if (!isOpen && !filters.scopes.includes(days > 0 ? "late" : "paid")) return [];
@@ -218,7 +226,8 @@ export function aggregatePaymentRows(rows: Array<{
   return {
     count: selected.length,
     averageDays: selected.length ? selected.reduce((sum, row) => sum + row.days, 0) / selected.length : 0,
-    lateCount: selected.filter((row) => row.days > 0).length
+    lateCount: selected.filter((row) => row.days > 0).length,
+    onTimeCount: selected.filter((row) => row.days === 0).length
   };
 }
 
@@ -279,9 +288,14 @@ export const PAYMENT_SOURCE_SQL = `with candidate as (
       else greatest(payment_date - due_date, 0) end as days,
     case when payment_status = 'unpaid' then pending_amount_cents else paid_amount_cents end as report_amount_cents
   from normalized
-  where due_date is not null and due_date <= $6::date
-    and ($1::date is null or due_date >= $1::date)
-    and ($2::date is null or due_date <= $2::date)
+  where due_date is not null
+    -- A data do filtro pode ser a quitação ou o vencimento; em aberto sempre usa vencimento.
+    and ($1::date is null or (
+      case when payment_status = 'paid' and $8::text = 'payment'
+        then payment_date else due_date end) >= $1::date)
+    and ($2::date is null or (
+      case when payment_status = 'paid' and $8::text = 'payment'
+        then payment_date else due_date end) <= $2::date)
     and ($3::text[] is null or plan = any($3::text[]))
     and ($4::int[] is null or due_day = any($4::int[]))
     and (payment_status = 'unpaid' or $5::text[] is null or method = any($5::text[]))
@@ -312,6 +326,9 @@ select
     else 'all' end as key,
   count(*)::int as count,
   count(*) filter (where days > 0)::int as late_count,
+  count(*) filter (where days = 0 and payment_status = 'paid')::int as on_time_count,
+  count(*) filter (where payment_status = 'paid')::int as paid_count,
+  count(*) filter (where payment_status = 'unpaid')::int as open_count,
   coalesce(round(avg(days)::numeric, 2), 0)::float8 as average_days,
   coalesce(round((avg(days) filter (where days > 0))::numeric, 2), 0)::float8 as late_average_days,
   coalesce(sum(report_amount_cents), 0)::float8 as amount_cents
@@ -325,11 +342,12 @@ function queryValues(filters: PaymentFilters): unknown[] {
     filters.plans.length ? filters.plans : null,
     filters.dues.length ? filters.dues : null,
     filters.methods.length ? filters.methods : null,
-    filters.asOf, filters.scopes];
+    filters.asOf, filters.scopes, filters.dateBasis];
 }
 
 type GroupRow = {
-  kind: GroupKind; key: string; count: number; late_count: number;
+  kind: GroupKind; key: string; count: number; late_count: number; on_time_count: number;
+  paid_count: number; open_count: number;
   average_days: number; late_average_days: number; amount_cents: number;
 };
 
@@ -347,14 +365,15 @@ export async function getPaymentReport(filters: PaymentFilters) {
     const lateCount = Number(row.late_count);
     return {
       kind: row.kind, key: row.key, label: labelForGroup(row.kind, row.key),
-      count, lateCount, averageDays: Number(row.average_days),
+      count, lateCount, onTimeCount: Number(row.on_time_count),
+      paidCount: Number(row.paid_count), openCount: Number(row.open_count), averageDays: Number(row.average_days),
       lateAverageDays: Number(row.late_average_days), amountCents: Number(row.amount_cents),
       lateRate: count ? lateCount / count * 100 : 0
     };
   });
   const total = groups.find((item) => item.kind === "total") ?? {
     kind: "total" as const, key: "all", label: "Todos os pagamentos", count: 0,
-    lateCount: 0, averageDays: 0, lateAverageDays: 0, amountCents: 0, lateRate: 0
+    lateCount: 0, onTimeCount: 0, paidCount: 0, openCount: 0, averageDays: 0, lateAverageDays: 0, amountCents: 0, lateRate: 0
   };
   return { groups, total };
 }
@@ -367,6 +386,37 @@ export function sortPaymentGroups(groups: ReportGroup[], filters: PaymentFilters
     const diff = value(a) - value(b);
     return (filters.order === "desc" ? -diff : diff) || a.label.localeCompare(b.label, "pt-BR", { numeric: true });
   });
+}
+
+// Diagnóstico de reconciliação com a lista de Associados. A lista aplica a
+// data do pagamento a todos os status; pontualidade só classifica parcelas
+// quitadas que possuam vencimento, quitação e valor pago válidos.
+export async function getPaymentDateReconciliation(filters: PaymentFilters) {
+  if (filters.dateBasis !== "payment" || filters.period === "all" || filters.dues.length ||
+    !filters.scopes.includes("paid") && !filters.scopes.includes("late")) return null;
+  const source = PAYMENT_SOURCE_SQL.slice(0, PAYMENT_SOURCE_SQL.indexOf(", selected as ("));
+  const result = await dbQuery<{
+    matched_rows: number; paid_rows: number; missing_due_rows: number; missing_amount_rows: number;
+  }>(source + `
+    select count(*)::int as matched_rows,
+      count(*) filter (where payment_status = 'paid')::int as paid_rows,
+      count(*) filter (where payment_status = 'paid' and due_date is null)::int as missing_due_rows,
+      count(*) filter (where payment_status = 'paid' and paid_amount_cents is null)::int as missing_amount_rows
+    from normalized
+    where payment_date is not null and payment_date <= $6::date
+      and ($1::date is null or payment_date >= $1::date)
+      and ($2::date is null or payment_date <= $2::date)
+      and ($3::text[] is null or plan = any($3::text[]))
+      and ($4::int[] is null or due_day = any($4::int[]))
+      and ($5::text[] is null or method = any($5::text[]))
+  `, queryValues(filters).slice(0, 6));
+  const row = result.rows[0];
+  return {
+    matchedRows: Number(row?.matched_rows ?? 0),
+    paidRows: Number(row?.paid_rows ?? 0),
+    missingDueRows: Number(row?.missing_due_rows ?? 0),
+    missingAmountRows: Number(row?.missing_amount_rows ?? 0)
+  };
 }
 
 export async function getPaymentMethods() {
@@ -398,10 +448,10 @@ export async function getPaymentDetails(filters: PaymentFilters, kind: GroupKind
       case when payment_date is null then null else to_char(payment_date, 'YYYY-MM-DD') end as payment_date,
       method, days, report_amount_cents::float8 as report_amount_cents
     from eligible
-    where ($8::text = 'total'
-      or ($8::text = 'plan' and plan = $9::text)
-      or ($8::text = 'due' and due_day::text = $9::text)
-      or ($8::text = 'method' and method = $9::text))
+    where ($9::text = 'total'
+      or ($9::text = 'plan' and plan = $10::text)
+      or ($9::text = 'due' and due_day::text = $10::text)
+      or ($9::text = 'method' and method = $10::text))
     order by days desc, due_date desc, id
     limit 50
   `, [...queryValues(filters), kind, key]);
