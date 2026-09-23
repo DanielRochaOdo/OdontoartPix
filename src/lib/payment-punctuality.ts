@@ -286,9 +286,14 @@ export const PAYMENT_SOURCE_SQL = `with candidate as (
       else greatest(payment_date - due_date, 0) end as days,
     case when payment_status = 'unpaid' then pending_amount_cents else paid_amount_cents end as report_amount_cents
   from normalized
-  where due_date is not null and due_date <= $6::date
-    and ($1::date is null or due_date >= $1::date)
-    and ($2::date is null or due_date <= $2::date)
+  where due_date is not null
+    -- A data do filtro pode ser a quitação ou o vencimento; em aberto sempre usa vencimento.
+    and ($1::date is null or (
+      case when payment_status = 'paid' and $8::text = 'payment'
+        then payment_date else due_date end) >= $1::date)
+    and ($2::date is null or (
+      case when payment_status = 'paid' and $8::text = 'payment'
+        then payment_date else due_date end) <= $2::date)
     and ($3::text[] is null or plan = any($3::text[]))
     and ($4::int[] is null or due_day = any($4::int[]))
     and (payment_status = 'unpaid' or $5::text[] is null or method = any($5::text[]))
@@ -319,6 +324,7 @@ select
     else 'all' end as key,
   count(*)::int as count,
   count(*) filter (where days > 0)::int as late_count,
+  count(*) filter (where days = 0)::int as on_time_count,
   coalesce(round(avg(days)::numeric, 2), 0)::float8 as average_days,
   coalesce(round((avg(days) filter (where days > 0))::numeric, 2), 0)::float8 as late_average_days,
   coalesce(sum(report_amount_cents), 0)::float8 as amount_cents
@@ -332,11 +338,11 @@ function queryValues(filters: PaymentFilters): unknown[] {
     filters.plans.length ? filters.plans : null,
     filters.dues.length ? filters.dues : null,
     filters.methods.length ? filters.methods : null,
-    filters.asOf, filters.scopes];
+    filters.asOf, filters.scopes, filters.dateBasis];
 }
 
 type GroupRow = {
-  kind: GroupKind; key: string; count: number; late_count: number;
+  kind: GroupKind; key: string; count: number; late_count: number; on_time_count: number;
   average_days: number; late_average_days: number; amount_cents: number;
 };
 
@@ -354,14 +360,14 @@ export async function getPaymentReport(filters: PaymentFilters) {
     const lateCount = Number(row.late_count);
     return {
       kind: row.kind, key: row.key, label: labelForGroup(row.kind, row.key),
-      count, lateCount, averageDays: Number(row.average_days),
+      count, lateCount, onTimeCount: Number(row.on_time_count), averageDays: Number(row.average_days),
       lateAverageDays: Number(row.late_average_days), amountCents: Number(row.amount_cents),
       lateRate: count ? lateCount / count * 100 : 0
     };
   });
   const total = groups.find((item) => item.kind === "total") ?? {
     kind: "total" as const, key: "all", label: "Todos os pagamentos", count: 0,
-    lateCount: 0, averageDays: 0, lateAverageDays: 0, amountCents: 0, lateRate: 0
+    lateCount: 0, onTimeCount: 0, averageDays: 0, lateAverageDays: 0, amountCents: 0, lateRate: 0
   };
   return { groups, total };
 }
@@ -405,10 +411,10 @@ export async function getPaymentDetails(filters: PaymentFilters, kind: GroupKind
       case when payment_date is null then null else to_char(payment_date, 'YYYY-MM-DD') end as payment_date,
       method, days, report_amount_cents::float8 as report_amount_cents
     from eligible
-    where ($8::text = 'total'
-      or ($8::text = 'plan' and plan = $9::text)
-      or ($8::text = 'due' and due_day::text = $9::text)
-      or ($8::text = 'method' and method = $9::text))
+    where ($9::text = 'total'
+      or ($9::text = 'plan' and plan = $10::text)
+      or ($9::text = 'due' and due_day::text = $10::text)
+      or ($9::text = 'method' and method = $10::text))
     order by days desc, due_date desc, id
     limit 50
   `, [...queryValues(filters), kind, key]);
