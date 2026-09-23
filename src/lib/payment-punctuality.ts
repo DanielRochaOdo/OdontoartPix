@@ -2,6 +2,7 @@ import { dbQuery } from "@/lib/db/pool";
 
 export type ReportTab = "geral" | "planos" | "vencimentos" | "formas";
 export type ReportScope = "paid" | "late" | "open";
+export type ReportDateBasis = "payment" | "due";
 export type PaymentPlan = "clinico" | "orto" | "sem-classificacao";
 export type ReportMetric = "avg" | "rate" | "count" | "amount";
 export type ReportOrder = "desc" | "asc";
@@ -9,6 +10,7 @@ export type GroupKind = "total" | "plan" | "due" | "method";
 
 export type PaymentFilters = {
   period: "12m" | "30d" | "3m" | "6m" | "all" | "custom";
+  dateBasis: ReportDateBasis;
   from: string;
   to: string;
   plans: PaymentPlan[];
@@ -27,6 +29,7 @@ export type ReportGroup = {
   label: string;
   count: number;
   lateCount: number;
+  onTimeCount: number;
   averageDays: number;
   lateAverageDays: number;
   amountCents: number;
@@ -101,6 +104,7 @@ export function readPaymentFilters(
     return raw === undefined ? [] : (Array.isArray(raw) ? raw : [raw]).map((item) => item.trim()).filter(Boolean);
   };
   const period = readEnum(value("period"), ["12m", "30d", "3m", "6m", "all", "custom"] as const, "all");
+  const dateBasis = readEnum(value("dateBasis"), ["payment", "due"] as const, "payment");
   const customFrom = value("from") ?? "";
   const customTo = value("to") ?? "";
   if (period === "custom" && (
@@ -137,7 +141,7 @@ export function readPaymentFilters(
     throw new Error("Situação de pagamento inválida.");
   }
   return {
-    period, from, to,
+    period, dateBasis, from, to,
     plans: requestedPlans as PaymentPlan[],
     dues: [...new Set(requestedDues.map(Number))],
     methods, scopes: scopes as ReportScope[],
@@ -150,7 +154,7 @@ export function readPaymentFilters(
 
 export function paymentFilterSearch(filters: PaymentFilters, updates: Record<string, string> = {}) {
   const params = new URLSearchParams({
-    period: filters.period, metric: filters.metric, order: filters.order, tab: filters.tab
+    period: filters.period, dateBasis: filters.dateBasis, metric: filters.metric, order: filters.order, tab: filters.tab
   });
   for (const plan of filters.plans) params.append("plan", plan);
   for (const due of filters.dues) params.append("due", String(due));
@@ -202,7 +206,7 @@ export function aggregatePaymentRows(rows: Array<{
   const selected = rows.flatMap((row) => {
     const due = parseFinancialDate(row.due_date_text);
     const paid = parseFinancialDate(row.payment_date_text);
-    if (!due || (filters.from && due < filters.from) || (filters.to && due > filters.to) || due > filters.asOf) return [];
+    if (!due) return [];
     if (filters.plans.length && !filters.plans.includes((row.installment_type ?? "sem-classificacao") as PaymentPlan)) return [];
     if (filters.dues.length && !filters.dues.includes(Number(due.slice(8, 10)))) return [];
     const method = normalizePaymentMethod(row.payment_description);
@@ -210,6 +214,8 @@ export function aggregatePaymentRows(rows: Array<{
     const isPaid = row.payment_status === "paid" && paid !== null &&
       paid <= filters.asOf && row.paid_amount_cents !== null;
     if (!isOpen && !isPaid) return [];
+    const rangeDate = !isOpen && filters.dateBasis === "payment" ? paid! : due;
+    if ((filters.from && rangeDate < filters.from) || (filters.to && rangeDate > filters.to)) return [];
     if (!isOpen && filters.methods.length && !filters.methods.includes(method)) return [];
     const days = isOpen ? delayDays(due, filters.asOf) : delayDays(due, paid!);
     if (!isOpen && !filters.scopes.includes(days > 0 ? "late" : "paid")) return [];
@@ -218,7 +224,8 @@ export function aggregatePaymentRows(rows: Array<{
   return {
     count: selected.length,
     averageDays: selected.length ? selected.reduce((sum, row) => sum + row.days, 0) / selected.length : 0,
-    lateCount: selected.filter((row) => row.days > 0).length
+    lateCount: selected.filter((row) => row.days > 0).length,
+    onTimeCount: selected.filter((row) => row.days === 0).length
   };
 }
 
