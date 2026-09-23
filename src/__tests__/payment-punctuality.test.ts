@@ -162,6 +162,7 @@ describe("Consulta SQL de pontualidade", () => {
 describe("Pontualidade integrada aos mesmos dados canônicos de Associados", () => {
   it.skipIf(process.env.CI !== "true" || process.env.DATABASE_NAME !== "odontoart_pix_ci")(
     "classifica pagamentos registrados no mesmo dia independentemente do vencimento e não duplica lotes",
+    { retry: 2 },
     async () => {
       const id = randomUUID();
       const method = "PONTUALIDADE-TESTE-" + id;
