@@ -86,6 +86,6 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     console.error("[DISPATCH_EXPORT_FAILED]", { message: error instanceof Error ? error.message : "Erro desconhecido" });
-    return fail("EXPORT_ERROR", "Não foi possível gerar a planilha completa de disparos.", 500);
+    return fail("DATABASE_ERROR", "Não foi possível gerar a planilha completa de disparos.", 500);
   }
 }
