@@ -141,7 +141,7 @@ export function PunctualityFilters({ filters, methods }: { filters: PaymentFilte
         </Link>
       </div>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-        <SingleSelect name="period" label="Período da análise" selected={filters.period} onChange={setPeriod} options={[
+        <SingleSelect name="period" label="Período da análise" selected={filters.period} onChange={(value) => setPeriod(value as PaymentFilters["period"])} options={[
           { value: "all", label: "Todo o histórico" },
           { value: "30d", label: "Últimos 30 dias" },
           { value: "3m", label: "Últimos 3 meses" },
