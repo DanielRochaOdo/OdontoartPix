@@ -2,6 +2,7 @@ import Link from "next/link";
 import { PageHeader } from "@/components/page-header";
 import { PageSurface } from "@/components/page-surface";
 import { PunctualityFilters } from "@/components/punctuality-filters";
+import { PunctualityListModal } from "@/components/punctuality-list-modal";
 import {
   getPaymentDateReconciliation, getPaymentDetails, getPaymentMethods, getPaymentReport,
   getPaymentMethodChanges, getPaymentMethodChangeDetails,
@@ -61,7 +62,20 @@ function BarRanking({
   const max = Math.max(1, ...groups.map((item) => valueOf(item, filters.metric)));
   return (
     <section className="odonto-card min-w-0 p-4 sm:p-5">
-      <h3 className="text-sm font-bold text-primary">{title}</h3>
+      <div className="flex min-w-0 items-center gap-1">
+        <h3 className="min-w-0 break-words text-sm font-bold text-primary">{title}</h3>
+        <PunctualityListModal
+          title={title}
+          description={LABEL_BY_METRIC[filters.metric] + " · " + (filters.order === "desc" ? "maior para menor" : "menor para maior")}
+          rows={groups.map((item) => ({
+            id: item.kind + ":" + item.key,
+            label: item.label,
+            value: metricText(item, filters.metric),
+            description: number(item.count) + " parcelas · " + percent(item.lateRate) + " em atraso",
+            href: paymentFilterSearch(filters, { detailKind: item.kind, detailKey: item.key }) + "#detalhamento"
+          }))}
+        />
+      </div>
       <p className="mt-1 text-xs text-muted">{LABEL_BY_METRIC[filters.metric]} · {filters.order === "desc" ? "maior para menor" : "menor para maior"}</p>
       <div className="mt-5 space-y-4">
         {groups.slice(0, limit).map((item) => (
@@ -79,7 +93,6 @@ function BarRanking({
         ))}
         {!groups.length && <p className="text-sm text-muted">Nenhuma parcela encontrada para esses filtros.</p>}
       </div>
-      {groups.length > limit ? <p className="mt-4 text-xs text-muted">Exibindo {limit} de {groups.length} categorias. Consulte a tabela para a lista completa.</p> : null}
     </section>
   );
 }
@@ -307,7 +320,34 @@ export default async function PunctualityPage({
             <div className="odonto-card overflow-hidden">
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-subtle p-4 sm:px-5">
                 <div>
-                  <h3 className="text-sm font-bold text-primary">Origem → forma utilizada</h3>
+                  <div className="flex min-w-0 items-center gap-1">
+                    <h3 className="min-w-0 break-words text-sm font-bold text-primary">Origem → forma utilizada</h3>
+                    <PunctualityListModal
+                      title="Origem → forma utilizada"
+                      description={LABEL_BY_METRIC[filters.metric] + " · " + (filters.order === "desc" ? "maior para menor" : "menor para maior")}
+                      rows={[...changeReport.rows].sort((left, right) => {
+                        const value = (row: typeof left) => filters.metric === "count" ? row.count
+                          : filters.metric === "amount" ? row.amountCents
+                          : filters.metric === "rate" ? row.lateRate : row.averageDays;
+                        return (filters.order === "desc" ? -1 : 1) * (value(left) - value(right)) ||
+                          left.configured.localeCompare(right.configured, "pt-BR") ||
+                          left.received.localeCompare(right.received, "pt-BR");
+                      }).map((row) => ({
+                        id: JSON.stringify([row.configured, row.received]),
+                        label: row.configured + " → " + row.received,
+                        description: (row.changed ? "Forma alterada" : "Forma mantida") +
+                          " · " + number(row.count) + " parcelas",
+                        value: filters.metric === "count" ? number(row.count) :
+                          filters.metric === "amount" ? money(row.amountCents) :
+                          filters.metric === "rate" ? percent(row.lateRate) :
+                          decimal(row.averageDays) + " dias",
+                        href: paymentFilterSearch(filters, {
+                          show: showAllChanges ? "all" : "",
+                          changeFrom: row.configured, changeTo: row.received
+                        }) + "#troca-detalhamento"
+                      }))}
+                    />
+                  </div>
                   <p className="mt-1 text-xs text-secondary">Clique em uma linha para conferir os associados e as parcelas. O percentual do card usa apenas as parcelas comparáveis.</p>
                 </div>
                 <Link className="rounded-lg border border-default px-3 py-2 text-xs font-semibold text-secondary hover:bg-surface-hover"
