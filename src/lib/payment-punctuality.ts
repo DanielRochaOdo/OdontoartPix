@@ -30,6 +30,8 @@ export type ReportGroup = {
   count: number;
   lateCount: number;
   onTimeCount: number;
+  paidCount: number;
+  openCount: number;
   averageDays: number;
   lateAverageDays: number;
   amountCents: number;
@@ -324,7 +326,9 @@ select
     else 'all' end as key,
   count(*)::int as count,
   count(*) filter (where days > 0)::int as late_count,
-  count(*) filter (where days = 0)::int as on_time_count,
+  count(*) filter (where days = 0 and payment_status = 'paid')::int as on_time_count,
+  count(*) filter (where payment_status = 'paid')::int as paid_count,
+  count(*) filter (where payment_status = 'unpaid')::int as open_count,
   coalesce(round(avg(days)::numeric, 2), 0)::float8 as average_days,
   coalesce(round((avg(days) filter (where days > 0))::numeric, 2), 0)::float8 as late_average_days,
   coalesce(sum(report_amount_cents), 0)::float8 as amount_cents
@@ -343,6 +347,7 @@ function queryValues(filters: PaymentFilters): unknown[] {
 
 type GroupRow = {
   kind: GroupKind; key: string; count: number; late_count: number; on_time_count: number;
+  paid_count: number; open_count: number;
   average_days: number; late_average_days: number; amount_cents: number;
 };
 
@@ -360,14 +365,15 @@ export async function getPaymentReport(filters: PaymentFilters) {
     const lateCount = Number(row.late_count);
     return {
       kind: row.kind, key: row.key, label: labelForGroup(row.kind, row.key),
-      count, lateCount, onTimeCount: Number(row.on_time_count), averageDays: Number(row.average_days),
+      count, lateCount, onTimeCount: Number(row.on_time_count),
+      paidCount: Number(row.paid_count), openCount: Number(row.open_count), averageDays: Number(row.average_days),
       lateAverageDays: Number(row.late_average_days), amountCents: Number(row.amount_cents),
       lateRate: count ? lateCount / count * 100 : 0
     };
   });
   const total = groups.find((item) => item.kind === "total") ?? {
     kind: "total" as const, key: "all", label: "Todos os pagamentos", count: 0,
-    lateCount: 0, onTimeCount: 0, averageDays: 0, lateAverageDays: 0, amountCents: 0, lateRate: 0
+    lateCount: 0, onTimeCount: 0, paidCount: 0, openCount: 0, averageDays: 0, lateAverageDays: 0, amountCents: 0, lateRate: 0
   };
   return { groups, total };
 }
