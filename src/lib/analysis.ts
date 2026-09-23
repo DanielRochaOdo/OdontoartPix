@@ -79,6 +79,7 @@ export type MonthlyInstallment = {
   cardPaymentLink?: string;
   situation?: string;
   paymentDescription?: string;
+  configuredPaymentDescription?: string;
   paymentDate?: string;
   paidAmountCents: number | null;
   baseAmountCents: number;
@@ -353,6 +354,7 @@ function toInstallment(
     installmentType: optionalText(item.tipo_parcela) ?? optionalText(item.DescricaoParcela),
     situation: optionalText(item.DescricaoRecebimento),
     paymentDescription: optionalText(item.DescricaoRecebimento),
+    configuredPaymentDescription: optionalText(item.DescricaoPagamento),
     paymentDate: optionalText(item.DataPagamento),
     paidAmountCents: state.status === "paid" ? state.paidAmountCents : null,
     baseAmountCents: state.baseAmountCents,
