@@ -299,7 +299,7 @@ export default async function PunctualityPage({
             <div className="rounded-xl border border-info bg-info-soft px-4 py-3 text-xs leading-relaxed text-info">
               Comparamos <strong>DescricaoPagamento</strong> (forma configurada no ERP para a parcela)
               com <strong>DescricaoRecebimento</strong> (forma efetivamente utilizada).
-              Descrições Pix equivalentes e variações de boleto bancário não contam como troca.
+              A comparação considera a descrição específica de cada forma: PIX - CLINICO → PIX ODONTOART - P4X conta como mudança, mesmo sendo Pix → Pix. Apenas diferenças de caixa e espaços são desconsideradas.
               Dados de configurações anteriores à implantação podem não estar armazenados: são apresentados
               como não informados até uma nova consulta ao ERP, sem inferência a partir da forma recebida.
               A comparação considera exclusivamente parcelas pagas com datas elegíveis nos filtros.
