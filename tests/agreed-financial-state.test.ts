@@ -53,16 +53,21 @@ describe("agreed financial state", () => {
     expect(migration).toContain("new.next_check_at is null");
   });
 
-  it("separa agreed de pago, pendente e recebimentos do dashboard", () => {
+  it("separa agreed de pago e pendente, mas permite a categoria ACORDADO no detalhamento de recebimentos", () => {
     const metrics = source("src/lib/metrics.ts");
+    const receiptSummary = source("src/lib/receipt-payment-summary.ts");
 
     expect(metrics).toContain("canonical.payment_status as financial_status");
     expect(metrics).toContain("where financial_status = 'agreed'");
     expect(metrics).toContain('as "totalAgreedAmountCents"');
     expect(metrics).toContain("sum(target_open_amount_cents) filter (where financial_status = 'unpaid')");
     expect(metrics).toContain("sum(target_paid_amount_cents) filter (where financial_status = 'paid')");
-    expect(metrics).toContain("upper(payment_description) <> 'ACORDADO'");
-    expect(metrics).toContain("upper(payment_description) <> 'EXCLUIDA'");
+    expect(metrics).toContain("regexp_replace(trim(payment_description)");
+    expect(metrics).not.toContain("upper(payment_description) <> 'ACORDADO'");
+    expect(metrics).not.toContain("upper(payment_description) <> 'EXCLUIDA'");
+    expect(receiptSummary).toContain('summary: "ACORDADO"');
+    expect(receiptSummary).toContain('summary: "EXCLUIDA"');
+    expect(receiptSummary).toContain('"0 - ABERTO" é deliberadamente excluído');
     expect(metrics).toContain("group by cbm.target_installment_ref_id");
   });
 
