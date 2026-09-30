@@ -5,6 +5,12 @@ import { useEffect, useMemo, useState } from "react";
 import { calculateAverageTicketCents, formatCurrencyBR } from "@/lib/money";
 import { ManualDashboardIcon } from "@/components/manual-dashboard-icon";
 import type { DashboardReceiptStatus } from "@/lib/metrics";
+import {
+  findReceiptPaymentMapping,
+  isOpenReceiptPayment,
+  RECEIPT_SUMMARY_ORDER,
+  type ReceiptPaymentSummaryName
+} from "@/lib/receipt-payment-summary";
 
 type ChartValue = {
   label: string;
@@ -132,16 +138,86 @@ function DonutChart({
 
 const RECEIPT_STATUS_COLORS = ["#00B8FF", "#22D58C", "#FFB547", "#A78BFA", "#FF5B5B", "#14B8A6"];
 
+const RECEIPT_SUMMARY_COLORS: Record<ReceiptPaymentSummaryName, string> = {
+  ACORDADO: "#FFB547",
+  EXCLUIDA: "#A78BFA",
+  "BOLETO CLÍNICO": "#F472B6",
+  "BOLETO ORTO": "#38BDF8",
+  "CARTÃO ORTO": "#22D58C",
+  "CARTÃO CLÍNICO": "#FACC15",
+  DINHEIRO: "#FF5B5B",
+  ENEL: "#A78BFA",
+  "PIX CLÍNICO": "#22D3EE",
+  "PIX RECORRENTE": "#A3E635",
+  "PIX ORTO": "#38BDF8"
+};
+
 function ReceiptStatusChart({ statuses }: { statuses: DashboardReceiptStatus[] }) {
-  const [selectedLabel, setSelectedLabel] = useState<string | null>(null);
-  const values = statuses.map((status, index) => ({
-    label: status.label,
-    value: status.installmentCount,
-    associateCount: status.associateCount,
-    amountCents: status.amountCents,
-    color: RECEIPT_STATUS_COLORS[index % RECEIPT_STATUS_COLORS.length]
-  }));
-  const selectedStatus = values.find((status) => status.label === selectedLabel) ?? null;
+  const [modalOpen, setModalOpen] = useState(false);
+  const values = useMemo(
+    () =>
+      statuses
+        .filter((status) => !isOpenReceiptPayment(status.label))
+        .map((status, index) => ({
+          label: status.label,
+          value: status.installmentCount,
+          associateCount: status.associateCount,
+          amountCents: status.amountCents,
+          color: RECEIPT_STATUS_COLORS[index % RECEIPT_STATUS_COLORS.length]
+        })),
+    [statuses]
+  );
+
+  const groupedStatuses = useMemo(() => {
+    const groups = new Map<string, {
+      summary: string;
+      color: string;
+      items: Array<(typeof values)[number] & { systemLabel: string }>;
+    }>();
+
+    for (const summary of RECEIPT_SUMMARY_ORDER) {
+      groups.set(summary, {
+        summary,
+        color: RECEIPT_SUMMARY_COLORS[summary],
+        items: []
+      });
+    }
+
+    const unmapped: Array<(typeof values)[number] & { systemLabel: string }> = [];
+    for (const item of values) {
+      const mapping = findReceiptPaymentMapping(item.label);
+      if (!mapping) {
+        unmapped.push({ ...item, systemLabel: item.label });
+        continue;
+      }
+      groups.get(mapping.summary)?.items.push({
+        ...item,
+        systemLabel: mapping.systemLabel
+      });
+    }
+
+    const ordered = RECEIPT_SUMMARY_ORDER.map((summary) => {
+      const group = groups.get(summary)!;
+      return {
+        ...group,
+        items: group.items.slice().sort((left, right) =>
+          right.amountCents - left.amountCents || left.systemLabel.localeCompare(right.systemLabel, "pt-BR")
+        )
+      };
+    });
+
+    if (unmapped.length > 0) {
+      ordered.push({
+        summary: "NÃO MAPEADO",
+        color: "#64748B",
+        items: unmapped.slice().sort((left, right) =>
+          right.amountCents - left.amountCents || left.systemLabel.localeCompare(right.systemLabel, "pt-BR")
+        )
+      });
+    }
+    return ordered;
+  }, [values]);
+
   const totalInstallments = values.reduce((sum, item) => sum + item.value, 0);
   const totalPaidAmountCents = values.reduce((sum, item) => sum + item.amountCents, 0);
   const totalPaidAmountLabel = formatCurrencyBR(totalPaidAmountCents);
@@ -151,24 +227,41 @@ function ReceiptStatusChart({ statuses }: { statuses: DashboardReceiptStatus[] }
       ? "text-base font-bold fill-[#102033] dark:fill-[#edf6ff]"
       : "text-lg font-bold fill-[#102033] dark:fill-[#edf6ff]";
 
+  function openModal() {
+    setModalOpen(true);
+  }
+
   return (
-    <article className={lowerChartCardClassName}>
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h3 className="flex items-center gap-2 text-base font-semibold text-primary "><ChartTitleIcon type="insight" />Recebimentos</h3>
-          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-secondary ">
-            <span>Parcelas agrupadas por DescricaoRecebimento.</span>
-            {values.length > 0 ? <span className="font-semibold text-[#087eaf] dark:text-[#6edbff]">Clique para detalhar</span> : null}
+    <>
+      <article
+        className={`${lowerChartCardClassName} cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-brand`}
+        role="button"
+        tabIndex={0}
+        aria-haspopup="dialog"
+        aria-label="Abrir status de recebimento"
+        onClick={openModal}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            openModal();
+          }
+        }}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="flex items-center gap-2 text-base font-semibold text-primary"><ChartTitleIcon type="insight" />Recebimentos</h3>
+            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-secondary">
+              <span>Parcelas agrupadas por DescricaoRecebimento.</span>
+              <span className="font-semibold text-[#087eaf] dark:text-[#6edbff]">Clique em qualquer área para detalhar</span>
+            </div>
           </div>
         </div>
-      </div>
 
-      {values.length === 0 ? (
-        <div className="mt-3 flex flex-1 items-center justify-center rounded-2xl border border-dashed border-subtle bg-surface-secondary px-5 text-center text-sm text-muted   ">
-          Nenhum status de recebimento registrado ainda.
-        </div>
-      ) : (
-        <>
+        {values.length === 0 ? (
+          <div className="mt-3 flex flex-1 items-center justify-center rounded-2xl border border-dashed border-subtle bg-surface-secondary px-5 text-center text-sm text-muted">
+            Nenhum status de recebimento registrado ainda.
+          </div>
+        ) : (
           <div className="mt-3 h-[220px]">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
@@ -180,11 +273,6 @@ function ReceiptStatusChart({ statuses }: { statuses: DashboardReceiptStatus[] }
                   outerRadius={104}
                   paddingAngle={2}
                   strokeWidth={0}
-                  cursor="pointer"
-                  onClick={(data) => {
-                    const label = data?.payload?.label;
-                    if (typeof label === "string") setSelectedLabel(label);
-                  }}
                 >
                   {values.map((item) => <Cell key={item.label} fill={item.color} />)}
                 </Pie>
@@ -209,38 +297,99 @@ function ReceiptStatusChart({ statuses }: { statuses: DashboardReceiptStatus[] }
               </PieChart>
             </ResponsiveContainer>
           </div>
-        </>
-      )}
+        )}
+      </article>
 
-      {selectedStatus ? (
-        <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-slate-950/65 p-4 sm:p-6" role="presentation" onClick={() => setSelectedLabel(null)}>
-          <div className="max-h-[calc(100vh-2rem)] w-full max-w-4xl overflow-y-auto rounded-3xl border border-subtle bg-surface-primary p-6 shadow-2xl  " role="dialog" aria-modal="true" aria-labelledby="receipt-status-modal-title" onClick={(event) => event.stopPropagation()}>
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand">Detalhamento</p>
-                <h4 id="receipt-status-modal-title" className="mt-2 text-xl font-semibold text-primary ">Status de recebimento</h4>
-                <p className="mt-1 text-sm text-secondary ">Valores consolidados por DescricaoRecebimento.</p>
+      {modalOpen ? (
+        <div
+          className="fixed inset-0 z-[80] grid place-items-center overflow-hidden bg-slate-950/70 p-2 backdrop-blur-[2px] sm:p-4"
+          role="presentation"
+          onMouseDown={() => setModalOpen(false)}
+        >
+          <section
+            className="flex max-h-[calc(100dvh-1rem)] w-full max-w-[1480px] min-w-0 flex-col overflow-hidden rounded-3xl border border-subtle bg-surface-primary text-primary shadow-2xl sm:max-h-[calc(100dvh-2rem)]"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="receipt-status-modal-title"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <header className="flex min-w-0 shrink-0 items-start justify-between gap-4 border-b border-subtle px-4 py-4 sm:px-6 sm:py-5">
+              <div className="min-w-0">
+                <h4 id="receipt-status-modal-title" className="break-words text-xl font-semibold text-primary sm:text-2xl">Status de recebimento</h4>
+                <p className="mt-1 break-words text-sm text-secondary">
+                  Parcelas agrupadas por tipo de pagamento resumido.
+                </p>
               </div>
-              <button type="button" onClick={() => setSelectedLabel(null)} className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-subtle text-secondary transition hover:bg-surface-secondary   " aria-label="Fechar detalhamento">
-                <span aria-hidden="true" className="text-xl leading-none">×</span>
+              <button
+                type="button"
+                onClick={() => setModalOpen(false)}
+                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-subtle text-secondary transition hover:bg-surface-secondary"
+                aria-label="Fechar status de recebimento"
+              >
+                <span aria-hidden="true" className="text-2xl leading-none">×</span>
               </button>
+            </header>
+
+            <div className="grid shrink-0 gap-3 border-b border-subtle px-4 py-4 sm:grid-cols-2 sm:px-6">
+              <div className="min-w-0 rounded-2xl border border-subtle bg-surface-secondary px-4 py-3">
+                <p className="text-xs text-secondary">Valor total recebido</p>
+                <p className="mt-1 break-words text-xl font-semibold text-primary [overflow-wrap:anywhere]">{totalPaidAmountLabel}</p>
+              </div>
+              <div className="min-w-0 rounded-2xl border border-subtle bg-surface-secondary px-4 py-3">
+                <p className="text-xs text-secondary">Total de parcelas</p>
+                <p className="mt-1 text-xl font-semibold text-primary">{totalInstallments.toLocaleString("pt-BR")} parcelas</p>
+              </div>
             </div>
-            <div className="mt-5 grid gap-2 sm:grid-cols-2">
-              {values.map((item) => (
-                <div key={item.label} className={`rounded-2xl border p-3 ${item.label === selectedStatus.label ? "border-brand bg-surface-hover " : "border-subtle "}`}>
-                  <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-1">
-                    <span className="flex min-w-0 items-start gap-2 break-words text-sm font-medium text-secondary "><span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: item.color }} />{item.label}</span>
-                    <span className="shrink-0 text-right text-sm font-semibold text-primary ">{item.value.toLocaleString("pt-BR")} parcela(s)</span>
-                    <p className="col-span-2 text-sm text-secondary ">Associados: <strong className="text-primary ">{item.associateCount.toLocaleString("pt-BR")}</strong></p>
-                    <p className="col-span-2 text-sm text-secondary ">Equivalente: <strong className="text-primary ">{formatCurrencyBR(item.amountCents)}</strong></p>
-                  </div>
-                </div>
-              ))}
+
+            <div className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-3 py-4 sm:px-5">
+              <div className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-4">
+                {groupedStatuses.map((group) => {
+                  const groupAmount = group.items.reduce((sum, item) => sum + item.amountCents, 0);
+                  const groupInstallments = group.items.reduce((sum, item) => sum + item.value, 0);
+                  return (
+                    <article key={group.summary} className="min-w-0 overflow-hidden rounded-2xl border border-subtle bg-surface-secondary">
+                      <div className="flex min-w-0 items-start justify-between gap-3 border-b border-subtle px-3 py-3">
+                        <div className="flex min-w-0 items-start gap-2">
+                          <span className="mt-1 h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: group.color }} />
+                          <h5 className="min-w-0 break-words text-sm font-bold text-primary [overflow-wrap:anywhere]">{group.summary}</h5>
+                        </div>
+                        <div className="shrink-0 text-right">
+                          <p className="text-xs font-semibold text-primary">{formatCurrencyBR(groupAmount)}</p>
+                          <p className="mt-0.5 text-[11px] text-secondary">{groupInstallments.toLocaleString("pt-BR")} parcelas</p>
+                        </div>
+                      </div>
+
+                      {group.items.length === 0 ? (
+                        <p className="px-3 py-5 text-center text-xs text-muted">Sem registros no filtro atual.</p>
+                      ) : (
+                        <div className="min-w-0 divide-y divide-subtle">
+                          {group.items.map((item) => (
+                            <div key={`${group.summary}:${item.label}`} className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 px-3 py-3">
+                              <div className="flex min-w-0 items-start gap-2">
+                                <span className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: item.color }} />
+                                <p className="min-w-0 break-words text-xs font-medium text-secondary [overflow-wrap:anywhere]">{item.systemLabel}</p>
+                              </div>
+                              <p className="shrink-0 text-right text-xs font-semibold text-primary">{formatCurrencyBR(item.amountCents)}</p>
+                              <p className="col-span-2 pl-[18px] text-[11px] text-muted">
+                                {item.value.toLocaleString("pt-BR")} parcelas · Associados: {item.associateCount.toLocaleString("pt-BR")}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </article>
+                  );
+                })}
+              </div>
             </div>
-          </div>
+
+            <footer className="shrink-0 border-t border-subtle px-4 py-3 text-center text-xs text-muted sm:px-6">
+              ABERTO não é exibido nesta modal porque possui um card dedicado no Dashboard.
+            </footer>
+          </section>
         </div>
       ) : null}
-    </article>
+    </>
   );
 }
 
