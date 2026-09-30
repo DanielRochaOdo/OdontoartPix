@@ -196,7 +196,11 @@ function ReceiptStatusChart({ statuses }: { statuses: DashboardReceiptStatus[] }
       });
     }
 
-    const ordered = RECEIPT_SUMMARY_ORDER.map((summary) => {
+    const ordered: Array<{
+      summary: string;
+      color: string;
+      items: Array<(typeof values)[number] & { systemLabel: string }>;
+    }> = RECEIPT_SUMMARY_ORDER.map((summary) => {
       const group = groups.get(summary)!;
       return {
         ...group,
