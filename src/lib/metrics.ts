@@ -304,9 +304,7 @@ export async function getDashboardReceiptStatusMetrics(filters: DashboardMetrics
        from selected
        where paid_amount_cents is not null
          and payment_description is not null
-         and upper(payment_description) <> 'ABERTO'
-         and upper(payment_description) <> 'ACORDADO'
-         and upper(payment_description) <> 'EXCLUIDA'
+         and upper(regexp_replace(trim(payment_description), '^[0-9]+[[:space:]]*-[[:space:]]*', '')) <> 'ABERTO'
        group by payment_description
        order by "amountCents" desc, label asc`,
       [campaignIds, batchIds]
