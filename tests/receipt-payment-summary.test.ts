@@ -22,7 +22,7 @@ describe("Resumo dos tipos de pagamento do Dashboard", () => {
       "PIX ORTO"
     ]);
     expect(RECEIPT_PAYMENT_MAPPING).toHaveLength(22);
-    expect(RECEIPT_PAYMENT_MAPPING.some((item) => item.summary === "ABERTO")).toBe(false);
+    expect(RECEIPT_SUMMARY_ORDER.join("|")).not.toContain("ABERTO");
     expect(isOpenReceiptPayment("ABERTO")).toBe(true);
     expect(isOpenReceiptPayment("0 - ABERTO")).toBe(true);
   });
