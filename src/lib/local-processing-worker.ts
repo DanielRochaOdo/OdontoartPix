@@ -340,6 +340,33 @@ async function persistSuccess(input: {
     );
     if (!owned.rows[0]) return false;
 
+    // Contatos pertencem ao associado, não à parcela. Não apaga contatos antigos
+    // quando o ERP omite o campo em uma consulta posterior.
+    for (const contact of analysis.mobileContacts) {
+      await clientQuery(
+        client,
+        `insert into member_contacts
+           (member_id, phone, contact_updated_at, source_invoice_number)
+         values ($1::uuid, $2, $3::date, $4)
+         on conflict (member_id, phone) do update
+            set contact_updated_at = case
+                  when excluded.contact_updated_at is not null
+                   and (member_contacts.contact_updated_at is null
+                     or excluded.contact_updated_at >= member_contacts.contact_updated_at)
+                  then excluded.contact_updated_at
+                  else member_contacts.contact_updated_at end,
+                source_invoice_number = case
+                  when excluded.contact_updated_at is not null
+                   and (member_contacts.contact_updated_at is null
+                     or excluded.contact_updated_at >= member_contacts.contact_updated_at)
+                  then excluded.source_invoice_number
+                  else member_contacts.source_invoice_number end,
+                last_synced_at = now(),
+                updated_at = now()`,
+        [claimed.member_id, contact.phone, contact.updatedAt, contact.invoiceNumber]
+      );
+    }
+
     await clientQuery(client, `delete from member_installments where campaign_batch_member_id = $1`, [claimed.id]);
 
     if (analysis.installments.length > 0) {
