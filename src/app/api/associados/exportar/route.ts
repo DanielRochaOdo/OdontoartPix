@@ -3,6 +3,8 @@ import { requireApiUser } from "@/lib/auth/require-api-user";
 import { getAssociadosFilteredCards, getAssociadosCardFilterOptions } from "@/lib/associados-paginated";
 import { AssociadosFiltersSchema, AssociadosSortSchema } from "@/lib/associados-filter-schema";
 import { buildAssociadosWorkbook } from "@/lib/export-workbooks";
+import { dbQuery } from "@/lib/db/pool";
+import { displayContactDate, topThreeMobileContacts } from "@/lib/member-contacts";
 import { isMissingTargetInstallmentError, INSTALLMENT_NOT_FOUND_LABEL } from "@/lib/processing-errors";
 import { fail } from "@/lib/http/api-response";
 
@@ -52,7 +54,48 @@ export async function POST(request: Request) {
       const lookup = new Map(options[kind].map((option) => [option.value, option.label]));
       return values?.length ? values.map((id) => lookup.get(id) ?? id).join(", ") : "Todos";
     };
+    const filteredMembers = new Map<string, { cpf: string; name: string }>();
+    for (const item of rows) {
+      const cpf = item.member?.cpf?.trim();
+      if (cpf && !filteredMembers.has(cpf)) {
+        filteredMembers.set(cpf, { cpf, name: item.member?.name ?? "" });
+      }
+    }
+    type ContactRecord = {
+      cpf: string;
+      phone: string;
+      contact_updated_at: string | null;
+      source_invoice_number: string | null;
+    };
+    const contactRecords = filteredMembers.size
+      ? (await dbQuery<ContactRecord>(
+          `select m.cpf, mc.phone,
+                  to_char(mc.contact_updated_at, 'YYYY-MM-DD') as contact_updated_at,
+                  mc.source_invoice_number
+             from member_contacts mc
+             join members m on m.id = mc.member_id and m.deleted_at is null
+            where m.cpf = any($1::text[])
+            order by m.cpf, mc.contact_updated_at desc nulls last, mc.phone`,
+          [[...filteredMembers.keys()]]
+        )).rows
+      : [];
+    const groupedContacts = new Map<string, ContactRecord[]>();
+    for (const contact of contactRecords) {
+      const list = groupedContacts.get(contact.cpf) ?? [];
+      list.push(contact);
+      groupedContacts.set(contact.cpf, list);
+    }
+    const contactRows = [...filteredMembers.values()].flatMap((member) =>
+      topThreeMobileContacts((groupedContacts.get(member.cpf) ?? []).map((contact) => ({ ...contact, updatedAt: contact.contact_updated_at }))).map((contact) => ({
+        cpf: member.cpf.replace(/\D/g, ""),
+        name: member.name,
+        phone: contact.phone,
+        date: displayContactDate(contact.contact_updated_at),
+        invoiceNumber: contact.source_invoice_number ?? ""
+      }))
+    );
     const workbook = buildAssociadosWorkbook({
+      contactRows,
       filters: [
         { label: "Pesquisa geral", value: filters.query?.trim() || "Todos" },
         { label: "Código associado", value: filters.code?.trim() || "Todos" },
