@@ -65,14 +65,25 @@ describe("exportações do sistema", () => {
     expect(worksheet.A7.s?.fill?.fgColor?.rgb).toBe("CCFBF1");
     expect(worksheet.B7.s?.border?.right?.style).toBe("thin");
 
-    for (const ref of ["M12", "N12", "O12"]) {
+    expect([worksheet.A8.v, worksheet.F8.v, worksheet.K8.v])
+      .toEqual(["VALOR TOTAL", "VALOR PAGO", "VALOR PENDENTE"]);
+    expect([worksheet.A9.v, worksheet.F9.v, worksheet.K9.v])
+      .toEqual([123.45, 120, 3.45]);
+    for (const ref of ["A9", "F9", "K9"]) {
+      expect(worksheet[ref].t).toBe("n");
+      expect(worksheet[ref].z).toBe(EXPORT_ACCOUNTING_FORMAT);
+    }
+    expect(worksheet["!merges"]).toContainEqual({
+      s: { r: 7, c: 0 }, e: { r: 7, c: 4 }
+    });
+    for (const ref of ["M15", "N15", "O15"]) {
       expect(worksheet[ref].t).toBe("n");
       expect(worksheet[ref].z).toBe(EXPORT_ACCOUNTING_FORMAT);
       expect(worksheet[ref].s?.border?.bottom?.style).toBe("thin");
     }
-    expect(worksheet.M12.v).toBe(123.45);
-    expect(worksheet.N12.v).toBe(120);
-    expect(worksheet.O12.v).toBe(3.45);
+    expect(worksheet.M15.v).toBe(123.45);
+    expect(worksheet.N15.v).toBe(120);
+    expect(worksheet.O15.v).toBe(3.45);
   });
 
   it("gera XLSX de Resumo e Análise em cards, com cores, bordas e filtros compactos", () => {
