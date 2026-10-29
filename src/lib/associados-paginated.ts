@@ -27,10 +27,17 @@ export type AssociadosFilterOptions = {
   campaign: AssociadosFilterOption[];
   batch: AssociadosFilterOption[];
 };
+export type AssociadosFinancialSummary = {
+  totalAmountCents: number;
+  paidAmountCents: number;
+  pendingAmountCents: number;
+};
+
 export type AssociadosPage = {
   rows: AssociadoCardListItem[];
   totalCount: number;
   filteredCount: number;
+  financialSummary: AssociadosFinancialSummary;
 };
 
 export type AssociadosSortKey =
@@ -140,7 +147,18 @@ export async function getAssociadosCardPage(
   const safePage = Number.isSafeInteger(page) ? Math.min(Math.max(1, page), 100_000) : 1;
   const values = filterValues(filters);
   const [count, total, paged] = await Promise.all([
-    dbQuery<{ filtered_count: number }>(FILTERED_SQL + " select count(*)::int as filtered_count from filtered", values),
+    dbQuery<{
+      filtered_count: number;
+      total_amount_cents: number;
+      paid_amount_cents: number;
+      pending_amount_cents: number;
+    }>(
+      FILTERED_SQL + ` select count(*)::int as filtered_count,
+        coalesce(sum(installment_amount_cents), 0)::float8 as total_amount_cents,
+        coalesce(sum(payment_amount_cents), 0)::float8 as paid_amount_cents,
+        coalesce(sum(total_pending_amount_cents), 0)::float8 as pending_amount_cents
+        from filtered`, values
+    ),
     dbQuery<{ total_count: number }>(GLOBAL_COUNT_SQL),
     dbQuery<CardRow>(FILTERED_SQL + " select * from filtered" + orderSql(sort, ascending) +
       " limit $16 offset $17", [...values, PAGE_SIZE, (safePage - 1) * PAGE_SIZE])
@@ -148,7 +166,12 @@ export async function getAssociadosCardPage(
   return {
     rows: toCards(paged.rows),
     totalCount: Number(total.rows[0]?.total_count ?? 0),
-    filteredCount: Number(count.rows[0]?.filtered_count ?? 0)
+    filteredCount: Number(count.rows[0]?.filtered_count ?? 0),
+    financialSummary: {
+      totalAmountCents: Number(count.rows[0]?.total_amount_cents ?? 0),
+      paidAmountCents: Number(count.rows[0]?.paid_amount_cents ?? 0),
+      pendingAmountCents: Number(count.rows[0]?.pending_amount_cents ?? 0)
+    }
   };
 }
 
