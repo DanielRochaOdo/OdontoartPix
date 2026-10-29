@@ -23,6 +23,14 @@ export type AssociadosExportRow = {
   pendingCents: number;
 };
 
+export type AssociadosContactExportRow = {
+  cpf: string;
+  name: string;
+  phone: string;
+  date: string;
+  invoiceNumber: string;
+};
+
 export type SummaryExportEntity = {
   dispatchCount: number;
   dispatchValueCents: number;
@@ -209,10 +217,12 @@ function styleFilterGrid(worksheet: XLSX.WorkSheet, startRow: number, filterRows
 export function buildAssociadosWorkbook({
   rows,
   filters,
+  contactRows = [],
   generatedAt = new Date()
 }: {
   rows: AssociadosExportRow[];
   filters: ExportFilter[];
+  contactRows?: AssociadosContactExportRow[];
   generatedAt?: Date;
 }) {
   const headers = [
@@ -314,6 +324,29 @@ export function buildAssociadosWorkbook({
 
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, "Associados");
+
+  // Aba simples: uma linha por celular, até três por associado, sem CPF mascarado.
+  const contactsSheet = XLSX.utils.aoa_to_sheet([
+    ["CPF", "Nome", "Telefone", "Data", "Nº da fatura"],
+    ...contactRows.map((contact) => [
+      contact.cpf, contact.name, contact.phone, contact.date, contact.invoiceNumber
+    ])
+  ]);
+  contactsSheet["!cols"] = [
+    { wch: 18 }, { wch: 38 }, { wch: 20 }, { wch: 18 }, { wch: 20 }
+  ];
+  contactsSheet["!autofilter"] = { ref: `A1:E${Math.max(1, contactRows.length + 1)}` };
+  styleRange(contactsSheet, 0, 0, 0, 4, tableHeaderStyle);
+  for (let index = 0; index < contactRows.length; index += 1) {
+    styleRange(contactsSheet, index + 1, index + 1, 0, 4,
+      index % 2 === 0 ? bodyStyle : bodyAltStyle);
+    // CPF, telefone e número da fatura nunca devem virar valores numéricos.
+    for (const column of ["A", "C", "E"]) {
+      const cell = contactsSheet[`${column}${index + 2}`];
+      if (cell) { cell.t = "s"; cell.v = String(cell.v ?? ""); cell.z = "@"; }
+    }
+  }
+  XLSX.utils.book_append_sheet(workbook, contactsSheet, "Contatos");
   return workbook;
 }
 
