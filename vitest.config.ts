@@ -9,6 +9,9 @@ export default defineConfig({
   },
   test: {
     environment: "node",
+    // Testes de integração compartilham o mesmo PostgreSQL e executam TRUNCATE/DDL.
+    // Evita deadlocks entre arquivos rodando em paralelo no CI.
+    fileParallelism: false,
     exclude: ["**/node_modules/**", "**/.codex-main-process-batches/**"]
   }
 });
