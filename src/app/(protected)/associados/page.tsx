@@ -1,6 +1,4 @@
 import { AssociadosCardList } from "@/components/associados-card-list";
-import { AssociadosProcessingPanel } from "@/components/associados-processing-panel";
-import { PageHeader } from "@/components/page-header";
 import { PageSurface } from "@/components/page-surface";
 import { getAssociadosCardPage, getAssociadosCardFilterOptions } from "@/lib/associados-paginated";
 import { canAdmin, getCurrentProfile } from "@/lib/auth";
@@ -58,13 +56,7 @@ export default async function MembersPage({
 
   return (
     <PageSurface className="lg:px-5 xl:px-6">
-      <PageHeader
-        eyebrow="Cadastros"
-        title="Associados"
-        description="Consulte CodigoAssociadoEmpresa, parcela, CPF, campanha, lote, status e pendencias. Use os filtros para localizar os registros e ordenar a listagem."
-      />
-      <AssociadosProcessingPanel />
-      <div className="mt-6">
+      <div>
         <AssociadosCardList
           initialPage={pageData}
           filterOptions={options}

@@ -1,6 +1,8 @@
 "use client";
 
 import Link from "next/link";
+import { PageHeader } from "@/components/page-header";
+import { AssociadosProcessingPanel } from "@/components/associados-processing-panel";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { AssociadosFilterOptions, AssociadosFilters, AssociadosPage } from "@/lib/associados-paginated";
@@ -958,6 +960,32 @@ export function AssociadosCardList({
 
   return (
     <>
+      <div className="mb-3 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] lg:items-start xl:grid-cols-[minmax(0,1fr)_minmax(0,1.55fr)]">
+        <PageHeader
+          eyebrow="Cadastros"
+          title="Associados"
+          description="Consulte CodigoAssociadoEmpresa, parcela, CPF, campanha, lote, status e pendencias. Use os filtros para localizar os registros e ordenar a listagem."
+        />
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3" aria-label="Resumo financeiro dos associados filtrados" aria-live="polite">
+          {([
+            { label: "Valor total", value: pageData.financialSummary?.totalAmountCents, color: "text-primary" },
+            { label: "Valor pago", value: pageData.financialSummary?.paidAmountCents, color: "text-success" },
+            { label: "Valor pendente", value: pageData.financialSummary?.pendingAmountCents, color: "text-warning" }
+          ] as const).map((card) => (
+            <div key={card.label} className="min-w-0 rounded-xl border border-default bg-surface-primary p-4 shadow-sm">
+              <p className="text-xs font-medium uppercase tracking-wide text-secondary">{card.label}</p>
+              <p className={`mt-3 break-words text-xl font-bold tabular-nums ${card.color}`}>
+                {pageError ? "—" : formatMoney(card.value ?? 0)}
+              </p>
+              <p className="mt-2 text-[11px] text-muted">
+                {pageError ? "Não foi possível atualizar" : loading ? "Atualizando..." : "Conforme os filtros"}
+              </p>
+            </div>
+          ))}
+        </div>
+      </div>
+      <AssociadosProcessingPanel />
+      <div className="mt-6">
       {selectionError ? (
         <div className="mb-4 rounded-xl border border-danger bg-danger-soft px-4 py-3 text-sm text-danger">
           {selectionError}
@@ -1319,6 +1347,7 @@ export function AssociadosCardList({
         <span className="px-1 text-sm text-muted">de {pageCount}</span>
         <button type="button" onClick={() => setPage((value) => Math.min(pageCount, value + 1))} disabled={loading || pageError || currentPage === pageCount} className="rounded-lg border border-default bg-surface-secondary px-3 py-2 text-sm text-secondary disabled:opacity-40">›</button>
         <button type="button" onClick={() => setPage(pageCount)} disabled={currentPage === pageCount} className="rounded-lg border border-default bg-surface-secondary px-3 py-2 text-sm text-secondary disabled:opacity-40">»</button>
+      </div>
       </div>
     </>
   );
