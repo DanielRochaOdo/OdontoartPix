@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { toCents } from "@/lib/money";
+import { extractErpMobileContacts, type ErpMobileContact } from "@/lib/member-contacts";
 
 const StringOrNumberSchema = z.union([z.string(), z.number()]);
 const NullableStringOrNumberSchema = StringOrNumberSchema.nullish();
@@ -115,6 +116,7 @@ export type MonthlyAnalysis = {
     totalAmountCents: number;
   }>;
   installments: MonthlyInstallment[];
+  mobileContacts: ErpMobileContact[];
   warnings: string[];
   paginationComplete: boolean;
   currentPage: number | null;
@@ -496,6 +498,7 @@ function analyzeNormalizedPayload(
   return {
     paymentStatus: targetPaymentStatus,
     paymentStatusSource: targetPaymentStatusSource,
+    mobileContacts: extractErpMobileContacts(targetItem.Contatos, targetItem.contatoUltimaAtualizacao, targetId),
     targetFinancialState: {
       installmentCode: targetId,
       paymentStatus: targetPaymentStatus,
