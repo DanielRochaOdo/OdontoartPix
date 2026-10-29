@@ -81,9 +81,11 @@ describe("associados processing visibility", () => {
 
   it("mostra painel de progresso, alteracoes e parada no modulo Associados", () => {
     const page = source("src/app/(protected)/associados/page.tsx");
+    const list = source("src/components/associados-card-list.tsx");
     const panel = source("src/components/associados-processing-panel.tsx");
 
-    expect(page).toContain("<AssociadosProcessingPanel />");
+    expect(page).toContain("<AssociadosCardList");
+    expect(list).toContain("<AssociadosProcessingPanel />");
     expect(panel).toContain("Processamento de associados em andamento");
     expect(panel).toContain("Escopo fechado no momento do clique");
     expect(panel).toContain("Progresso dos registros selecionados");
