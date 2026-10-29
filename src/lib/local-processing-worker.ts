@@ -342,7 +342,7 @@ async function persistSuccess(input: {
 
     // Contatos pertencem ao associado, não à parcela. Não apaga contatos antigos
     // quando o ERP omite o campo em uma consulta posterior.
-    for (const contact of analysis.mobileContacts) {
+    for (const contact of analysis.mobileContacts ?? []) {
       await clientQuery(
         client,
         `insert into member_contacts
