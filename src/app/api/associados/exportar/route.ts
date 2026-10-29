@@ -86,7 +86,7 @@ export async function POST(request: Request) {
       groupedContacts.set(contact.cpf, list);
     }
     const contactRows = [...filteredMembers.values()].flatMap((member) =>
-      topThreeMobileContacts(groupedContacts.get(member.cpf) ?? []).map((contact) => ({
+      topThreeMobileContacts((groupedContacts.get(member.cpf) ?? []).map((contact) => ({ ...contact, updatedAt: contact.contact_updated_at }))).map((contact) => ({
         cpf: member.cpf.replace(/\D/g, ""),
         name: member.name,
         phone: contact.phone,
