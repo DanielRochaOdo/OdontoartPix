@@ -116,7 +116,7 @@ export type MonthlyAnalysis = {
     totalAmountCents: number;
   }>;
   installments: MonthlyInstallment[];
-  mobileContacts: ErpMobileContact[];
+  mobileContacts?: ErpMobileContact[];
   warnings: string[];
   paginationComplete: boolean;
   currentPage: number | null;
