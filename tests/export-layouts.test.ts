@@ -65,17 +65,26 @@ describe("exportações do sistema", () => {
     expect(worksheet.A7.s?.fill?.fgColor?.rgb).toBe("CCFBF1");
     expect(worksheet.B7.s?.border?.right?.style).toBe("thin");
 
-    expect([worksheet.A8.v, worksheet.F8.v, worksheet.K8.v])
+    expect([worksheet.A8.v, worksheet.D8.v, worksheet.G8.v])
       .toEqual(["VALOR TOTAL", "VALOR PAGO", "VALOR PENDENTE"]);
-    expect([worksheet.A9.v, worksheet.F9.v, worksheet.K9.v])
+    expect([worksheet.A9.v, worksheet.D9.v, worksheet.G9.v])
       .toEqual([123.45, 120, 3.45]);
-    for (const ref of ["A9", "F9", "K9"]) {
+    for (const ref of ["A9", "D9", "G9"]) {
       expect(worksheet[ref].t).toBe("n");
       expect(worksheet[ref].z).toBe(EXPORT_ACCOUNTING_FORMAT);
     }
     expect(worksheet["!merges"]).toContainEqual({
-      s: { r: 7, c: 0 }, e: { r: 7, c: 4 }
+      s: { r: 7, c: 0 }, e: { r: 7, c: 1 }
     });
+    for (const start of [0, 3, 6]) {
+      for (const row of [7, 8]) {
+        expect(worksheet["!merges"]).toContainEqual({
+          s: { r: row, c: start }, e: { r: row, c: start + 1 }
+        });
+      }
+    }
+    expect(worksheet.C8?.v ?? "").toBe("");
+    expect(worksheet.F8?.v ?? "").toBe("");
     for (const ref of ["M15", "N15", "O15"]) {
       expect(worksheet[ref].t).toBe("n");
       expect(worksheet[ref].z).toBe(EXPORT_ACCOUNTING_FORMAT);
