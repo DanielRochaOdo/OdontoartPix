@@ -251,6 +251,11 @@ export function buildAssociadosWorkbook({
     ["FILTROS APLICADOS"],
     ["FILTRO", "CRITÉRIO", "FILTRO", "CRITÉRIO", "FILTRO", "CRITÉRIO"],
     ...filterRows,
+    ["VALOR TOTAL", "", "", "", "", "VALOR PAGO", "", "", "", "", "VALOR PENDENTE"],
+    [rows.reduce((sum, row) => sum + row.amountCents, 0) / 100, "", "", "", "",
+     rows.reduce((sum, row) => sum + (row.paidAmountCents ?? 0), 0) / 100, "", "", "", "",
+     rows.reduce((sum, row) => sum + row.pendingCents, 0) / 100],
+    [],
     [],
     [`${new Intl.NumberFormat("pt-BR").format(rows.length)} registro(s) exportado(s)`],
     [],
@@ -283,12 +288,18 @@ export function buildAssociadosWorkbook({
     { origin: `A${firstDataRow}` }
   );
 
-  const countRow = 7 + filterRows.length;
+  const cardsHeaderRow = 6 + filterRows.length;
+  const cardsValueRow = cardsHeaderRow + 1;
+  const countRow = 10 + filterRows.length;
   worksheet["!merges"] = [
     { s: { r: 0, c: 0 }, e: { r: 0, c: 14 } },
     { s: { r: 1, c: 0 }, e: { r: 1, c: 14 } },
     { s: { r: 2, c: 0 }, e: { r: 2, c: 14 } },
     { s: { r: 4, c: 0 }, e: { r: 4, c: 5 } },
+    ...[0, 5, 10].flatMap((col) => [
+      { s: { r: cardsHeaderRow, c: col }, e: { r: cardsHeaderRow, c: col + 4 } },
+      { s: { r: cardsValueRow, c: col }, e: { r: cardsValueRow, c: col + 4 } }
+    ]),
     { s: { r: countRow, c: 0 }, e: { r: countRow, c: 14 } }
   ];
   worksheet["!autofilter"] = { ref: `A${headerRow}:O${Math.max(headerRow, lastDataRow)}` };
@@ -303,6 +314,18 @@ export function buildAssociadosWorkbook({
   styleRange(worksheet, 1, 1, 0, 14, subtitleStyle);
   styleRange(worksheet, 2, 2, 0, 14, infoStyle);
   styleFilterGrid(worksheet, 4, filterRows);
+  // Três cards lado a lado, acima da tabela, calculados sobre todos os registros exportados.
+  for (const col of [0, 5, 10]) {
+    styleRange(worksheet, cardsHeaderRow, cardsHeaderRow, col, col + 4, cardHeaderStyle);
+    styleRange(worksheet, cardsValueRow, cardsValueRow, col, col + 4, {
+      ...cardValueStyle,
+      font: { bold: true, color: { rgb: col === 5 ? TEAL : TEXT }, sz: 16 },
+      alignment: { vertical: "center", horizontal: "center" }
+    });
+    setNumberFormat(worksheet, XLSX.utils.encode_cell({ r: cardsValueRow, c: col }), ACCOUNTING_FORMAT);
+  }
+  worksheet["!rows"]![cardsHeaderRow] = { hpt: 26 };
+  worksheet["!rows"]![cardsValueRow] = { hpt: 40 };
   styleRange(worksheet, countRow, countRow, 0, 14, infoStyle);
   styleRange(worksheet, headerRow - 1, headerRow - 1, 0, headers.length - 1, tableHeaderStyle);
 
