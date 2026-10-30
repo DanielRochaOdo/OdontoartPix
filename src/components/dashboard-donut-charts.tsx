@@ -154,6 +154,7 @@ const RECEIPT_SUMMARY_COLORS: Record<ReceiptPaymentSummaryName, string> = {
 
 function ReceiptStatusChart({ statuses }: { statuses: DashboardReceiptStatus[] }) {
   const [modalOpen, setModalOpen] = useState(false);
+  const [receiptSearch, setReceiptSearch] = useState("");
   const values = useMemo(
     () =>
       statuses
@@ -305,90 +306,112 @@ function ReceiptStatusChart({ statuses }: { statuses: DashboardReceiptStatus[] }
       </article>
 
       {modalOpen ? (
-        <div
-          className="fixed inset-0 z-[80] grid place-items-center overflow-hidden bg-slate-950/70 p-2 backdrop-blur-[2px] sm:p-4"
-          role="presentation"
-          onMouseDown={() => setModalOpen(false)}
-        >
-          <section
-            className="flex max-h-[calc(100dvh-1rem)] w-full max-w-[1480px] min-w-0 flex-col overflow-hidden rounded-3xl border border-subtle bg-surface-primary text-primary shadow-2xl sm:max-h-[calc(100dvh-2rem)]"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="receipt-status-modal-title"
+        <div className="fixed inset-0 z-[80] grid place-items-center bg-[#030711]/85 p-2 backdrop-blur-sm sm:p-5" role="presentation" onMouseDown={() => setModalOpen(false)}>
+          <section role="dialog" aria-modal="true" aria-labelledby="receipt-status-modal-title"
             onMouseDown={(event) => event.stopPropagation()}
-          >
-            <header className="flex min-w-0 shrink-0 items-start justify-between gap-4 border-b border-subtle px-4 py-4 sm:px-6 sm:py-5">
-              <div className="min-w-0">
-                <h4 id="receipt-status-modal-title" className="break-words text-xl font-semibold text-primary sm:text-2xl">Status de recebimento</h4>
-                <p className="mt-1 break-words text-sm text-secondary">
-                  Parcelas agrupadas por tipo de pagamento resumido.
-                </p>
+            className="flex max-h-[calc(100dvh-1rem)] w-full max-w-[1440px] flex-col overflow-hidden rounded-[20px] border border-[#25334e] bg-[#0c1222] text-[#e7edf8] shadow-2xl sm:max-h-[calc(100dvh-2rem)]">
+            <header className="flex shrink-0 flex-wrap items-center justify-between gap-4 border-b border-[#1c2940] px-5 py-5 sm:px-7">
+              <div className="flex min-w-0 items-center gap-4">
+                <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-emerald-500/25 bg-emerald-500/10 text-emerald-400" aria-hidden="true">✓</span>
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <h4 id="receipt-status-modal-title" className="text-xl font-bold tracking-tight sm:text-2xl">Status de Recebimento</h4>
+                    <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-0.5 text-xs font-semibold text-emerald-400">Liquidado</span>
+                  </div>
+                  <p className="mt-1 text-xs text-[#91a1bb] sm:text-sm">Parcelas agrupadas por tipo de pagamento resumido e canais associados</p>
+                </div>
               </div>
-              <button
-                type="button"
-                onClick={() => setModalOpen(false)}
-                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-subtle text-secondary transition hover:bg-surface-secondary"
-                aria-label="Fechar status de recebimento"
-              >
-                <span aria-hidden="true" className="text-2xl leading-none">×</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <span className="hidden rounded-lg border border-[#2b3b58] bg-[#15213a] px-3 py-2 text-xs text-[#c2cee0] sm:inline-flex">▣ &nbsp; Visão Consolidada Mensal</span>
+                <button type="button" aria-label="Imprimir resumo de recebimento" title="Imprimir resumo" onClick={() => window.print()}
+                  className="rounded-lg border border-[#31415d] bg-[#17233c] px-3 py-2 text-sm text-[#c2cee0] hover:bg-[#233454]">⎙</button>
+                <button type="button" aria-label="Fechar status de recebimento" onClick={() => setModalOpen(false)}
+                  className="rounded-lg border border-[#31415d] bg-[#17233c] px-3 py-2 text-xl leading-none text-[#9eafca] hover:bg-[#233454]">×</button>
+              </div>
             </header>
-
-            <div className="grid shrink-0 gap-3 border-b border-subtle px-4 py-4 sm:grid-cols-2 sm:px-6">
-              <div className="min-w-0 rounded-2xl border border-subtle bg-surface-secondary px-4 py-3">
-                <p className="text-xs text-secondary">Valor total recebido</p>
-                <p className="mt-1 break-words text-xl font-semibold text-primary [overflow-wrap:anywhere]">{totalPaidAmountLabel}</p>
+            <div className="grid shrink-0 gap-4 border-b border-[#1c2940] bg-gradient-to-r from-[#10192d] to-[#0c1222] px-5 py-6 sm:px-7 lg:grid-cols-[1.15fr_0.85fr_1.45fr]">
+              <div className="rounded-2xl border border-[#2b3b58] bg-gradient-to-br from-[#19263d] to-[#10273a] p-5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-[#96a7c2]">Valor total recebido</p>
+                  <span className="rounded bg-emerald-500/10 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-emerald-400">100% dos canais</span>
+                </div>
+                <p className="mt-4 break-all font-mono text-2xl font-semibold tracking-tight sm:text-3xl">{totalPaidAmountLabel}</p>
+                <p className="mt-2 text-xs text-[#91a1bb]">Soma líquida apurada de todos os métodos ativos</p>
               </div>
-              <div className="min-w-0 rounded-2xl border border-subtle bg-surface-secondary px-4 py-3">
-                <p className="text-xs text-secondary">Total de parcelas</p>
-                <p className="mt-1 text-xl font-semibold text-primary">{totalInstallments.toLocaleString("pt-BR")} parcelas</p>
+              <div className="rounded-2xl border border-[#2b3b58] bg-[#172139] p-5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-[#96a7c2]">Total de parcelas</p>
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-cyan-400">Volumetria</span>
+                </div>
+                <p className="mt-4 font-mono text-3xl font-semibold">{totalInstallments.toLocaleString("pt-BR")}</p>
+                <p className="mt-2 text-xs text-[#91a1bb]">Ticket Médio Geral: <strong className="font-mono text-[#dbe7f7]">{formatCurrencyBR(totalInstallments ? Math.round(totalPaidAmountCents / totalInstallments) : 0)}</strong></p>
+              </div>
+              <div className="flex flex-col justify-center rounded-2xl border border-[#2b3b58] bg-[#121b31] p-5">
+                <div className="flex justify-between gap-2 text-xs text-[#c5d1e2]"><span>Composição da Receita por Método</span><span className="text-[#8293ad]">4 Grupos Principais</span></div>
+                {(() => {
+                  const buckets = [
+                    { name: "PIX", color: "#22c8e3", amount: groupedStatuses.filter((g) => g.summary.startsWith("PIX")).flatMap((g) => g.items).reduce((n, x) => n + x.amountCents, 0) },
+                    { name: "Cartão", color: "#818cf8", amount: groupedStatuses.filter((g) => g.summary.startsWith("CARTÃO")).flatMap((g) => g.items).reduce((n, x) => n + x.amountCents, 0) },
+                    { name: "Boleto", color: "#fbbf24", amount: groupedStatuses.filter((g) => g.summary.startsWith("BOLETO")).flatMap((g) => g.items).reduce((n, x) => n + x.amountCents, 0) },
+                    { name: "Outros", color: "#34d399", amount: groupedStatuses.filter((g) => !/^(PIX|CARTÃO|BOLETO)/.test(g.summary)).flatMap((g) => g.items).reduce((n, x) => n + x.amountCents, 0) }
+                  ];
+                  return <>
+                    <div className="mt-3 flex h-2.5 overflow-hidden rounded-full bg-[#273650]" aria-label="Distribuição percentual da receita">
+                      {buckets.map((bucket) => <div key={bucket.name} style={{ width: `${totalPaidAmountCents > 0 ? (bucket.amount / totalPaidAmountCents) * 100 : 0}%`, backgroundColor: bucket.color }} />)}
+                    </div>
+                    <div className="mt-4 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+                      {buckets.map((bucket) => <div key={bucket.name} className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: bucket.color }} /><span className="text-[#c3d0e3]">{bucket.name}</span><span className="ml-auto font-mono text-[10px] text-[#91a1bb]">{totalPaidAmountCents ? ((bucket.amount / totalPaidAmountCents) * 100).toFixed(1) : "0.0"}%</span></div>)}
+                    </div>
+                  </>;
+                })()}
               </div>
             </div>
-
-            <div className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-3 py-4 sm:px-5">
-              <div className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-4">
-                {groupedStatuses.map((group) => {
-                  const groupAmount = group.items.reduce((sum, item) => sum + item.amountCents, 0);
-                  const groupInstallments = group.items.reduce((sum, item) => sum + item.value, 0);
-                  return (
-                    <article key={group.summary} className="min-w-0 overflow-hidden rounded-2xl border border-subtle bg-surface-secondary">
-                      <div className="flex min-w-0 items-start justify-between gap-3 border-b border-subtle px-3 py-3">
-                        <div className="flex min-w-0 items-start gap-2">
-                          <span className="mt-1 h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: group.color }} />
-                          <h5 className="min-w-0 break-words text-sm font-bold text-primary [overflow-wrap:anywhere]">{group.summary}</h5>
-                        </div>
-                        <div className="shrink-0 text-right">
-                          <p className="text-xs font-semibold text-primary">{formatCurrencyBR(groupAmount)}</p>
-                          <p className="mt-0.5 text-[11px] text-secondary">{groupInstallments.toLocaleString("pt-BR")} parcelas</p>
-                        </div>
+            <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-[#1c2940] bg-[#0b1325] px-5 py-3 sm:px-7">
+              <p className="text-xs text-[#9aacbf]"><span className="mr-2 text-cyan-400">▽</span> Exibindo <strong className="text-[#dce7f7]">{groupedStatuses.length} modalidades</strong> e seus detalhamentos contábeis</p>
+              <input aria-label="Buscar canal, conta ou convênio" placeholder="⌕  Buscar canal, conta ou convênio..." value={receiptSearch} onChange={(event) => setReceiptSearch(event.target.value)}
+                className="w-full rounded-lg border border-[#2b3b58] bg-[#172139] px-3 py-2 text-xs text-[#edf4ff] placeholder:text-[#71839e] focus:border-cyan-500 focus:outline-none sm:w-80" />
+            </div>
+            <div className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain bg-[#0c1222] px-5 py-6 sm:px-7">
+              {(() => {
+                const normalized = receiptSearch.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("pt-BR").trim();
+                const visible = groupedStatuses.map((group) => ({
+                  ...group,
+                  items: normalized ? group.items.filter((item) => `${group.summary} ${item.systemLabel}`.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("pt-BR").includes(normalized)) : group.items
+                })).filter((group) => !normalized || group.items.length > 0);
+                const sections = [
+                  { title: "ECOSSISTEMA PIX", description: "Liquidação imediata via arranjo BACEN", tag: "Instantâneo", color: "#22c8e3", groups: visible.filter((g) => g.summary.startsWith("PIX")) },
+                  { title: "CARTÕES DE CRÉDITO E DÉBITO", description: "Processamento via adquirentes e TEF", tag: "Adquirentes & TEF", color: "#818cf8", groups: visible.filter((g) => g.summary.startsWith("CARTÃO")) },
+                  { title: "BOLETOS BANCÁRIOS", description: "Recebimentos por compensação bancária", tag: "Compensação", color: "#fbbf24", groups: visible.filter((g) => g.summary.startsWith("BOLETO")) },
+                  { title: "OUTRAS MODALIDADES", description: "Demais métodos de recebimento", tag: "Outros canais", color: "#34d399", groups: visible.filter((g) => !/^(PIX|CARTÃO|BOLETO)/.test(g.summary)) }
+                ];
+                return sections.filter((section) => section.groups.length > 0).map((section) => {
+                  const amount = section.groups.flatMap((g) => g.items).reduce((n, item) => n + item.amountCents, 0);
+                  const count = section.groups.flatMap((g) => g.items).reduce((n, item) => n + item.value, 0);
+                  return <article key={section.title} className="overflow-hidden rounded-2xl border border-[#26334d] bg-[#101729]">
+                    <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[#25314a] bg-gradient-to-r from-[#112438] to-[#121a31] px-5 py-5">
+                      <div className="flex items-start gap-3">
+                        <span className="mt-2 h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: section.color, boxShadow: `0 0 0 5px ${section.color}20` }} />
+                        <div><div className="flex flex-wrap items-center gap-3"><h5 className="text-sm font-bold tracking-wide">{section.title}</h5><span className="rounded border px-2 py-1 text-[10px]" style={{ color: section.color, borderColor: `${section.color}40`, backgroundColor: `${section.color}12` }}>{section.tag}</span></div><p className="mt-2 text-xs text-[#91a1bb]">{section.description}</p></div>
                       </div>
-
-                      {group.items.length === 0 ? (
-                        <p className="px-3 py-5 text-center text-xs text-muted">Sem registros no filtro atual.</p>
-                      ) : (
-                        <div className="min-w-0 divide-y divide-subtle">
-                          {group.items.map((item) => (
-                            <div key={`${group.summary}:${item.label}`} className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 px-3 py-3">
-                              <div className="flex min-w-0 items-start gap-2">
-                                <span className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: item.color }} />
-                                <p className="min-w-0 break-words text-xs font-medium text-secondary [overflow-wrap:anywhere]">{item.systemLabel}</p>
-                              </div>
-                              <p className="shrink-0 text-right text-xs font-semibold text-primary">{formatCurrencyBR(item.amountCents)}</p>
-                              <p className="col-span-2 pl-[18px] text-[11px] text-muted">
-                                {item.value.toLocaleString("pt-BR")} parcelas · Associados: {item.associateCount.toLocaleString("pt-BR")}
-                              </p>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </article>
-                  );
-                })}
-              </div>
+                      <div className="flex gap-6 text-right text-xs"><div><p className="text-[#91a1bb]">Total de Parcelas</p><p className="mt-1 font-mono font-semibold">{count.toLocaleString("pt-BR")} parcelas</p></div><div><p className="text-[#91a1bb]">Subtotal</p><p className="mt-1 font-mono text-base font-bold" style={{ color: section.color }}>{formatCurrencyBR(amount)}</p></div></div>
+                    </header>
+                    <div className="grid divide-y divide-[#25314a] lg:divide-x lg:divide-y-0" style={{ gridTemplateColumns: `repeat(${Math.min(section.groups.length, 3)}, minmax(0, 1fr))` }}>
+                      {section.groups.map((group) => <div key={group.summary} className="min-w-0 p-4">
+                        <div className="flex flex-wrap justify-between gap-2 border-b border-[#23304a] pb-3 text-xs font-semibold"><span>{group.summary}</span><span className="font-mono">{formatCurrencyBR(group.items.reduce((n, x) => n + x.amountCents, 0))}</span></div>
+                        <p className="mt-2 text-xs text-[#91a1bb]">{group.items.reduce((n, x) => n + x.value, 0).toLocaleString("pt-BR")} parcelas processadas</p>
+                        <div className="mt-3 space-y-2">{group.items.map((item) => <div key={item.label} className="rounded-xl border border-[#24314a] bg-[#0c1425] p-3">
+                          <div className="flex flex-wrap justify-between gap-2 text-xs"><span className="min-w-0 flex-1 text-[#d5e0ef]">{item.systemLabel}</span><span className="font-mono font-semibold">{formatCurrencyBR(item.amountCents)}</span></div>
+                          <div className="mt-2 flex flex-wrap justify-between gap-2 text-[11px] text-[#91a1bb]"><span>{item.value.toLocaleString("pt-BR")} parcelas</span><span>Associados: {item.associateCount.toLocaleString("pt-BR")}</span></div>
+                        </div>)}</div>
+                      </div>)}
+                    </div>
+                  </article>;
+                });
+              })()}
             </div>
-
-            <footer className="shrink-0 border-t border-subtle px-4 py-3 text-center text-xs text-muted sm:px-6">
-              ABERTO não é exibido nesta modal porque possui um card dedicado no Dashboard.
+            <footer className="flex shrink-0 flex-wrap items-center justify-between gap-4 border-t border-[#1c2940] bg-[#070d19] px-5 py-4 sm:px-7">
+              <p className="text-xs text-[#91a1bb]"><span className="mr-2 text-cyan-400">ⓘ</span><strong className="font-medium text-[#d4deed]">Nota Contábil:</strong> ABERTO não é exibido nesta modal porque possui um card dedicado no Dashboard.</p>
+              <div className="flex gap-3"><button type="button" onClick={() => window.print()} className="rounded-lg border border-[#2b3b58] bg-[#172139] px-4 py-2.5 text-xs font-semibold text-[#c5d1e2] hover:bg-[#233454]">Imprimir Resumo</button><button type="button" onClick={() => setModalOpen(false)} className="rounded-lg bg-cyan-500 px-4 py-2.5 text-xs font-bold text-[#07101b] hover:bg-cyan-400">Concluir Visualização</button></div>
             </footer>
           </section>
         </div>
