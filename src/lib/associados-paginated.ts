@@ -200,60 +200,77 @@ export async function getAssociadosFilteredIds(filters: AssociadosFilters, max =
   return result.rows.map((row) => row.id);
 }
 
-// As opções devem representar campanhas e lotes reais, não os nomes
-// concatenados por parcela em ASSOCIADOS_CARD_BASE_SQL.
-export async function getAssociadosCardFilterOptions(): Promise<AssociadosFilterOptions> {
-  const [result, campaignResult, batchResult] = await Promise.all([
-    dbQuery<{
-      status: AssociadosFilterOption[];
-      payment: AssociadosFilterOption[];
-      receipt: AssociadosFilterOption[];
-      installment_type: AssociadosFilterOption[];
-    }>("with base as (" + ASSOCIADOS_CARD_BASE_SQL + ") select " +
-      "coalesce(jsonb_agg(distinct jsonb_build_object('value', coalesce(processing_status, '-'), 'label', coalesce(processing_status, '-'))), '[]'::jsonb) as status, " +
-      "coalesce(jsonb_agg(distinct jsonb_build_object('value', coalesce(payment_status, '-'), 'label', coalesce(payment_status, '-'))), '[]'::jsonb) as payment, " +
-      "coalesce(jsonb_agg(distinct jsonb_build_object('value', case when payment_status = 'agreed' then '-' else coalesce(nullif(trim(payment_description), ''), '-') end, 'label', case when payment_status = 'agreed' then '-' else coalesce(nullif(trim(payment_description), ''), '-') end)), '[]'::jsonb) as receipt, " +
-      "coalesce(jsonb_agg(distinct jsonb_build_object('value', case lower(trim(coalesce(installment_type, ''))) when 'clinico' then 'Clínico' when 'orto' then 'Orto' else '-' end, 'label', case lower(trim(coalesce(installment_type, ''))) when 'clinico' then 'Clínico' when 'orto' then 'Orto' else '-' end)), '[]'::jsonb) as installment_type " +
-      "from base", [[], [], null]),
-    dbQuery<AssociadosFilterOption>(`
-      select c.id::text as value, c.name as label
-        from campaigns c
-       where c.deleted_at is null
-         and exists (
-           select 1
-             from campaign_batch_members cbm
-             join campaign_batches b on b.id = cbm.batch_id and b.deleted_at is null
-            where cbm.campaign_id = c.id
-              and cbm.deleted_at is null
-              and cbm.target_installment_ref_id is not null
-         )
-       order by c.name, c.id
-    `),
-    dbQuery<AssociadosFilterOption>(`
-      select b.id::text as value, b.name as label
-        from campaign_batches b
-        join campaigns c on c.id = b.campaign_id and c.deleted_at is null
-       where b.deleted_at is null
-         and exists (
-           select 1
-             from campaign_batch_members cbm
-            where cbm.batch_id = b.id
-              and cbm.campaign_id = b.campaign_id
-              and cbm.deleted_at is null
-              and cbm.target_installment_ref_id is not null
-         )
-       order by b.name, b.id
-    `)
-  ]);
-  const item = result.rows[0];
-  const sort = (items: AssociadosFilterOption[] = []) =>
-    items.sort((a, b) => a.label.localeCompare(b.label, "pt-BR"));
-  return {
-    status: sort(item?.status),
-    payment: sort(item?.payment),
-    receipt: sort(item?.receipt),
-    installmentType: sort(item?.installment_type),
-    campaign: sort(campaignResult.rows),
-    batch: sort(batchResult.rows)
-  };
+// Cada faceta considera todos os demais filtros, mas ignora a própria seleção.
+// A identidade financeira continua sendo a parcela canônica, sem LIMIT de página.
+const FACET_PREDICATES: Record<keyof AssociadosFilterOptions, string> = {
+  status: "and (cardinality($11::text[]) = 0 or status_key = any($11::text[]))",
+  payment: "and (cardinality($12::text[]) = 0 or payment_key = any($12::text[]))",
+  receipt: "and (cardinality($14::text[]) = 0 or receipt_key = any($14::text[]))",
+  installmentType: "and (cardinality($15::text[]) = 0 or installment_type_label = any($15::text[]))",
+  campaign: "",
+  batch: ""
+};
+
+function facetSql(facet: keyof AssociadosFilterOptions) {
+  const base = facet === "campaign"
+    ? ASSOCIADOS_CARD_BASE_SQL.replace(
+        "cardinality($1::uuid[]) = 0 or cbm.campaign_id = any($1::uuid[])",
+        "cardinality($1::uuid[]) = 0 or cbm.campaign_id = any($1::uuid[])"
+      )
+    : ASSOCIADOS_CARD_BASE_SQL;
+  // Para campanha/lote, os parâmetros da própria faceta ficam vazios.
+  const sql = FILTERED_SQL.replace(ASSOCIADOS_CARD_BASE_SQL, base);
+  const predicate = FACET_PREDICATES[facet];
+  return predicate ? sql.replace(predicate, "and true") : sql;
+}
+
+export async function getAssociadosCardFilterOptions(
+  filters: AssociadosFilters = {}
+): Promise<AssociadosFilterOptions> {
+  const facets = ["status", "payment", "receipt", "installmentType", "campaign", "batch"] as const;
+  const results = await Promise.all(facets.map(async (facet) => {
+    const values = filterValues(filters);
+    if (facet === "campaign") values[0] = [];
+    if (facet === "batch") values[1] = [];
+    const base = facetSql(facet);
+    if (facet === "campaign" || facet === "batch") {
+      // Uma parcela pode pertencer a mais de uma campanha/lote.
+      // Recuperamos as entidades reais pelos vínculos, nunca pelo nome agregado.
+      const entity = facet === "campaign" ? "c" : "b";
+      const linkConstraint = facet === "campaign"
+        ? "and (cardinality($2::uuid[]) = 0 or cbm.batch_id = any($2::uuid[]))"
+        : "and (cardinality($1::uuid[]) = 0 or cbm.campaign_id = any($1::uuid[]))";
+      const result = await dbQuery<AssociadosFilterOption>(
+        base + `
+        , eligible as (
+          select distinct canonical.id as installment_id
+          from filtered f
+          join campaign_batch_members representative on representative.id = f.id
+          join member_target_installments canonical
+            on canonical.id = representative.target_installment_ref_id
+        )
+        select distinct ${entity}.id::text as value, ${entity}.name as label
+        from eligible e
+        join campaign_batch_members cbm on cbm.target_installment_ref_id = e.installment_id
+          and cbm.deleted_at is null
+        join campaign_batches b on b.id = cbm.batch_id and b.deleted_at is null
+        join campaigns c on c.id = cbm.campaign_id and c.deleted_at is null
+        where true ${linkConstraint}
+        order by label, value`, values
+      );
+      return result.rows;
+    }
+    const column = {
+      status: "status_key", payment: "payment_key",
+      receipt: "receipt_key", installmentType: "installment_type_label"
+    }[facet];
+    const result = await dbQuery<AssociadosFilterOption>(
+      base + ` select distinct ${column} as value, ${column} as label
+               from filtered order by label`, values
+    );
+    return result.rows;
+  }));
+  const options = Object.fromEntries(facets.map((facet, index) => [facet, results[index]]))
+    as AssociadosFilterOptions;
+  return options;
 }
