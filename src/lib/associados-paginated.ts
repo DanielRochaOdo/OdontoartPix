@@ -155,8 +155,8 @@ export async function getAssociadosCardPage(
     }>(
       FILTERED_SQL + ` select count(*)::int as filtered_count,
         coalesce(sum(installment_amount_cents), 0)::float8 as total_amount_cents,
-        coalesce(sum(payment_amount_cents), 0)::float8 as paid_amount_cents,
-        coalesce(sum(total_pending_amount_cents), 0)::float8 as pending_amount_cents
+        coalesce(sum(payment_amount_cents) filter (where payment_status = 'paid'), 0)::float8 as paid_amount_cents,
+        coalesce(sum(total_pending_amount_cents) filter (where payment_status = 'unpaid'), 0)::float8 as pending_amount_cents
         from filtered`, values
     ),
     dbQuery<{ total_count: number }>(GLOBAL_COUNT_SQL),
