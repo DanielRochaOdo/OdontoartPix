@@ -491,6 +491,7 @@ export function AssociadosCardList({
 }) {
   const router = useRouter();
   const [pageData, setPageData] = useState(initialPage);
+  const [availableOptions, setAvailableOptions] = useState(filterOptions);
   const members = pageData.rows;
   const lastInitialPage = useRef(initialPage);
   useEffect(() => {
@@ -588,13 +589,13 @@ export function AssociadosCardList({
 
   // Os menus recebem opções do conjunto completo, não apenas da página de 50.
   const options = useMemo(() => ({
-    status: [...new Set(filterOptions.status.map((item) => normalizeStatus(item.value)))].sort(),
-    payment: [...new Set(filterOptions.payment.map((item) => normalizePayment(item.value)))].sort(),
-    receipt: filterOptions.receipt.map((item) => item.value),
-    installmentType: filterOptions.installmentType.map((item) => item.value).filter((value) => value !== "-"),
-    campaign: filterOptions.campaign.map((item): [string, string] => [item.value, item.label]),
-    batch: filterOptions.batch.map((item): [string, string] => [item.value, item.label])
-  }), [filterOptions]);
+    status: [...new Set(availableOptions.status.map((item) => normalizeStatus(item.value)))].sort(),
+    payment: [...new Set(availableOptions.payment.map((item) => normalizePayment(item.value)))].sort(),
+    receipt: availableOptions.receipt.map((item) => item.value),
+    installmentType: availableOptions.installmentType.map((item) => item.value).filter((value) => value !== "-"),
+    campaign: availableOptions.campaign.map((item): [string, string] => [item.value, item.label]),
+    batch: availableOptions.batch.map((item): [string, string] => [item.value, item.label])
+  }), [availableOptions]);
 
   const currentFilters = useMemo<AssociadosFilters>(() => ({
     query, code: codeFilter, installment: installmentFilter,
@@ -644,6 +645,9 @@ export function AssociadosCardList({
         if (!response.ok || !payload?.success) throw new Error(payload?.error?.message ?? "Falha ao consultar a lista.");
         if (!controller.signal.aborted) {
           setPageData(payload.data as AssociadosPage);
+          if (payload.data?.filterOptions) {
+            setAvailableOptions(payload.data.filterOptions as AssociadosFilterOptions);
+          }
           setPageError(false);
         }
       } catch (error) {
