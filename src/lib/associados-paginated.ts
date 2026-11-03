@@ -270,7 +270,8 @@ export async function getAssociadosCardFilterOptions(
     );
     return result.rows;
   }));
-  const options = Object.fromEntries(facets.map((facet, index) => [facet, results[index]]))
-    as AssociadosFilterOptions;
+  const options = Object.fromEntries(
+    facets.map((facet, index) => [facet, results[index]])
+  ) as AssociadosFilterOptions;
   return options;
 }
