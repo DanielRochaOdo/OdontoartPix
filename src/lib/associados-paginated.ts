@@ -200,30 +200,60 @@ export async function getAssociadosFilteredIds(filters: AssociadosFilters, max =
   return result.rows.map((row) => row.id);
 }
 
+// As opções devem representar campanhas e lotes reais, não os nomes
+// concatenados por parcela em ASSOCIADOS_CARD_BASE_SQL.
 export async function getAssociadosCardFilterOptions(): Promise<AssociadosFilterOptions> {
-  const result = await dbQuery<{
-    status: AssociadosFilterOption[];
-    payment: AssociadosFilterOption[];
-    receipt: AssociadosFilterOption[];
-    installment_type: AssociadosFilterOption[];
-    campaign: AssociadosFilterOption[];
-    batch: AssociadosFilterOption[];
-  }>("with base as (" + ASSOCIADOS_CARD_BASE_SQL + ") select " +
-    "coalesce(jsonb_agg(distinct jsonb_build_object('value', coalesce(processing_status, '-'), 'label', coalesce(processing_status, '-'))), '[]'::jsonb) as status, " +
-    "coalesce(jsonb_agg(distinct jsonb_build_object('value', coalesce(payment_status, '-'), 'label', coalesce(payment_status, '-'))), '[]'::jsonb) as payment, " +
-    "coalesce(jsonb_agg(distinct jsonb_build_object('value', case when payment_status = 'agreed' then '-' else coalesce(nullif(trim(payment_description), ''), '-') end, 'label', case when payment_status = 'agreed' then '-' else coalesce(nullif(trim(payment_description), ''), '-') end)), '[]'::jsonb) as receipt, " +
-    "coalesce(jsonb_agg(distinct jsonb_build_object('value', case lower(trim(coalesce(installment_type, ''))) when 'clinico' then 'Clínico' when 'orto' then 'Orto' else '-' end, 'label', case lower(trim(coalesce(installment_type, ''))) when 'clinico' then 'Clínico' when 'orto' then 'Orto' else '-' end)), '[]'::jsonb) as installment_type, " +
-    "coalesce(jsonb_agg(distinct jsonb_build_object('value', campaign_id, 'label', campaign_name)), '[]'::jsonb) as campaign, " +
-    "coalesce(jsonb_agg(distinct jsonb_build_object('value', batch_id, 'label', batch_name)), '[]'::jsonb) as batch " +
-    "from base", [[], [], null]);
+  const [result, campaignResult, batchResult] = await Promise.all([
+    dbQuery<{
+      status: AssociadosFilterOption[];
+      payment: AssociadosFilterOption[];
+      receipt: AssociadosFilterOption[];
+      installment_type: AssociadosFilterOption[];
+    }>("with base as (" + ASSOCIADOS_CARD_BASE_SQL + ") select " +
+      "coalesce(jsonb_agg(distinct jsonb_build_object('value', coalesce(processing_status, '-'), 'label', coalesce(processing_status, '-'))), '[]'::jsonb) as status, " +
+      "coalesce(jsonb_agg(distinct jsonb_build_object('value', coalesce(payment_status, '-'), 'label', coalesce(payment_status, '-'))), '[]'::jsonb) as payment, " +
+      "coalesce(jsonb_agg(distinct jsonb_build_object('value', case when payment_status = 'agreed' then '-' else coalesce(nullif(trim(payment_description), ''), '-') end, 'label', case when payment_status = 'agreed' then '-' else coalesce(nullif(trim(payment_description), ''), '-') end)), '[]'::jsonb) as receipt, " +
+      "coalesce(jsonb_agg(distinct jsonb_build_object('value', case lower(trim(coalesce(installment_type, ''))) when 'clinico' then 'Clínico' when 'orto' then 'Orto' else '-' end, 'label', case lower(trim(coalesce(installment_type, ''))) when 'clinico' then 'Clínico' when 'orto' then 'Orto' else '-' end)), '[]'::jsonb) as installment_type " +
+      "from base", [[], [], null]),
+    dbQuery<AssociadosFilterOption>(`
+      select c.id::text as value, c.name as label
+        from campaigns c
+       where c.deleted_at is null
+         and exists (
+           select 1
+             from campaign_batch_members cbm
+             join campaign_batches b on b.id = cbm.batch_id and b.deleted_at is null
+            where cbm.campaign_id = c.id
+              and cbm.deleted_at is null
+              and cbm.target_installment_ref_id is not null
+         )
+       order by c.name, c.id
+    `),
+    dbQuery<AssociadosFilterOption>(`
+      select b.id::text as value, b.name as label
+        from campaign_batches b
+        join campaigns c on c.id = b.campaign_id and c.deleted_at is null
+       where b.deleted_at is null
+         and exists (
+           select 1
+             from campaign_batch_members cbm
+            where cbm.batch_id = b.id
+              and cbm.campaign_id = b.campaign_id
+              and cbm.deleted_at is null
+              and cbm.target_installment_ref_id is not null
+         )
+       order by b.name, b.id
+    `)
+  ]);
   const item = result.rows[0];
-  const sort = (items: AssociadosFilterOption[] = []) => items.sort((a, b) => a.label.localeCompare(b.label, "pt-BR"));
+  const sort = (items: AssociadosFilterOption[] = []) =>
+    items.sort((a, b) => a.label.localeCompare(b.label, "pt-BR"));
   return {
     status: sort(item?.status),
     payment: sort(item?.payment),
     receipt: sort(item?.receipt),
     installmentType: sort(item?.installment_type),
-    campaign: sort(item?.campaign),
-    batch: sort(item?.batch)
+    campaign: sort(campaignResult.rows),
+    batch: sort(batchResult.rows)
   };
 }
