@@ -202,28 +202,6 @@ export async function getAssociadosFilteredIds(filters: AssociadosFilters, max =
 
 // Cada faceta considera todos os demais filtros, mas ignora a própria seleção.
 // A identidade financeira continua sendo a parcela canônica, sem LIMIT de página.
-const FACET_PREDICATES: Record<keyof AssociadosFilterOptions, string> = {
-  status: "and (cardinality($11::text[]) = 0 or status_key = any($11::text[]))",
-  payment: "and (cardinality($12::text[]) = 0 or payment_key = any($12::text[]))",
-  receipt: "and (cardinality($14::text[]) = 0 or receipt_key = any($14::text[]))",
-  installmentType: "and (cardinality($15::text[]) = 0 or installment_type_label = any($15::text[]))",
-  campaign: "",
-  batch: ""
-};
-
-function facetSql(facet: keyof AssociadosFilterOptions) {
-  const base = facet === "campaign"
-    ? ASSOCIADOS_CARD_BASE_SQL.replace(
-        "cardinality($1::uuid[]) = 0 or cbm.campaign_id = any($1::uuid[])",
-        "cardinality($1::uuid[]) = 0 or cbm.campaign_id = any($1::uuid[])"
-      )
-    : ASSOCIADOS_CARD_BASE_SQL;
-  // Para campanha/lote, os parâmetros da própria faceta ficam vazios.
-  const sql = FILTERED_SQL.replace(ASSOCIADOS_CARD_BASE_SQL, base);
-  const predicate = FACET_PREDICATES[facet];
-  return predicate ? sql.replace(predicate, "and true") : sql;
-}
-
 export async function getAssociadosCardFilterOptions(
   filters: AssociadosFilters = {}
 ): Promise<AssociadosFilterOptions> {
@@ -232,7 +210,14 @@ export async function getAssociadosCardFilterOptions(
     const values = filterValues(filters);
     if (facet === "campaign") values[0] = [];
     if (facet === "batch") values[1] = [];
-    const base = facetSql(facet);
+    // Mantemos os parâmetros tipados na consulta PostgreSQL.
+    // Remover uma cláusula com $11/$12/$14/$15 deixa um parâmetro sem tipo (42P18).
+    const ownIndex: Partial<Record<keyof AssociadosFilterOptions, number>> = {
+      status: 10, payment: 11, receipt: 13, installmentType: 14
+    };
+    const index = ownIndex[facet];
+    if (index !== undefined) values[index] = [];
+    const base = FILTERED_SQL;
     if (facet === "campaign" || facet === "batch") {
       // Uma parcela pode pertencer a mais de uma campanha/lote.
       // Recuperamos as entidades reais pelos vínculos, nunca pelo nome agregado.
