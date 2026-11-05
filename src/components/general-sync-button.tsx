@@ -85,7 +85,8 @@ function ProcessingMetricCard({
   icon,
   selected,
   tone,
-  onSelect
+  onSelect,
+  disabled = false
 }: {
   label: string;
   value: ReactNode;
@@ -93,6 +94,7 @@ function ProcessingMetricCard({
   selected: boolean;
   tone: "emerald" | "red" | "sky";
   onSelect: () => void;
+  disabled?: boolean;
 }) {
   const toneClasses = {
     emerald: "hover:border-[#22D58C] hover:bg-[#22D58C]/10 focus-visible:ring-[#22D58C]",
@@ -104,8 +106,9 @@ function ProcessingMetricCard({
     <button
       type="button"
       onClick={onSelect}
+      disabled={disabled}
       aria-pressed={selected}
-      className={`rounded-xl border p-3 text-left transition duration-300 focus:outline-none focus-visible:ring-2 ${toneClasses} ${selected ? "border-[#00B8FF] bg-[#00B8FF]/10 shadow-sm ring-1 ring-[#00B8FF]/40" : "border-transparent bg-slate-50 dark:bg-slate-900"}`}
+      className={`rounded-xl border p-3 text-left transition duration-300 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 ${toneClasses} ${selected ? "border-[#00B8FF] bg-[#00B8FF]/10 shadow-sm ring-1 ring-[#00B8FF]/40" : "border-transparent bg-slate-50 dark:bg-slate-900"}`}
     >
       <span className="flex items-center gap-3">
         <ProcessingIcon type={icon} tone={tone} size="compact" />
@@ -713,6 +716,7 @@ export function GeneralSyncButton({
                   />
                   <ProcessingMetricCard
                     label={reprocessingErrors ? "Reenfileirando erros" : "Erros"}
+                    disabled={automaticSyncEnabled}
                     icon="error"
                     value={<AnimatedNumber value={runCounters?.errorItems ?? 0} />}
                     selected={selectedMetric === "error"}
@@ -966,6 +970,7 @@ export function GeneralSyncButton({
               </>
             ) : null}
 
+            {automaticSyncEnabled && !run ? <p className="mt-4 text-sm text-amber-700">{AUTOMATIC_SYNC_LOCK_TOOLTIP}</p> : null}
             {actionMessage ? <p className="mt-4 text-sm text-emerald-700">{actionMessage}</p> : null}
             {error ? <p className="mt-4 text-sm text-red-600">{error}</p> : null}
 
@@ -984,7 +989,7 @@ export function GeneralSyncButton({
                     <button
                       type="button"
                       onClick={() => void resume()}
-                      disabled={resuming || cancelling}
+                      disabled={resuming || cancelling || automaticSyncEnabled}
                       className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-800 disabled:opacity-60"
                     >
                       {resuming ? "Retomando..." : "Retomar sincronizacao"}
