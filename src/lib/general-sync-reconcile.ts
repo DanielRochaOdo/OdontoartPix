@@ -378,7 +378,8 @@ export async function reconcileClaimedLocalGeneralSyncRun(input: {
           client,
           `update general_sync_run_batches
               set status = 'pending',
-                  waiting_job_id = null,
+                  -- Preserve the completed job reference until the next batch
+                  -- is attached, so its valid ERP results can be reused safely.
                   message = $3,
                   updated_at = now()
             where id = $1::uuid
@@ -387,7 +388,7 @@ export async function reconcileClaimedLocalGeneralSyncRun(input: {
           [
             activeBatch.id,
             run.id,
-            "Processamento ativo anterior concluido. Lote sera sincronizado integralmente."
+            "Processamento anterior concluido. Verificando resultados recentes antes da proxima consulta."
           ]
         );
 

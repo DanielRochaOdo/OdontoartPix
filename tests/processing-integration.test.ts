@@ -2,12 +2,16 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   enqueueBatchJob,
+  enqueueBatchJobWithReuse,
   enqueueCampaignJobs,
   PROCESSING_PRIORITIES
 } from "@/lib/batch-job-service";
 import { getDbPool } from "@/lib/db/pool";
 import { withTransaction } from "@/lib/db/transaction";
 import { createLocalGeneralSyncRun } from "@/lib/general-sync-start";
+import { advanceClaimedLocalGeneralSyncRun } from "@/lib/general-sync-advance";
+import { reconcileClaimedLocalGeneralSyncRun } from "@/lib/general-sync-reconcile";
+import { getGeneralSyncRun } from "@/lib/general-sync-read";
 import { queueMemberReprocess } from "@/lib/member-reprocess-queue";
 import { resetProcessingConfigForTests } from "@/lib/processing-config";
 
@@ -88,6 +92,21 @@ async function createMemberLink(input: {
     memberId,
     memberLinkId: linkResult.rows[0]!.id
   };
+}
+
+// The financial canon rejects older observations. Backdate the imported
+// fixture before simulating an ERP check that occurred minutes ago.
+async function allowHistoricErpCheck(batchId: string) {
+  await getDbPool().query(
+    `update member_target_installments
+        set financial_observed_at = now() - interval '3 hours'
+      where id in (
+        select target_installment_ref_id
+          from campaign_batch_members
+         where batch_id = $1::uuid
+      )`,
+    [batchId]
+  );
 }
 
 describeDatabase("processing integration regression", () => {
@@ -207,6 +226,212 @@ describeDatabase("processing integration regression", () => {
       processing_priority: PROCESSING_PRIORITIES.batch,
       created: true
     });
+  });
+
+  it("rechecagem agendada reaproveita apenas resultados recentes, concluidos e ainda validos", async () => {
+    const campaignId = await createCampaign();
+    const batchId = await createBatch(campaignId, "Lote reaproveitamento");
+    const fresh = await createMemberLink({ campaignId, batchId, processingStatus: "completed", paymentStatus: "unpaid" });
+    const old = await createMemberLink({ campaignId, batchId, processingStatus: "completed", paymentStatus: "unpaid" });
+    const error = await createMemberLink({ campaignId, batchId, processingStatus: "error", paymentStatus: "unpaid" });
+    const noErpTimestamp = await createMemberLink({ campaignId, batchId, processingStatus: "completed", paymentStatus: "unpaid" });
+    const noNextCheck = await createMemberLink({ campaignId, batchId, processingStatus: "completed", paymentStatus: "unpaid" });
+    await allowHistoricErpCheck(batchId);
+
+    await getDbPool().query(
+      `update campaign_batch_members
+          set last_erp_status_at = case
+                when id = $1::uuid then now() - interval '5 minutes'
+                else now() - interval '90 minutes'
+              end,
+              next_check_at = now() + interval '40 minutes'
+        where id = any($2::uuid[])`,
+      [fresh.memberLinkId, [fresh.memberLinkId, old.memberLinkId]]
+    );
+    await getDbPool().query(
+      `update campaign_batch_members
+          set next_check_at = now() + interval '40 minutes'
+        where id = $1::uuid`,
+      [noErpTimestamp.memberLinkId]
+    );
+    await getDbPool().query(
+      `update campaign_batch_members
+          set last_erp_status_at = now() - interval '5 minutes',
+              next_check_at = null
+        where id = $1::uuid`,
+      [noNextCheck.memberLinkId]
+    );
+
+    const result = await enqueueBatchJobWithReuse({
+      campaignId,
+      batchId,
+      requestedBy,
+      scheduledRecheck: true,
+      reuseWindow: {
+        startedAt: new Date(Date.now() - 20 * 60_000).toISOString(),
+        finishedAt: new Date(Date.now() - 60_000).toISOString()
+      },
+      processingOrigin: "dashboard",
+      processingScope: "dashboard"
+    });
+
+    expect(result.reusedCount).toBe(1);
+    expect(result.job?.total_items).toBe(4);
+    const states = await getDbPool().query<{ id: string; processing_status: string }>(
+      `select id, processing_status from campaign_batch_members where batch_id = $1`,
+      [batchId]
+    );
+    const status = new Map(states.rows.map((row) => [row.id, row.processing_status]));
+    expect(status.get(fresh.memberLinkId)).toBe("completed");
+    expect(status.get(old.memberLinkId)).toBe("pending");
+    expect(status.get(error.memberLinkId)).toBe("pending");
+    expect(status.get(noErpTimestamp.memberLinkId)).toBe("pending");
+    expect(status.get(noNextCheck.memberLinkId)).toBe("pending");
+  });
+
+  it("rechecagem nao reaproveita verificacao cujo prazo ja venceu", async () => {
+    const campaignId = await createCampaign();
+    const batchId = await createBatch(campaignId, "Lote resultado vencido");
+    const member = await createMemberLink({ campaignId, batchId, processingStatus: "completed", paymentStatus: "unpaid" });
+    await allowHistoricErpCheck(batchId);
+    await getDbPool().query(
+      `update campaign_batch_members
+          set last_erp_status_at = now() - interval '5 minutes',
+              next_check_at = now() - interval '1 minute'
+        where id = $1::uuid`,
+      [member.memberLinkId]
+    );
+
+    const result = await enqueueBatchJobWithReuse({
+      campaignId,
+      batchId,
+      requestedBy,
+      scheduledRecheck: true,
+      reuseWindow: {
+        startedAt: new Date(Date.now() - 20 * 60_000).toISOString(),
+        finishedAt: new Date(Date.now() - 60_000).toISOString()
+      },
+      processingOrigin: "dashboard",
+      processingScope: "dashboard"
+    });
+
+    expect(result.reusedCount).toBe(0);
+    expect(result.job?.total_items).toBe(1);
+  });
+
+  it("processamento manual nao reaproveita resultados mesmo com janela informada", async () => {
+    const campaignId = await createCampaign();
+    const batchId = await createBatch(campaignId, "Lote manual");
+    const member = await createMemberLink({ campaignId, batchId, processingStatus: "completed", paymentStatus: "unpaid" });
+    await allowHistoricErpCheck(batchId);
+    await getDbPool().query(
+      `update campaign_batch_members
+          set last_erp_status_at = now() - interval '5 minutes',
+              next_check_at = now() + interval '40 minutes'
+        where id = $1::uuid`,
+      [member.memberLinkId]
+    );
+
+    const result = await enqueueBatchJobWithReuse({
+      campaignId,
+      batchId,
+      requestedBy,
+      reuseWindow: {
+        startedAt: new Date(Date.now() - 20 * 60_000).toISOString(),
+        finishedAt: new Date(Date.now() - 60_000).toISOString()
+      },
+      processingOrigin: "manual",
+      processingScope: "batch"
+    });
+
+    expect(result.reusedCount).toBe(0);
+    expect(result.job?.total_items).toBe(1);
+  });
+
+  it("sincronizacao agendada conclui lote reaproveitado sem criar segundo job", async () => {
+    const campaignId = await createCampaign();
+    const batchId = await createBatch(campaignId, "Lote com job manual anterior");
+    const member = await createMemberLink({ campaignId, batchId, processingStatus: "pending", paymentStatus: "unpaid" });
+    const run = await createLocalGeneralSyncRun({
+      campaignIds: [campaignId],
+      batchIds: [],
+      requestedBy,
+      confirmationToken: `reuse-${randomUUID()}`
+    });
+    expect(run.created).toBe(true);
+    const manual = await enqueueBatchJob({
+      campaignId,
+      batchId,
+      requestedBy,
+      processingOrigin: "manual",
+      processingScope: "campaign"
+    });
+    expect(manual).not.toBeNull();
+
+    await getDbPool().query(
+      `update processing_jobs
+          set status = 'completed',
+              started_at = now() - interval '10 minutes',
+              finished_at = now() - interval '1 minute',
+              processed_items = 1,
+              success_items = 1
+        where id = $1::uuid`,
+      [manual!.id]
+    );
+    await allowHistoricErpCheck(batchId);
+    await getDbPool().query(
+      `update campaign_batch_members
+          set processing_status = 'completed',
+              last_erp_status_at = now() - interval '5 minutes',
+              next_check_at = now() + interval '50 minutes'
+        where id = $1::uuid`,
+      [member.memberLinkId]
+    );
+    const workerId = `reuse-test-${randomUUID()}`;
+    await getDbPool().query(
+      `update general_sync_runs
+          set status = 'running', sync_mode = 'scheduled_recheck',
+              locked_by = $2, started_at = now() - interval '20 minutes'
+        where id = $1::uuid`,
+      [run.run.id, workerId]
+    );
+    await getDbPool().query(
+      `update general_sync_run_batches
+          set status = 'waiting_active_job', waiting_job_id = $2::uuid
+        where run_id = $1::uuid`,
+      [run.run.id, manual!.id]
+    );
+
+    const reconciled = await reconcileClaimedLocalGeneralSyncRun({ runId: run.run.id, workerId });
+    expect(reconciled.action).toBe("waiting_job_finished");
+    const waitReference = await getDbPool().query<{ waiting_job_id: string; status: string }>(
+      `select waiting_job_id, status
+         from general_sync_run_batches
+        where run_id = $1::uuid`,
+      [run.run.id]
+    );
+    expect(waitReference.rows[0]).toMatchObject({
+      waiting_job_id: manual!.id,
+      status: "pending"
+    });
+
+    const advanced = await advanceClaimedLocalGeneralSyncRun({ runId: run.run.id, workerId });
+    expect(advanced.action).toBe("batch_completed_no_job");
+
+    const persisted = await getDbPool().query<{ reused_count: number; processed_count: number }>(
+      `select reused_count, processed_count from general_sync_run_batches where run_id = $1::uuid`,
+      [run.run.id]
+    );
+    expect(persisted.rows[0]).toMatchObject({ reused_count: 1, processed_count: 0 });
+    const detail = await getGeneralSyncRun(run.run.id);
+    expect(detail.reusedCount).toBe(1);
+    expect(detail.processedCount).toBe(0);
+    expect(detail.completedBatchCount).toBe(1);
+    const jobs = await getDbPool().query<{ n: number }>(
+      `select count(*)::int as n from processing_jobs where batch_id = $1::uuid`,
+      [batchId]
+    );
+    expect(jobs.rows[0]?.n).toBe(1);
   });
 
   it("campanha: enfileira todos os lotes elegiveis mantendo escopo e prioridade", async () => {
