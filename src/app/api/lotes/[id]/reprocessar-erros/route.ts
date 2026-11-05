@@ -1,3 +1,4 @@
+import { blockManualSyncWhileAutomaticEnabled } from "@/lib/automatic-sync-lock";
 import { z } from "zod";
 import { requireApiUser } from "@/lib/auth/require-api-user";
 import { enqueueBatchJob, PROCESSING_PRIORITIES } from "@/lib/batch-job-service";
@@ -20,6 +21,9 @@ export async function POST(
 ) {
   const auth = await requireApiUser(["administrador", "operador"]);
   if (!auth.ok) return auth.response;
+
+  const manualSyncLock = await blockManualSyncWhileAutomaticEnabled();
+  if (manualSyncLock) return manualSyncLock;
 
   const parsed = ParamsSchema.safeParse(await params);
   if (!parsed.success) return fail("VALIDATION_ERROR", "Lote invalido.", 400);
