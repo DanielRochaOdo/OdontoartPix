@@ -10,6 +10,7 @@ import { getDbPool } from "@/lib/db/pool";
 import { withTransaction } from "@/lib/db/transaction";
 import { createLocalGeneralSyncRun } from "@/lib/general-sync-start";
 import { advanceClaimedLocalGeneralSyncRun } from "@/lib/general-sync-advance";
+import { reconcileClaimedLocalGeneralSyncRun } from "@/lib/general-sync-reconcile";
 import { getGeneralSyncRun } from "@/lib/general-sync-read";
 import { queueMemberReprocess } from "@/lib/member-reprocess-queue";
 import { resetProcessingConfigForTests } from "@/lib/processing-config";
@@ -389,29 +390,30 @@ describeDatabase("processing integration regression", () => {
     const workerId = `reuse-test-${randomUUID()}`;
     await getDbPool().query(
       `update general_sync_runs
-          set status = 'running', locked_by = $2, started_at = now() - interval '20 minutes'
+          set status = 'running', sync_mode = 'scheduled_recheck',
+              locked_by = $2, started_at = now() - interval '20 minutes'
         where id = $1::uuid`,
       [run.run.id, workerId]
     );
     await getDbPool().query(
       `update general_sync_run_batches
-          set status = 'pending', waiting_job_id = $2::uuid
+          set status = 'waiting_active_job', waiting_job_id = $2::uuid
         where run_id = $1::uuid`,
       [run.run.id, manual!.id]
     );
 
-    const diagnostic = await getDbPool().query(
-      `select p.status as job_status, p.processing_origin, p.started_at, p.finished_at,
-              cbm.payment_status, cbm.processing_status, cbm.last_erp_status_at, cbm.next_check_at,
-              grb.waiting_job_id, gr.sync_mode
-         from processing_jobs p
-         join campaign_batch_members cbm on cbm.batch_id = p.batch_id
-         join general_sync_run_batches grb on grb.batch_id = p.batch_id
-         join general_sync_runs gr on gr.id = grb.run_id
-        where p.id = $1::uuid and gr.id = $2::uuid`,
-      [manual!.id, run.run.id]
+    const reconciled = await reconcileClaimedLocalGeneralSyncRun({ runId: run.run.id, workerId });
+    expect(reconciled.action).toBe("waiting_job_finished");
+    const waitReference = await getDbPool().query<{ waiting_job_id: string; status: string }>(
+      `select waiting_job_id, status
+         from general_sync_run_batches
+        where run_id = $1::uuid`,
+      [run.run.id]
     );
-    console.info("[TEST_FINAL_REUSE_DIAGNOSTIC]", diagnostic.rows);
+    expect(waitReference.rows[0]).toMatchObject({
+      waiting_job_id: manual!.id,
+      status: "pending"
+    });
 
     const advanced = await advanceClaimedLocalGeneralSyncRun({ runId: run.run.id, workerId });
     expect(advanced.action).toBe("batch_completed_no_job");
