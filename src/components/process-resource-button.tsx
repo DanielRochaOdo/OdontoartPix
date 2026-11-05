@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { emitMetricsSync } from "@/lib/metrics-sync";
+import { useAutomaticSyncLock, AUTOMATIC_SYNC_LOCK_TOOLTIP } from "@/components/automatic-sync-lock-provider";
 
 type Props = {
   endpoint: string;
@@ -24,13 +25,16 @@ export function ProcessResourceButton({
   variant = "emerald"
 }: Props) {
   const router = useRouter();
+  const { automaticSyncEnabled } = useAutomaticSyncLock();
+  const manualSyncAction = !endpoint.endsWith("/pausar") && !endpoint.endsWith("/cancelar");
+  const locked = automaticSyncEnabled && manualSyncAction;
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [isError, setIsError] = useState(false);
   const shouldRenderMessage = !!message && (!iconOnly || isError);
 
   async function enqueue() {
-    if (busy) return;
+    if (busy || locked) return;
     setBusy(true);
     setMessage(null);
     setIsError(false);
@@ -64,9 +68,9 @@ export function ProcessResourceButton({
       <button
         type="button"
         onClick={enqueue}
-        disabled={busy}
+        disabled={busy || locked}
         aria-label={label}
-        title={label}
+        title={locked ? AUTOMATIC_SYNC_LOCK_TOOLTIP : label}
         className={
           iconOnly
             ? `inline-flex h-10 w-10 items-center justify-center rounded-lg text-white transition disabled:opacity-60 ${
