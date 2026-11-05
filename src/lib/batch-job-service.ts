@@ -260,7 +260,7 @@ async function reopenUnpaidMembersForManualProcessing(
         and (payment_status is null or payment_status = 'unpaid')
         and (
           $3::timestamptz is null
-          or not (${reusableResultPredicate(3, 4)})
+          or (${reusableResultPredicate(3, 4)}) is not true
         )`,
     [batchId, resetAttempts, reuseWindow?.startedAt ?? null, reuseWindow?.finishedAt ?? null]
   );
