@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 import { MemberActions } from "@/components/member-actions";
+import { useAutomaticSyncLock, AUTOMATIC_SYNC_LOCK_TOOLTIP } from "@/components/automatic-sync-lock-provider";
 import { emitMetricsSync } from "@/lib/metrics-sync";
 import {
   isPaidWithPending,
@@ -213,6 +214,7 @@ export function MembersTable({
   };
 }) {
   const router = useRouter();
+  const { automaticSyncEnabled } = useAutomaticSyncLock();
   const [query, setQuery] = useState(initialFilters?.query ?? "");
   const [codeFilter, setCodeFilter] = useState(initialFilters?.code ?? "");
   const [installmentFilter, setInstallmentFilter] = useState(initialFilters?.installment ?? "");
@@ -620,7 +622,7 @@ export function MembersTable({
           <button
             type="button"
             onClick={reprocessFilteredErrors}
-            disabled={reprocessingErrors || bulkProgress?.active || !canShowErrorReprocess}
+            disabled={automaticSyncEnabled || reprocessingErrors || bulkProgress?.active || !canShowErrorReprocess}
             className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-900 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {reprocessingErrors ? "Criando snapshot..." : bulkProgress?.active ? "Reprocessamento em andamento" : "Reprocessar erros filtrados"}
