@@ -93,6 +93,21 @@ async function createMemberLink(input: {
   };
 }
 
+// The financial canon rejects older observations. Backdate the imported
+// fixture before simulating an ERP check that occurred minutes ago.
+async function allowHistoricErpCheck(batchId: string) {
+  await getDbPool().query(
+    `update member_target_installments
+        set financial_observed_at = now() - interval '3 hours'
+      where id in (
+        select target_installment_ref_id
+          from campaign_batch_members
+         where batch_id = $1::uuid
+      )`,
+    [batchId]
+  );
+}
+
 describeDatabase("processing integration regression", () => {
   beforeAll(async () => {
     const email = "ci-processing-regression@odontoart.test";
@@ -220,6 +235,7 @@ describeDatabase("processing integration regression", () => {
     const error = await createMemberLink({ campaignId, batchId, processingStatus: "error", paymentStatus: "unpaid" });
     const noErpTimestamp = await createMemberLink({ campaignId, batchId, processingStatus: "completed", paymentStatus: "unpaid" });
     const noNextCheck = await createMemberLink({ campaignId, batchId, processingStatus: "completed", paymentStatus: "unpaid" });
+    await allowHistoricErpCheck(batchId);
 
     await getDbPool().query(
       `update campaign_batch_members
@@ -244,15 +260,6 @@ describeDatabase("processing integration regression", () => {
         where id = $1::uuid`,
       [noNextCheck.memberLinkId]
     );
-
-    const debug = await getDbPool().query(
-      `select id, processing_status, payment_status, last_erp_status_at, next_check_at,
-              last_erp_status_at >= now() - interval '20 minutes' as recent,
-              next_check_at > now() as check_future
-         from campaign_batch_members where batch_id = $1::uuid`,
-      [batchId]
-    );
-    console.info("[TEST_REUSE_DIAGNOSTIC]", debug.rows);
 
     const result = await enqueueBatchJobWithReuse({
       campaignId,
@@ -285,6 +292,7 @@ describeDatabase("processing integration regression", () => {
     const campaignId = await createCampaign();
     const batchId = await createBatch(campaignId, "Lote resultado vencido");
     const member = await createMemberLink({ campaignId, batchId, processingStatus: "completed", paymentStatus: "unpaid" });
+    await allowHistoricErpCheck(batchId);
     await getDbPool().query(
       `update campaign_batch_members
           set last_erp_status_at = now() - interval '5 minutes',
@@ -314,6 +322,7 @@ describeDatabase("processing integration regression", () => {
     const campaignId = await createCampaign();
     const batchId = await createBatch(campaignId, "Lote manual");
     const member = await createMemberLink({ campaignId, batchId, processingStatus: "completed", paymentStatus: "unpaid" });
+    await allowHistoricErpCheck(batchId);
     await getDbPool().query(
       `update campaign_batch_members
           set last_erp_status_at = now() - interval '5 minutes',
@@ -368,6 +377,7 @@ describeDatabase("processing integration regression", () => {
         where id = $1::uuid`,
       [manual!.id]
     );
+    await allowHistoricErpCheck(batchId);
     await getDbPool().query(
       `update campaign_batch_members
           set processing_status = 'completed',
@@ -389,13 +399,6 @@ describeDatabase("processing integration regression", () => {
         where run_id = $1::uuid`,
       [run.run.id, manual!.id]
     );
-
-    const debugWait = await getDbPool().query(
-      `select id, processing_status, payment_status, last_erp_status_at, next_check_at
-         from campaign_batch_members where batch_id = $1::uuid`,
-      [batchId]
-    );
-    console.info("[TEST_REUSE_WAIT_DIAGNOSTIC]", debugWait.rows);
 
     const advanced = await advanceClaimedLocalGeneralSyncRun({ runId: run.run.id, workerId });
     expect(advanced.action).toBe("batch_completed_no_job");
