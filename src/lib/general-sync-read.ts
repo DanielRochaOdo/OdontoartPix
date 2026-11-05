@@ -45,6 +45,7 @@ type GeneralSyncRunBatchRow = {
   position: number;
   record_count: number;
   processed_count: number;
+  reused_count: number;
   success_count: number;
   error_count: number;
   status: GeneralSyncBatchStatus;
@@ -74,6 +75,7 @@ export type GeneralSyncRunDetail = {
   completedBatchCount: number;
   recordCount: number;
   processedCount: number;
+  reusedCount: number;
   successCount: number;
   errorCount: number;
   processingCount: number;
@@ -85,6 +87,7 @@ export type GeneralSyncRunDetail = {
     position: number;
     recordCount: number;
     processedCount: number;
+    reusedCount: number;
     successCount: number;
     errorCount: number;
     processingCount: number;
@@ -98,6 +101,7 @@ export type GeneralSyncRunDetail = {
     position: number;
     recordCount: number;
     processedCount: number;
+    reusedCount: number;
     successCount: number;
     errorCount: number;
     status: GeneralSyncBatchStatus;
@@ -242,6 +246,7 @@ async function getRunBatches(runId: string) {
               position,
               record_count,
               processed_count,
+              reused_count,
               success_count,
               error_count,
               status,
@@ -333,6 +338,7 @@ async function buildRunDetail(run: GeneralSyncRunRow): Promise<GeneralSyncRunDet
   ) ?? null;
 
   const processedCount = batches.reduce((total, batch) => total + Number(batch.processed_count), 0);
+  const reusedCount = batches.reduce((total, batch) => total + Number(batch.reused_count), 0);
   const successCount = batches.reduce((total, batch) => total + Number(batch.success_count), 0);
   const errorCount = batches.reduce((total, batch) => total + Number(batch.error_count), 0);
   const completedBatchCount = batches.filter((batch) => FINAL_BATCH_STATUSES.includes(batch.status)).length;
@@ -348,6 +354,7 @@ async function buildRunDetail(run: GeneralSyncRunRow): Promise<GeneralSyncRunDet
     completedBatchCount,
     recordCount: Number(run.record_count),
     processedCount,
+    reusedCount,
     successCount,
     errorCount,
     processingCount: processing.total,
@@ -360,6 +367,7 @@ async function buildRunDetail(run: GeneralSyncRunRow): Promise<GeneralSyncRunDet
           position: Number(activeBatchRow.position),
           recordCount: Number(activeBatchRow.record_count),
           processedCount: Number(activeBatchRow.processed_count),
+          reusedCount: Number(activeBatchRow.reused_count),
           successCount: Number(activeBatchRow.success_count),
           errorCount: Number(activeBatchRow.error_count),
           processingCount: processing.byBatchId.get(activeBatchRow.batch_id) ?? 0,
@@ -374,6 +382,7 @@ async function buildRunDetail(run: GeneralSyncRunRow): Promise<GeneralSyncRunDet
       position: Number(batch.position),
       recordCount: Number(batch.record_count),
       processedCount: Number(batch.processed_count),
+      reusedCount: Number(batch.reused_count),
       successCount: Number(batch.success_count),
       errorCount: Number(batch.error_count),
       status: batch.status,
