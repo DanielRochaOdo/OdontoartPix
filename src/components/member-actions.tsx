@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { emitMetricsSync } from "@/lib/metrics-sync";
+import { useAutomaticSyncLock, AUTOMATIC_SYNC_LOCK_TOOLTIP } from "@/components/automatic-sync-lock-provider";
 
 export function MemberActions({
   memberId,
@@ -12,10 +13,12 @@ export function MemberActions({
   canDeleteMissingInstallment?: boolean;
 }) {
   const router = useRouter();
+  const { automaticSyncEnabled } = useAutomaticSyncLock();
   const [busyAction, setBusyAction] = useState<"reprocess" | "delete" | null>(null);
   const busy = busyAction !== null;
 
   async function reprocess() {
+    if (automaticSyncEnabled) return;
     setBusyAction("reprocess");
     try {
       const response = await fetch(`/api/associados/${memberId}/reprocessar`, {
@@ -78,9 +81,9 @@ export function MemberActions({
       <button
         type="button"
         onClick={reprocess}
-        disabled={busy}
+        disabled={busy || automaticSyncEnabled}
         aria-label={busyAction === "reprocess" ? "Reprocessando associado" : "Reprocessar associado"}
-        title={busyAction === "reprocess" ? "Reprocessando..." : "Reprocessar associado"}
+        title={automaticSyncEnabled ? AUTOMATIC_SYNC_LOCK_TOOLTIP : busyAction === "reprocess" ? "Reprocessando..." : "Reprocessar associado"}
         className="inline-flex h-9 w-9 items-center justify-center rounded-md border text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
       >
         <svg aria-hidden="true" viewBox="0 0 24 24" className={`h-4 w-4 ${busyAction === "reprocess" ? "animate-spin" : ""}`} fill="none" stroke="currentColor" strokeWidth="2">
