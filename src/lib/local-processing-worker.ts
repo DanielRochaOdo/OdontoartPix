@@ -4,6 +4,7 @@ import { dbQuery } from "@/lib/db/pool";
 import { clientQuery, withTransaction } from "@/lib/db/transaction";
 import { consultMonthlyByAssociatedCode, ErpError } from "@/lib/mensalidades-api";
 import { getProcessingConfig } from "@/lib/processing-config";
+import { runSplitProcessingPipeline } from "@/lib/processing-pipeline";
 
 type LocalJob = {
   id: string;
@@ -826,6 +827,31 @@ export async function runLocalWorkerOnce(options?: {
   let succeeded = 0;
   let failed = 0;
   let retried = 0;
+  const splitPipelineEnabled = process.env.PROCESSING_PIPELINE_V2_ENABLED === "true";
+  const stageMetrics = {
+    erp: { count: 0, totalMs: 0, maxMs: 0 },
+    persistence: { count: 0, totalMs: 0, maxMs: 0 }
+  };
+  const cycleStartedAt = performance.now();
+
+  async function timed<T>(stage: keyof typeof stageMetrics, action: () => Promise<T>): Promise<T> {
+    const startedAt = performance.now();
+    try {
+      return await action();
+    } finally {
+      const elapsedMs = performance.now() - startedAt;
+      const metric = stageMetrics[stage];
+      metric.count += 1;
+      metric.totalMs += elapsedMs;
+      metric.maxMs = Math.max(metric.maxMs, elapsedMs);
+    }
+  }
+
+  function countFailure(outcome: { persisted: boolean; terminal: boolean }) {
+    if (!outcome.persisted) return;
+    if (outcome.terminal) failed += 1;
+    else retried += 1;
+  }
 
   try {
     const exactMemberJob = Boolean(String(job.target_member_link_id ?? "").trim());
@@ -833,47 +859,134 @@ export async function runLocalWorkerOnce(options?: {
     const effectiveConcurrency = exactMemberJob ? 1 : concurrency;
     const claimed = await claimMembers(job, workerId, effectiveClaimLimit);
 
-    await runWithConcurrency(claimed, effectiveConcurrency, async (item) => {
-      const member = await loadMember(item.member_id);
-      let erpConsultStarted = false;
-      try {
-        const associatedCode = String(member?.external_user_code ?? "").trim();
-        const targetInstallmentId = String(item.target_installment_id ?? "").trim();
-        if (!associatedCode) {
-          throw new ErpError("ERP_INVALID_RESPONSE", "Associado sem CodigoAssociadoEmpresa.", false);
-        }
-        if (!targetInstallmentId) {
-          throw new ErpError("ERP_INVALID_RESPONSE", "Associado sem parcela alvo.", false);
-        }
+    if (splitPipelineEnabled) {
+      type PreparedConsultation =
+        | { ok: true; analysis: MonthlyAnalysis }
+        | { ok: false; error: unknown; erpConsultStarted: boolean };
 
-        erpConsultStarted = true;
-        const result = await consultMonthlyByAssociatedCode(
-          associatedCode,
-          targetInstallmentId,
-          item.due_date_text ?? undefined
-        );
+      await runSplitProcessingPipeline<ClaimedMember, PreparedConsultation>({
+        items: claimed,
+        consultationConcurrency: effectiveConcurrency,
+        persistenceConcurrency: config.persistenceConcurrency,
+        maxBufferedResults: config.maxBufferedResults,
+        consult: async (item): Promise<PreparedConsultation> => {
+          let erpConsultStarted = false;
+          try {
+            const member = await loadMember(item.member_id);
+            const associatedCode = String(member?.external_user_code ?? "").trim();
+            const targetInstallmentId = String(item.target_installment_id ?? "").trim();
+            if (!associatedCode) {
+              throw new ErpError("ERP_INVALID_RESPONSE", "Associado sem CodigoAssociadoEmpresa.", false);
+            }
+            if (!targetInstallmentId) {
+              throw new ErpError("ERP_INVALID_RESPONSE", "Associado sem parcela alvo.", false);
+            }
 
-        const persisted = await persistSuccess({
-          job,
-          claimed: item,
-          workerId,
-          analysis: result.analysis
-        });
-        if (persisted) succeeded += 1;
-      } catch (error) {
-        const outcome = await persistFailure({
-          job,
-          claimed: item,
-          workerId,
-          error,
-          maxAttempts: config.maxAttemptsPerItem,
-          erpConsultStarted
-        });
-        if (outcome.persisted) {
-          if (outcome.terminal) failed += 1;
-          else retried += 1;
+            erpConsultStarted = true;
+            const result = await timed("erp", () => consultMonthlyByAssociatedCode(
+              associatedCode,
+              targetInstallmentId,
+              item.due_date_text ?? undefined
+            ));
+            return { ok: true, analysis: result.analysis };
+          } catch (error) {
+            return { ok: false, error, erpConsultStarted };
+          }
+        },
+        persist: async (item, outcome) => {
+          const prepared: PreparedConsultation = outcome.kind === "success"
+            ? outcome.value
+            : { ok: false, error: outcome.error, erpConsultStarted: false };
+          if (!prepared.ok) {
+            const failure = await timed("persistence", () => persistFailure({
+              job,
+              claimed: item,
+              workerId,
+              error: prepared.error,
+              maxAttempts: config.maxAttemptsPerItem,
+              erpConsultStarted: prepared.erpConsultStarted
+            }));
+            countFailure(failure);
+            return;
+          }
+
+          try {
+            const persisted = await timed("persistence", () => persistSuccess({
+              job,
+              claimed: item,
+              workerId,
+              analysis: prepared.analysis
+            }));
+            if (persisted) succeeded += 1;
+          } catch (error) {
+            const failure = await timed("persistence", () => persistFailure({
+              job,
+              claimed: item,
+              workerId,
+              error,
+              maxAttempts: config.maxAttemptsPerItem,
+              erpConsultStarted: true
+            }));
+            countFailure(failure);
+          }
         }
-      }
+      });
+    } else {
+      // Fluxo de producao atual, preservado para comparacao e rollback imediato.
+      await runWithConcurrency(claimed, effectiveConcurrency, async (item) => {
+        const member = await loadMember(item.member_id);
+        let erpConsultStarted = false;
+        try {
+          const associatedCode = String(member?.external_user_code ?? "").trim();
+          const targetInstallmentId = String(item.target_installment_id ?? "").trim();
+          if (!associatedCode) {
+            throw new ErpError("ERP_INVALID_RESPONSE", "Associado sem CodigoAssociadoEmpresa.", false);
+          }
+          if (!targetInstallmentId) {
+            throw new ErpError("ERP_INVALID_RESPONSE", "Associado sem parcela alvo.", false);
+          }
+
+          erpConsultStarted = true;
+          const result = await timed("erp", () => consultMonthlyByAssociatedCode(
+            associatedCode,
+            targetInstallmentId,
+            item.due_date_text ?? undefined
+          ));
+
+          const persisted = await timed("persistence", () => persistSuccess({
+            job,
+            claimed: item,
+            workerId,
+            analysis: result.analysis
+          }));
+          if (persisted) succeeded += 1;
+        } catch (error) {
+          const outcome = await timed("persistence", () => persistFailure({
+            job,
+            claimed: item,
+            workerId,
+            error,
+            maxAttempts: config.maxAttemptsPerItem,
+            erpConsultStarted
+          }));
+          countFailure(outcome);
+        }
+      });
+    }
+
+    console.info("[LOCAL_WORKER_STAGE_METRICS]", {
+      jobId: job.id,
+      mode: splitPipelineEnabled ? "split" : "legacy",
+      claimed: claimed.length,
+      elapsedMs: Math.round(performance.now() - cycleStartedAt),
+      erpCalls: stageMetrics.erp.count,
+      erpAverageMs: stageMetrics.erp.count
+        ? Math.round(stageMetrics.erp.totalMs / stageMetrics.erp.count) : 0,
+      erpMaxMs: Math.round(stageMetrics.erp.maxMs),
+      persistenceOps: stageMetrics.persistence.count,
+      persistenceAverageMs: stageMetrics.persistence.count
+        ? Math.round(stageMetrics.persistence.totalMs / stageMetrics.persistence.count) : 0,
+      persistenceMaxMs: Math.round(stageMetrics.persistence.maxMs)
     });
 
     await recalculateBatch(job.batch_id);
