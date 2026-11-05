@@ -190,7 +190,7 @@ function progressPercentage(run: GeneralSyncRunDetail) {
     successItems: run.successCount,
     errorItems: run.errorCount
   });
-  return progress.totalItems <= 0 ? 0 : (progress.processedItems / progress.totalItems) * 100;
+  return progress.totalItems <= 0 ? 0 : percentage(progress.processedItems + run.reusedCount, progress.totalItems);
 }
 
 function batchProgressPercentage(run: GeneralSyncRunDetail | null) {
@@ -201,7 +201,7 @@ function batchProgressPercentage(run: GeneralSyncRunDetail | null) {
     successItems: run.currentBatch.successCount,
     errorItems: run.currentBatch.errorCount
   });
-  return progress.totalItems <= 0 ? 0 : (progress.processedItems / progress.totalItems) * 100;
+  return progress.totalItems <= 0 ? 0 : percentage(progress.processedItems + run.currentBatch.reusedCount, progress.totalItems);
 }
 
 function baseProgressPercentage(run: GeneralSyncRunDetail | null) {
@@ -665,9 +665,10 @@ export function GeneralSyncButton({
             <div className="flex items-center gap-4 rounded-xl border border-slate-200 bg-slate-50 p-4 transition hover:border-sky-300 hover:bg-sky-50/40 dark:border-[#243650] dark:bg-[#111d30] dark:hover:border-sky-500/50 dark:hover:bg-[#14263a]">
               <ProcessingIcon type="records" tone="sky" />
               <div>
-                <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Registros</p>
-                <p className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-50"><AnimatedNumber value={runCounters?.processedItems ?? 0} /> / <AnimatedNumber value={runCounters?.totalItems ?? 0} /></p>
-                <p className="text-xs text-slate-500 dark:text-slate-400"><AnimatedNumber value={runProgress} formatter={formatPercent} /> processados</p>
+                <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Registros cobertos</p>
+                <p className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-50"><AnimatedNumber value={(runCounters?.processedItems ?? 0) + run.reusedCount} /> / <AnimatedNumber value={runCounters?.totalItems ?? 0} /></p>
+                <p className="text-xs text-slate-500 dark:text-slate-400"><AnimatedNumber value={runProgress} formatter={formatPercent} /> cobertos</p>
+                {run.reusedCount > 0 ? <p className="mt-1 text-xs text-sky-700 dark:text-sky-300"><AnimatedNumber value={runCounters?.processedItems ?? 0} /> consultados · <AnimatedNumber value={run.reusedCount} /> reaproveitados</p> : null}
               </div>
             </div>
           </div>
@@ -694,7 +695,8 @@ export function GeneralSyncButton({
                   <div className="processing-progress-track mt-3 h-2.5 overflow-hidden rounded-full bg-white/80 dark:bg-slate-900/80">
                     <div className={`processing-progress-fill h-full rounded-full bg-sky-500 transition-[width] duration-700 ease-out ${currentBatchProgress >= 100 ? "bg-emerald-500" : ""}`} style={{ width: `${currentBatchProgress}%` }} />
                   </div>
-                  <p className="mt-2 text-sm text-slate-600 dark:text-slate-300"><strong className="text-slate-900 dark:text-slate-50"><AnimatedNumber value={currentBatchCounters?.processedItems ?? 0} /></strong> / <AnimatedNumber value={currentBatchCounters?.totalItems ?? 0} /> registros processados</p>
+                  <p className="mt-2 text-sm text-slate-600 dark:text-slate-300"><strong className="text-slate-900 dark:text-slate-50"><AnimatedNumber value={(currentBatchCounters?.processedItems ?? 0) + currentBatch.reusedCount} /></strong> / <AnimatedNumber value={currentBatchCounters?.totalItems ?? 0} /> registros cobertos</p>
+                  {currentBatch.reusedCount > 0 ? <p className="mt-1 text-xs text-sky-700 dark:text-sky-300"><AnimatedNumber value={currentBatchCounters?.processedItems ?? 0} /> consultados nesta rechecagem · <AnimatedNumber value={currentBatch.reusedCount} /> resultados manuais reaproveitados</p> : null}
                 </div>
                 <div className="grid gap-3 sm:grid-cols-3">
                   <ProcessingMetricCard
@@ -750,7 +752,7 @@ export function GeneralSyncButton({
               <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-50">Fila de lotes</h3>
               <div className="mt-2 max-h-64 space-y-2 overflow-y-auto pr-1">
                 {run.batches.map((batch) => {
-                  const batchPercent = percentage(batch.processedCount, batch.recordCount);
+                  const batchPercent = percentage(batch.processedCount + batch.reusedCount, batch.recordCount);
                   const isCurrent = currentBatch?.id === batch.id;
                   return (
                     <div key={batch.id} className={`rounded-xl border p-3 transition-colors ${isCurrent ? "border-sky-300 bg-sky-50/60 dark:border-sky-800 dark:bg-sky-950/30" : "border-slate-200 dark:border-slate-800"}`}>
@@ -762,7 +764,8 @@ export function GeneralSyncButton({
                         </div>
                         <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">{batch.recordCount ? `${batchPercent.toLocaleString("pt-BR", { maximumFractionDigits: 0 })}%` : "—"}</span>
                       </div>
-                      {batch.status === "running" || batch.processedCount > 0 ? <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800"><div className="h-full rounded-full bg-sky-500 transition-[width] duration-700" style={{ width: `${batchPercent}%` }} /></div> : null}
+                      {batch.reusedCount > 0 ? <p className="mt-1 text-xs text-sky-700 dark:text-sky-300">{formatInteger(batch.reusedCount)} resultado(s) reaproveitado(s)</p> : null}
+                      {batch.status === "running" || batch.processedCount + batch.reusedCount > 0 ? <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800"><div className="h-full rounded-full bg-sky-500 transition-[width] duration-700" style={{ width: `${batchPercent}%` }} /></div> : null}
                     </div>
                   );
                 })}
