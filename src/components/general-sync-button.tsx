@@ -306,7 +306,10 @@ export function GeneralSyncButton({
       }
     }
 
+    // O SSE continua sendo o caminho principal. O polling e apenas uma
+    // protecao contra notificacoes perdidas, sem alterar o worker ou sua configuracao.
     const stopRealtime = subscribeProcessingRealtime(() => void refresh());
+    const fallbackTimer = window.setInterval(() => void refresh(), 10_000);
     const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") void refresh();
     };
@@ -316,6 +319,7 @@ export function GeneralSyncButton({
     return () => {
       active = false;
       stopRealtime();
+      window.clearInterval(fallbackTimer);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, [runId, shouldObserveRun]);
@@ -721,7 +725,7 @@ export function GeneralSyncButton({
               </div>
               {currentBatch.processedCount === 0 && currentBatch.processingCount > 0 ? (
                 <p className="mt-3 text-xs font-medium text-sky-700 dark:text-sky-300">
-                  Preparando primeira etapa — {formatInteger(currentBatch.processingCount)} registros em andamento
+                  Aguardando a conclusão dos primeiros registros — {formatInteger(currentBatch.processingCount)} em processamento
                 </p>
               ) : null}
               {actionMessage ? (
