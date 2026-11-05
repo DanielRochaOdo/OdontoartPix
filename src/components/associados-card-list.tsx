@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { AssociadosFilterOptions, AssociadosFilters, AssociadosPage } from "@/lib/associados-paginated";
 import { emitMetricsSync } from "@/lib/metrics-sync";
+import { useAutomaticSyncLock, AUTOMATIC_SYNC_LOCK_TOOLTIP } from "@/components/automatic-sync-lock-provider";
 import {
   isPaidWithPending,
   matchesPaidPendingFilter,
@@ -373,10 +374,12 @@ function MultiSelectFilter({
 
 function CardActions({ row }: { row: Row }) {
   const router = useRouter();
+  const { automaticSyncEnabled } = useAutomaticSyncLock();
   const [busyAction, setBusyAction] = useState<"reprocess" | "delete" | null>(null);
   const busy = busyAction !== null;
 
   async function reprocess() {
+    if (automaticSyncEnabled) return;
     setBusyAction("reprocess");
     try {
       const response = await fetch(`/api/associados/${row.id}/reprocessar`, { method: "POST" });
@@ -435,7 +438,7 @@ function CardActions({ row }: { row: Row }) {
         <EyeIcon />
         <span>Ver detalhes</span>
       </Link>
-      <button type="button" onClick={reprocess} disabled={busy} className={actionClass}>
+      <button type="button" onClick={reprocess} disabled={busy || automaticSyncEnabled} title={automaticSyncEnabled ? AUTOMATIC_SYNC_LOCK_TOOLTIP : "Reprocessar"} className={actionClass}>
         <svg viewBox="0 0 24 24" className={`h-4 w-4 ${busyAction === "reprocess" ? "animate-spin" : ""}`} fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
           <path d="M20 11a8.1 8.1 0 0 0-14.8-4L3 10" />
           <path d="M3 4v6h6" />
@@ -490,6 +493,7 @@ export function AssociadosCardList({
   };
 }) {
   const router = useRouter();
+  const { automaticSyncEnabled } = useAutomaticSyncLock();
   const [pageData, setPageData] = useState(initialPage);
   const [availableOptions, setAvailableOptions] = useState(filterOptions);
   const members = pageData.rows;
@@ -856,7 +860,7 @@ export function AssociadosCardList({
 
   async function reprocessSelected() {
     const memberIds = [...selectedIds];
-    if (memberIds.length === 0 || reprocessingSelected) return;
+    if (automaticSyncEnabled || memberIds.length === 0 || reprocessingSelected) return;
 
     setReprocessingSelected(true);
     setSelectionError(null);
@@ -895,7 +899,7 @@ export function AssociadosCardList({
   }
 
   async function reprocessFilteredErrors() {
-    if (!canShowErrorReprocess || bulkProgress?.active) return;
+    if (automaticSyncEnabled || !canShowErrorReprocess || bulkProgress?.active) return;
 
     setReprocessingErrors(true);
     setBulkError(null);
@@ -1038,7 +1042,8 @@ export function AssociadosCardList({
             <button
               type="button"
               onClick={reprocessSelected}
-              disabled={loading || pageError || selectedCount === 0 || reprocessingSelected}
+              title={automaticSyncEnabled ? AUTOMATIC_SYNC_LOCK_TOOLTIP : undefined}
+              disabled={automaticSyncEnabled || loading || pageError || selectedCount === 0 || reprocessingSelected}
               className="rounded-lg border border-brand bg-brand-soft px-3 py-2 text-sm font-semibold text-brand transition hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-50"
             >
               {reprocessingSelected ? "Enviando..." : `Reprocessar selecionados (${selectedCount})`}
@@ -1047,7 +1052,8 @@ export function AssociadosCardList({
               <button
                 type="button"
                 onClick={() => void reprocessFilteredErrors()}
-                disabled={loading || pageError || reprocessingErrors || bulkProgress?.active || !canShowErrorReprocess}
+                title={automaticSyncEnabled ? AUTOMATIC_SYNC_LOCK_TOOLTIP : undefined}
+                disabled={automaticSyncEnabled || loading || pageError || reprocessingErrors || bulkProgress?.active || !canShowErrorReprocess}
                 className="rounded-lg border border-warning bg-warning-soft px-3 py-2 text-sm font-medium text-warning disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {reprocessingErrors ? "Criando snapshot..." : bulkProgress?.active ? "Reprocessando..." : "Reprocessar erros"}
