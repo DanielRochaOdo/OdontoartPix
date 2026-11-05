@@ -496,6 +496,7 @@ export function MembersTable({
   }, [bulkProgress?.active, bulkProgress?.requestId, router]);
 
   async function reprocessFilteredErrors() {
+    if (automaticSyncEnabled) return;
     if (!canShowErrorReprocess || bulkProgress?.active) return;
 
     const memberIds = filteredRows.map((row) => row.id);
@@ -622,6 +623,7 @@ export function MembersTable({
           <button
             type="button"
             onClick={reprocessFilteredErrors}
+            title={automaticSyncEnabled ? AUTOMATIC_SYNC_LOCK_TOOLTIP : undefined}
             disabled={automaticSyncEnabled || reprocessingErrors || bulkProgress?.active || !canShowErrorReprocess}
             className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-900 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
           >
