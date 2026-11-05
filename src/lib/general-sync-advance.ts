@@ -1,4 +1,4 @@
-import { enqueueBatchJob, PROCESSING_PRIORITIES } from "@/lib/batch-job-service";
+import { enqueueBatchJobWithReuse, PROCESSING_PRIORITIES, type ReuseWindow } from "@/lib/batch-job-service";
 import { dbQuery } from "@/lib/db/pool";
 import { clientQuery, withTransaction } from "@/lib/db/transaction";
 import { DataAccessError } from "@/lib/errors/data-access-error";
@@ -155,6 +155,32 @@ async function findActiveProcessingJob(batchId: string) {
   );
 
   return result.rows[0] ?? null;
+}
+
+// Only a completed manual job which this batch explicitly waited for can
+// supply previously checked financial results to a scheduled recheck.
+async function getWaitedManualReuseWindow(waitingJobId: string | null): Promise<ReuseWindow | null> {
+  if (!waitingJobId) return null;
+  const result = await dbQuery<{
+    started_at: Date | string;
+    finished_at: Date | string;
+  }>(
+    `select started_at, finished_at
+       from processing_jobs
+      where id = $1::uuid
+        and processing_origin = 'manual'
+        and status = 'completed'
+        and started_at is not null
+        and finished_at is not null
+      limit 1`,
+    [waitingJobId]
+  );
+  const row = result.rows[0];
+  if (!row) return null;
+  return {
+    startedAt: new Date(row.started_at).toISOString(),
+    finishedAt: new Date(row.finished_at).toISOString()
+  };
 }
 
 async function assertOwnershipInsideTransaction(
@@ -323,6 +349,7 @@ async function attachProcessingJob(input: {
   workerId: string;
   batch: RunBatchRow;
   processingJobId: string;
+  reusedCount: number;
 }) {
   return withTransaction(async (client) => {
     const owned = await clientQuery<{ id: string; requested_by: string | null }>(
@@ -347,6 +374,7 @@ async function attachProcessingJob(input: {
           set status = 'running',
               processing_job_id = $3::uuid,
               waiting_job_id = null,
+              reused_count = $4::int,
               started_at = coalesce(started_at, now()),
               message = null,
               updated_at = now()
@@ -354,7 +382,7 @@ async function attachProcessingJob(input: {
           and run_id = $2::uuid
           and status = 'pending'
         returning id`,
-      [input.batch.id, input.runId, input.processingJobId]
+      [input.batch.id, input.runId, input.processingJobId, input.reusedCount]
     );
 
     if (!updated.rows[0]) {
@@ -413,7 +441,8 @@ async function attachProcessingJob(input: {
           runId: input.runId,
           position: input.batch.position,
           recordCount: input.batch.record_count,
-          processingJobId: input.processingJobId
+          processingJobId: input.processingJobId,
+          reusedCount: input.reusedCount
         }),
         owner.requested_by
       ]
@@ -425,6 +454,7 @@ async function markBatchCompletedWithoutJob(input: {
   runId: string;
   workerId: string;
   batch: RunBatchRow;
+  reusedCount: number;
 }) {
   return withTransaction(async (client) => {
     const owned = await clientQuery<{ id: string }>(
@@ -446,6 +476,9 @@ async function markBatchCompletedWithoutJob(input: {
       client,
       `update general_sync_run_batches
           set status = 'completed',
+              reused_count = $4::int,
+              waiting_job_id = null,
+              started_at = coalesce(started_at, now()),
               finished_at = now(),
               message = $3,
               updated_at = now()
@@ -456,7 +489,10 @@ async function markBatchCompletedWithoutJob(input: {
       [
         input.batch.id,
         input.runId,
-        "Nenhum registro elegivel foi encontrado no lote apos a preparacao."
+        input.reusedCount > 0
+          ? `${input.reusedCount} resultado(s) recente(s) reaproveitado(s) do processamento manual; nenhuma nova consulta necessaria.`
+          : "Nenhum registro elegivel foi encontrado no lote apos a preparacao.",
+        input.reusedCount
       ]
     );
 
@@ -558,7 +594,11 @@ export async function advanceClaimedLocalGeneralSyncRun(input: {
       await prepareBatchForFullSync(nextBatch.batch_id);
     }
 
-    const job = await enqueueBatchJob({
+    const reuseWindow = isScheduledRecheck
+      ? await getWaitedManualReuseWindow(nextBatch.waiting_job_id)
+      : null;
+
+    const { job, reusedCount: recentResults } = await enqueueBatchJobWithReuse({
       campaignId: nextBatch.campaign_id,
       batchId: nextBatch.batch_id,
       requestedBy: run.requested_by ?? "",
@@ -566,6 +606,7 @@ export async function advanceClaimedLocalGeneralSyncRun(input: {
         run.sync_mode === "full_sync" ||
         run.sync_mode === "error_reprocess",
       scheduledRecheck: isScheduledRecheck,
+      reuseWindow,
       processingOrigin: "dashboard",
       processingScope: "dashboard",
       processingPriority: PROCESSING_PRIORITIES.dashboard
@@ -575,11 +616,16 @@ export async function advanceClaimedLocalGeneralSyncRun(input: {
       throw new Error("A sincronizacao geral nao possui um usuario solicitante valido.");
     }
 
+    // The scope was snapshotted at run creation; cap reused results if
+    // additional members appeared in this batch during the run.
+    const reusedCount = Math.max(0, Math.min(nextBatch.record_count, recentResults));
+
     if (!job) {
       await markBatchCompletedWithoutJob({
         runId: run.id,
         workerId: input.workerId,
-        batch: nextBatch
+        batch: nextBatch,
+        reusedCount
       });
 
       return {
@@ -593,7 +639,8 @@ export async function advanceClaimedLocalGeneralSyncRun(input: {
       runId: run.id,
       workerId: input.workerId,
       batch: nextBatch,
-      processingJobId: job.id
+      processingJobId: job.id,
+      reusedCount
     });
 
     return {
