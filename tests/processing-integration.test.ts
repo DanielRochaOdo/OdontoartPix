@@ -245,6 +245,15 @@ describeDatabase("processing integration regression", () => {
       [noNextCheck.memberLinkId]
     );
 
+    const debug = await getDbPool().query(
+      `select id, processing_status, payment_status, last_erp_status_at, next_check_at,
+              last_erp_status_at >= now() - interval '20 minutes' as recent,
+              next_check_at > now() as check_future
+         from campaign_batch_members where batch_id = $1::uuid`,
+      [batchId]
+    );
+    console.info("[TEST_REUSE_DIAGNOSTIC]", debug.rows);
+
     const result = await enqueueBatchJobWithReuse({
       campaignId,
       batchId,
@@ -380,6 +389,13 @@ describeDatabase("processing integration regression", () => {
         where run_id = $1::uuid`,
       [run.run.id, manual!.id]
     );
+
+    const debugWait = await getDbPool().query(
+      `select id, processing_status, payment_status, last_erp_status_at, next_check_at
+         from campaign_batch_members where batch_id = $1::uuid`,
+      [batchId]
+    );
+    console.info("[TEST_REUSE_WAIT_DIAGNOSTIC]", debugWait.rows);
 
     const advanced = await advanceClaimedLocalGeneralSyncRun({ runId: run.run.id, workerId });
     expect(advanced.action).toBe("batch_completed_no_job");
