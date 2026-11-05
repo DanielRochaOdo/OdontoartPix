@@ -400,6 +400,19 @@ describeDatabase("processing integration regression", () => {
       [run.run.id, manual!.id]
     );
 
+    const diagnostic = await getDbPool().query(
+      `select p.status as job_status, p.processing_origin, p.started_at, p.finished_at,
+              cbm.payment_status, cbm.processing_status, cbm.last_erp_status_at, cbm.next_check_at,
+              grb.waiting_job_id, gr.sync_mode
+         from processing_jobs p
+         join campaign_batch_members cbm on cbm.batch_id = p.batch_id
+         join general_sync_run_batches grb on grb.batch_id = p.batch_id
+         join general_sync_runs gr on gr.id = grb.run_id
+        where p.id = $1::uuid and gr.id = $2::uuid`,
+      [manual!.id, run.run.id]
+    );
+    console.info("[TEST_FINAL_REUSE_DIAGNOSTIC]", diagnostic.rows);
+
     const advanced = await advanceClaimedLocalGeneralSyncRun({ runId: run.run.id, workerId });
     expect(advanced.action).toBe("batch_completed_no_job");
 
