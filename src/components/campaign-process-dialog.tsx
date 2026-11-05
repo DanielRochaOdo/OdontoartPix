@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { emitMetricsSync } from "@/lib/metrics-sync";
+import { useAutomaticSyncLock, AUTOMATIC_SYNC_LOCK_TOOLTIP } from "@/components/automatic-sync-lock-provider";
 import { formatCurrencyBR } from "@/lib/money";
 
 type Metrics = {
@@ -40,6 +41,7 @@ export function CampaignProcessDialog({
   metrics: Metrics;
 }) {
   const router = useRouter();
+  const { automaticSyncEnabled } = useAutomaticSyncLock();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -56,7 +58,7 @@ export function CampaignProcessDialog({
   ];
 
   async function submit() {
-    if (busy) return;
+    if (busy || automaticSyncEnabled) return;
 
     setBusy(true);
     setError(null);
@@ -87,6 +89,8 @@ export function CampaignProcessDialog({
       <button
         type="button"
         onClick={() => setOpen(true)}
+        disabled={automaticSyncEnabled}
+        title={automaticSyncEnabled ? AUTOMATIC_SYNC_LOCK_TOOLTIP : "Processar campanha"}
         className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-800"
       >
         Processar campanha
@@ -163,6 +167,7 @@ export function CampaignProcessDialog({
               ))}
             </div>
 
+            {automaticSyncEnabled ? <p className="mt-4 text-sm text-amber-700">{AUTOMATIC_SYNC_LOCK_TOOLTIP}</p> : null}
             {error ? <p className="mt-4 text-sm text-red-600">{error}</p> : null}
 
             <div className="mt-6 flex justify-end gap-3">
@@ -177,7 +182,8 @@ export function CampaignProcessDialog({
               <button
                 type="button"
                 onClick={submit}
-                disabled={busy}
+                disabled={busy || automaticSyncEnabled}
+                title={automaticSyncEnabled ? AUTOMATIC_SYNC_LOCK_TOOLTIP : undefined}
                 className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-800 disabled:opacity-60"
               >
                 {busy ? "Enfileirando..." : "Confirmar processamento"}
