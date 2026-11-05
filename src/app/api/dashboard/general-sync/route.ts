@@ -1,3 +1,4 @@
+import { blockManualSyncWhileAutomaticEnabled } from "@/lib/automatic-sync-lock";
 import { z } from "zod";
 import { requireApiUser } from "@/lib/auth/require-api-user";
 import { fail, ok } from "@/lib/http/api-response";
@@ -15,6 +16,9 @@ const BodySchema = z.object({
 export async function POST(request: Request) {
   const auth = await requireApiUser(["administrador"]);
   if (!auth.ok) return auth.response;
+
+  const manualSyncLock = await blockManualSyncWhileAutomaticEnabled();
+  if (manualSyncLock) return manualSyncLock;
 
   const parsed = BodySchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
