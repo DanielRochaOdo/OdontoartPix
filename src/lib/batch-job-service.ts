@@ -22,6 +22,16 @@ export type ProcessingJobStatus =
   | "paused"
   | "cancelled";
 
+export type ReuseWindow = {
+  startedAt: string;
+  finishedAt: string;
+};
+
+export type BatchJobEnqueueOutcome = {
+  job: EnqueuedJob | null;
+  reusedCount: number;
+};
+
 export type EnqueuedJob = {
   id: string;
   campaign_id: string;
@@ -211,10 +221,23 @@ async function normalizeExhaustedMembers(
   );
 }
 
+// A reusable result must be a finished ERP check from the completed manual
+// job's time window. Unpaid results additionally need an unexpired next check.
+function reusableResultPredicate(startParameter: number, finishParameter: number) {
+  return `processing_status = 'completed'
+      and last_erp_status_at >= $${startParameter}::timestamptz
+      and last_erp_status_at <= $${finishParameter}::timestamptz
+      and (
+        payment_status in ('paid', 'agreed', 'excluded')
+        or (payment_status = 'unpaid' and next_check_at > now())
+      )`;
+}
+
 async function reopenUnpaidMembersForManualProcessing(
   client: PoolClient,
   batchId: string,
-  resetAttempts = false
+  resetAttempts = false,
+  reuseWindow: ReuseWindow | null = null
 ) {
   await clientQuery(
     client,
@@ -234,9 +257,27 @@ async function reopenUnpaidMembersForManualProcessing(
       where batch_id = $1
         and deleted_at is null
         and processing_status <> 'processing'
-        and (payment_status is null or payment_status = 'unpaid')`,
-    [batchId, resetAttempts]
+        and (payment_status is null or payment_status = 'unpaid')
+        and (
+          $3::timestamptz is null
+          or not (${reusableResultPredicate(3, 4)})
+        )`,
+    [batchId, resetAttempts, reuseWindow?.startedAt ?? null, reuseWindow?.finishedAt ?? null]
   );
+}
+
+async function countReusableResults(client: PoolClient, batchId: string, window: ReuseWindow | null) {
+  if (!window) return 0;
+  const result = await clientQuery<{ reused_count: number }>(
+    client,
+    `select count(*)::int as reused_count
+       from campaign_batch_members
+      where batch_id = $1::uuid
+        and deleted_at is null
+        and ${reusableResultPredicate(2, 3)}`,
+    [batchId, window.startedAt, window.finishedAt]
+  );
+  return Number(result.rows[0]?.reused_count ?? 0);
 }
 
 async function requestErroredMembers(client: PoolClient, batchId: string) {
@@ -296,18 +337,23 @@ async function resumePausedJob(
   return result.rows[0] ?? null;
 }
 
-export async function enqueueBatchJob(input: {
+export async function enqueueBatchJobWithReuse(input: {
   campaignId: string;
   batchId: string;
   requestedBy: string;
   includeErrors?: boolean;
   scheduledRecheck?: boolean;
+  reuseWindow?: ReuseWindow | null;
   processingOrigin?: ProcessingOrigin;
   processingScope?: ProcessingJobScope;
   processingPriority?: number;
-}): Promise<EnqueuedJob | null> {
+}): Promise<BatchJobEnqueueOutcome> {
   const includeErrors = input.includeErrors ?? false;
   const scheduledRecheck = input.scheduledRecheck ?? false;
+  // Never reuse results in a full sync, error replay or manual operation.
+  const reuseWindow = scheduledRecheck && input.processingOrigin === "dashboard"
+    ? input.reuseWindow ?? null
+    : null;
   const processingOrigin = input.processingOrigin ?? "manual";
   const processingScope = resolveScope({ processingOrigin, processingScope: input.processingScope });
   const processingPriority = resolvePriority(processingScope, input.processingPriority);
@@ -344,12 +390,13 @@ export async function enqueueBatchJob(input: {
     const activeJob = activeResult.rows[0] ?? null;
 
     if (!includeErrors) {
-      await reopenUnpaidMembersForManualProcessing(client, input.batchId, scheduledRecheck);
+      await reopenUnpaidMembersForManualProcessing(client, input.batchId, scheduledRecheck, reuseWindow);
       await normalizeExhaustedMembers(client, input.batchId, config.maxAttemptsPerItem);
     } else if (!activeJob?.include_errors) {
       await requestErroredMembers(client, input.batchId);
     }
 
+    const reusedCount = await countReusableResults(client, input.batchId, reuseWindow);
     const mergedIncludeErrors = Boolean(activeJob?.include_errors || includeErrors);
     const summary = await getClaimableSummary(client, input.batchId, mergedIncludeErrors);
 
@@ -408,7 +455,7 @@ export async function enqueueBatchJob(input: {
       if (promoted.status === "paused") {
         const resumedJob = await resumePausedJob(client, promoted.id, processingOrigin);
         if (!resumedJob) throw new Error("Job pausado nao pode ser retomado.");
-        return mapJob(resumedJob, false, true);
+        return { job: mapJob(resumedJob, false, true), reusedCount };
       }
 
       if (
@@ -429,13 +476,13 @@ export async function enqueueBatchJob(input: {
               and status = 'queued'`,
           [promoted.id, processingOrigin]
         );
-        return null;
+        return { job: null, reusedCount };
       }
 
-      return mapJob(promoted, false);
+      return { job: mapJob(promoted, false), reusedCount };
     }
 
-    if (summary.claimable === 0) return null;
+    if (summary.claimable === 0) return { job: null, reusedCount };
 
     const inserted = await clientQuery<JobRow>(
       client,
@@ -500,8 +547,13 @@ export async function enqueueBatchJob(input: {
 
     const job = inserted.rows[0];
     if (!job) throw new Error("Job nao criado.");
-    return mapJob(job, true);
+    return { job: mapJob(job, true), reusedCount };
   });
+}
+
+export async function enqueueBatchJob(input: Parameters<typeof enqueueBatchJobWithReuse>[0]): Promise<EnqueuedJob | null> {
+  const outcome = await enqueueBatchJobWithReuse(input);
+  return outcome.job;
 }
 
 export async function enqueueCampaignJobs(input: {
