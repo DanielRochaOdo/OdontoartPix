@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { getCurrentProfile } from "@/lib/auth";
+import { isAutomaticSyncEnabled } from "@/lib/automatic-sync-lock";
 
 export default async function ProtectedLayout({ children }: { children: React.ReactNode }) {
   let profile;
@@ -31,5 +32,13 @@ export default async function ProtectedLayout({ children }: { children: React.Re
     redirect("/login");
   }
 
-  return <AppShell profile={profile}>{children}</AppShell>;
+  // Fail closed in the UI if the scheduler state cannot be read.
+  let initialAutomaticSyncEnabled = true;
+  try {
+    initialAutomaticSyncEnabled = await isAutomaticSyncEnabled();
+  } catch (error) {
+    console.error("[AUTOMATIC_SYNC_LOCK_LAYOUT_READ_FAILED]", error);
+  }
+
+  return <AppShell profile={profile} initialAutomaticSyncEnabled={initialAutomaticSyncEnabled}>{children}</AppShell>;
 }
