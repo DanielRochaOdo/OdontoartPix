@@ -218,6 +218,8 @@ describeDatabase("processing integration regression", () => {
     const fresh = await createMemberLink({ campaignId, batchId, processingStatus: "completed", paymentStatus: "unpaid" });
     const old = await createMemberLink({ campaignId, batchId, processingStatus: "completed", paymentStatus: "unpaid" });
     const error = await createMemberLink({ campaignId, batchId, processingStatus: "error", paymentStatus: "unpaid" });
+    const noErpTimestamp = await createMemberLink({ campaignId, batchId, processingStatus: "completed", paymentStatus: "unpaid" });
+    const noNextCheck = await createMemberLink({ campaignId, batchId, processingStatus: "completed", paymentStatus: "unpaid" });
 
     await getDbPool().query(
       `update campaign_batch_members
@@ -228,6 +230,19 @@ describeDatabase("processing integration regression", () => {
               next_check_at = now() + interval '40 minutes'
         where id = any($2::uuid[])`,
       [fresh.memberLinkId, [fresh.memberLinkId, old.memberLinkId]]
+    );
+    await getDbPool().query(
+      `update campaign_batch_members
+          set next_check_at = now() + interval '40 minutes'
+        where id = $1::uuid`,
+      [noErpTimestamp.memberLinkId]
+    );
+    await getDbPool().query(
+      `update campaign_batch_members
+          set last_erp_status_at = now() - interval '5 minutes',
+              next_check_at = null
+        where id = $1::uuid`,
+      [noNextCheck.memberLinkId]
     );
 
     const result = await enqueueBatchJobWithReuse({
@@ -244,7 +259,7 @@ describeDatabase("processing integration regression", () => {
     });
 
     expect(result.reusedCount).toBe(1);
-    expect(result.job?.total_items).toBe(2);
+    expect(result.job?.total_items).toBe(4);
     const states = await getDbPool().query<{ id: string; processing_status: string }>(
       `select id, processing_status from campaign_batch_members where batch_id = $1`,
       [batchId]
@@ -253,6 +268,8 @@ describeDatabase("processing integration regression", () => {
     expect(status.get(fresh.memberLinkId)).toBe("completed");
     expect(status.get(old.memberLinkId)).toBe("pending");
     expect(status.get(error.memberLinkId)).toBe("pending");
+    expect(status.get(noErpTimestamp.memberLinkId)).toBe("pending");
+    expect(status.get(noNextCheck.memberLinkId)).toBe("pending");
   });
 
   it("rechecagem nao reaproveita verificacao cujo prazo ja venceu", async () => {
