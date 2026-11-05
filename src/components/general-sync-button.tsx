@@ -12,6 +12,7 @@ import {
 } from "@/lib/processing-realtime";
 import { normalizeProcessingProgress } from "@/lib/processing-progress";
 import { ManualDashboardIcon, type ManualDashboardIconName } from "@/components/manual-dashboard-icon";
+import { useAutomaticSyncLock, AUTOMATIC_SYNC_LOCK_TOOLTIP } from "@/components/automatic-sync-lock-provider";
 
 type ApiSuccess<T> = {
   success?: boolean;
@@ -220,6 +221,7 @@ export function GeneralSyncButton({
   initialRun: GeneralSyncRunDetail | null;
   processingCardCollapsed?: boolean;
 }) {
+  const { automaticSyncEnabled } = useAutomaticSyncLock();
   const [open, setOpen] = useState(false);
   const [preview, setPreview] = useState<GeneralSyncPreview | null>(null);
   const [run, setRun] = useState<GeneralSyncRunDetail | null>(initialRun);
@@ -359,7 +361,7 @@ export function GeneralSyncButton({
   }
 
   async function start() {
-    if (!preview || starting) return;
+    if (!preview || starting || automaticSyncEnabled) return;
     setStarting(true);
     setError(null);
     setActionMessage(null);
@@ -466,6 +468,7 @@ export function GeneralSyncButton({
   }
 
   async function reprocessErrors() {
+    if (automaticSyncEnabled) return;
     if (
       !run ||
       reprocessingErrors ||
@@ -501,6 +504,7 @@ export function GeneralSyncButton({
   }
 
   async function resume() {
+    if (automaticSyncEnabled) return;
     if (!run || resuming || !run.canResume) return;
     setResuming(true);
     setError(null);
@@ -566,9 +570,9 @@ export function GeneralSyncButton({
           if (activeRun && run) setOpen(true);
           else void loadPreview();
         }}
-        disabled={loadingPreview || starting}
+        disabled={loadingPreview || starting || automaticSyncEnabled}
         aria-label="Sincronizar geral"
-        title="Sincronizar geral"
+        title={automaticSyncEnabled ? AUTOMATIC_SYNC_LOCK_TOOLTIP : "Sincronizar geral"}
         className={`inline-flex h-10 w-10 items-center justify-center rounded-xl border shadow-sm transition ${
           activeRun
             ? "border-emerald-500 bg-emerald-50 text-emerald-800 hover:bg-emerald-100"
@@ -613,7 +617,7 @@ export function GeneralSyncButton({
                     <button
                       type="button"
                       onClick={() => void resume()}
-                      disabled={resuming || cancelling}
+                      disabled={resuming || cancelling || automaticSyncEnabled}
                       className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       {resuming ? "Retomando..." : "Retomar sincronização"}
@@ -713,7 +717,7 @@ export function GeneralSyncButton({
                     value={<AnimatedNumber value={runCounters?.errorItems ?? 0} />}
                     selected={selectedMetric === "error"}
                     tone="red"
-                    onSelect={() => void reprocessErrors()}
+                    onSelect={() => { if (!automaticSyncEnabled) void reprocessErrors(); }}
                   />
                   <ProcessingMetricCard
                     label="Em processamento"
@@ -943,8 +947,9 @@ export function GeneralSyncButton({
                   </article>
                   <button
                     type="button"
-                    onClick={() => void reprocessErrors()}
+                    onClick={() => { if (!automaticSyncEnabled) void reprocessErrors(); }}
                     disabled={
+                      automaticSyncEnabled ||
                       reprocessingErrors ||
                       (run.status !== "queued" && run.status !== "running")
                     }
@@ -1011,7 +1016,7 @@ export function GeneralSyncButton({
                 <button
                   type="button"
                   onClick={() => void start()}
-                  disabled={starting || Boolean(preview?.emptyReason)}
+                  disabled={automaticSyncEnabled || starting || Boolean(preview?.emptyReason)}
                   className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-800 disabled:opacity-60"
                 >
                   {starting ? "Iniciando..." : "Iniciar sincronizacao"}
