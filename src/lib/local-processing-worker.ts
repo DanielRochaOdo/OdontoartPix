@@ -862,7 +862,7 @@ export async function runLocalWorkerOnce(options?: {
     if (splitPipelineEnabled) {
       type PreparedConsultation =
         | { ok: true; analysis: MonthlyAnalysis }
-        | { ok: false; error: unknown; erpConsultStarted: boolean };
+        | { ok: false; error: unknown; erpConsultStarted: boolean; fatal?: boolean };
 
       await runSplitProcessingPipeline<ClaimedMember, PreparedConsultation>({
         items: claimed,
@@ -870,9 +870,17 @@ export async function runLocalWorkerOnce(options?: {
         persistenceConcurrency: config.persistenceConcurrency,
         maxBufferedResults: config.maxBufferedResults,
         consult: async (item): Promise<PreparedConsultation> => {
+          // Falhas de leitura do PostgreSQL sao fatais para o job, nao erros
+          // de ERP: nao transformar indisponibilidade do banco em erro financeiro.
+          let member: StoredMember | null;
+          try {
+            member = await loadMember(item.member_id);
+          } catch (error) {
+            return { ok: false, error, erpConsultStarted: false, fatal: true };
+          }
+
           let erpConsultStarted = false;
           try {
-            const member = await loadMember(item.member_id);
             const associatedCode = String(member?.external_user_code ?? "").trim();
             const targetInstallmentId = String(item.target_installment_id ?? "").trim();
             if (!associatedCode) {
@@ -898,6 +906,7 @@ export async function runLocalWorkerOnce(options?: {
             ? outcome.value
             : { ok: false, error: outcome.error, erpConsultStarted: false };
           if (!prepared.ok) {
+            if (prepared.fatal) throw prepared.error;
             const failure = await timed("persistence", () => persistFailure({
               job,
               claimed: item,
