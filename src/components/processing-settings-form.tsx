@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { useAutomaticSyncLock } from "@/components/automatic-sync-lock-provider";
 import type { ProcessingConfig } from "@/lib/processing-config";
 import type { ProcessingPresetKey } from "@/lib/processing-presets";
 
@@ -49,13 +50,12 @@ function technicalRows(config: ProcessingConfig) {
 export function ProcessingSettingsForm({
   presets,
   selectedPresetKey,
-  scheduledIntervalMinutes,
-  automaticSyncEnabled
+  scheduledIntervalMinutes
 }: Props) {
   const router = useRouter();
   const [selected, setSelected] = useState<ProcessingPresetKey | null>(selectedPresetKey);
   const [interval, setInterval] = useState<IntervalMinutes>(scheduledIntervalMinutes);
-  const [automaticEnabled, setAutomaticEnabled] = useState(automaticSyncEnabled);
+  const { automaticSyncEnabled: automaticEnabled, setAutomaticSyncEnabled } = useAutomaticSyncLock();
   const [busy, setBusy] = useState(false);
   const [automaticBusy, setAutomaticBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -105,7 +105,7 @@ export function ProcessingSettingsForm({
         setMessage(payload?.error?.message ?? "Não foi possível alterar a sincronização automática.");
         return;
       }
-      setAutomaticEnabled(payload.data?.automaticSyncEnabled === true);
+      setAutomaticSyncEnabled(payload.data?.automaticSyncEnabled === true);
       setMessage(payload?.message ?? "Sincronização automática atualizada.");
       router.refresh();
     } catch {
@@ -189,7 +189,7 @@ export function ProcessingSettingsForm({
               </span>
             </div>
             <p className="mt-1 max-w-2xl text-sm text-secondary">
-              Controle quando o sistema inicia a sincronização geral sem intervenção manual.
+              Controle quando o sistema inicia a sincronização geral sem intervenção manual. Quando ativada, as sincronizações e os reprocessamentos manuais ficam bloqueados até a desativação.
             </p>
           </div>
           <button type="button" onClick={toggleAutomaticSync} disabled={busy || automaticBusy} aria-pressed={automaticEnabled} className={`rounded-lg px-4 py-2 text-sm font-semibold transition disabled:opacity-50 ${automaticEnabled ? "border border-danger bg-danger-soft text-danger" : "bg-brand text-inverse"}`}>

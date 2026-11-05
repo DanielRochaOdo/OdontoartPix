@@ -8,6 +8,7 @@ import { LogoutButton } from "@/components/logout-button";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { listenMetricsSync } from "@/lib/metrics-sync";
 import { GlobalProcessingIndicator } from "@/components/global-processing-indicator";
+import { AutomaticSyncLockProvider } from "@/components/automatic-sync-lock-provider";
 
 function LogoIcon({ className = "h-6 w-6" }: { className?: string }) {
   return (
@@ -106,10 +107,12 @@ const navItems = [
 
 export function AppShell({
   children,
-  profile
+  profile,
+  initialAutomaticSyncEnabled
 }: {
   children: React.ReactNode;
   profile: { nome: string | null; email: string | null; role: Role | null };
+  initialAutomaticSyncEnabled: boolean;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -133,7 +136,8 @@ export function AppShell({
   }, [router]);
 
   return (
-    <div className="min-h-screen w-full bg-app text-primary">
+    <AutomaticSyncLockProvider initialEnabled={initialAutomaticSyncEnabled}>
+      <div className="min-h-screen w-full bg-app text-primary">
       <GlobalProcessingIndicator />
 
       {!focusMode ? (
@@ -244,6 +248,7 @@ export function AppShell({
       <div className={`min-w-0 transition-[margin-left] duration-200 ${focusMode ? "" : collapsed ? "lg:ml-[78px]" : "lg:ml-[246px]"}`}>
         {children}
       </div>
-    </div>
+      </div>
+    </AutomaticSyncLockProvider>
   );
 }

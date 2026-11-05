@@ -1,3 +1,4 @@
+import { blockManualSyncWhileAutomaticEnabled } from "@/lib/automatic-sync-lock";
 import { z } from "zod";
 import { requireApiUser } from "@/lib/auth/require-api-user";
 import { resumeLocalGeneralSync } from "@/lib/general-sync-resume";
@@ -11,6 +12,9 @@ export async function POST(
 ) {
   const auth = await requireApiUser(["administrador"]);
   if (!auth.ok) return auth.response;
+
+  const manualSyncLock = await blockManualSyncWhileAutomaticEnabled();
+  if (manualSyncLock) return manualSyncLock;
 
   const parsed = ParamsSchema.safeParse(await params);
   if (!parsed.success) {

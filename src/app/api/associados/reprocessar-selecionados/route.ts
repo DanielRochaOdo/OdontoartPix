@@ -1,3 +1,4 @@
+import { blockManualSyncWhileAutomaticEnabled } from "@/lib/automatic-sync-lock";
 import { z } from "zod";
 import { requireApiUser } from "@/lib/auth/require-api-user";
 import {
@@ -29,6 +30,9 @@ type ProcessingSnapshotTarget = MemberReprocessTarget & {
 export async function POST(request: Request) {
   const auth = await requireApiUser(["administrador", "operador"]);
   if (!auth.ok) return auth.response;
+
+  const manualSyncLock = await blockManualSyncWhileAutomaticEnabled();
+  if (manualSyncLock) return manualSyncLock;
 
   const body = BodySchema.safeParse(await request.json().catch(() => null));
   if (!body.success) {
