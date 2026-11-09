@@ -61,6 +61,19 @@ cleanup() {
 }
 trap cleanup EXIT
 
+active_syncs() {
+  docker exec odontopix-db-1 sh -lc \
+    'exec psql -X -v ON_ERROR_STOP=1 -A -t -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-postgres}" -c "select count(*) from general_sync_runs where status in ('"'"'queued'"'"','"'"'running'"'"','"'"'paused'"'"','"'"'cancelling'"'"')"' |
+    tr -d '[:space:]'
+}
+ensure_idle() {
+  n="$(active_syncs)"
+  [[ "${n}" =~ ^[0-9]+$ ]] || { echo "Falha na consulta de sincronizacoes" >&2; exit 1; }
+  [ "${n}" -eq 0 ] || { echo "${n} sincronizacao(oes) ativa(s); deploy recusado para preservar leituras" >&2; exit 1; }
+}
+ensure_idle
+
+# Nao consome recursos de build enquanto houver sincronizacao em curso.
 echo "=== CODIGO E BUILD: SEM PARAR WORKER ==="
 git -C "${APP}" switch main
 git -C "${APP}" pull --ff-only origin main
@@ -75,17 +88,6 @@ CURRENT="$(docker compose -f "${COMPOSE}" config --format json |
 }
 docker build -t "${NEW_IMAGE}" -f "${APP}/Dockerfile" "${APP}"
 
-active_syncs() {
-  docker exec odontopix-db-1 sh -lc \
-    'exec psql -X -v ON_ERROR_STOP=1 -A -t -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-postgres}" -c "select count(*) from general_sync_runs where status in ('"'"'queued'"'"','"'"'running'"'"','"'"'paused'"'"','"'"'cancelling'"'"')"' |
-    tr -d '[:space:]'
-}
-ensure_idle() {
-  n="$(active_syncs)"
-  [[ "${n}" =~ ^[0-9]+$ ]] || { echo "Falha na consulta de sincronizacoes" >&2; exit 1; }
-  [ "${n}" -eq 0 ] || { echo "${n} sincronizacao(oes) ativa(s); deploy recusado para preservar leituras" >&2; exit 1; }
-}
-ensure_idle
 
 echo "=== BACKUP ANTES DAS MIGRATIONS ==="
 mkdir -p "${ROOT}/backups"
