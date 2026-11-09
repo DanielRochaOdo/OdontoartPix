@@ -14,6 +14,10 @@ describe("contratos operacionais do worker Docker", () => {
     expect(deploy).toContain("run db:migrate");
     expect(deploy).toContain("run preflight:production");
     expect(deploy).toContain("ensure_idle");
+    expect(deploy).toContain('[[ "${n}" =~ ^[0-9]+$ ]]');
+    // O bloqueio deve ocorrer ANTES de gerar a nova imagem, sem carga
+    // de build extra sobre a sincronizacao que continua ativa.
+    expect(deploy.indexOf("\nensure_idle\n")).toBeLessThan(deploy.indexOf("docker build"));
     expect(deploy).toContain("trap cleanup EXIT");
   });
 
