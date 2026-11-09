@@ -147,6 +147,8 @@ P3  Lote
 P4  Associado individual
 ```
 
+O experimento de **janela móvel** para reduzir a espera pelas consultas mais lentas ao ERP é opt-in via `PROCESSING_PIPELINE_SLIDING_WINDOW_ENABLED=true` no processo do worker. Permanece desativado por padrão e só opera junto ao pipeline V2. Veja [o procedimento de benchmark e rollback](deploy/production/README-sliding-window.md). Não habilite durante uma sincronização geral já em andamento.
+
 ## Processamento geral e agendamento
 
 A próxima execução automática é calculada a partir do **fim real da última onda**:

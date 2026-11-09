@@ -5,6 +5,7 @@ import { clientQuery, withTransaction } from "@/lib/db/transaction";
 import { consultMonthlyByAssociatedCode, ErpError } from "@/lib/mensalidades-api";
 import { getProcessingConfig } from "@/lib/processing-config";
 import { runSplitProcessingPipeline } from "@/lib/processing-pipeline";
+import { createAsyncLimiter, runSlidingClaimedBatches } from "@/lib/processing-sliding-window";
 
 type LocalJob = {
   id: string;
@@ -218,7 +219,7 @@ async function claimNextJob(workerId: string, leaseSeconds: number) {
   });
 }
 
-async function claimMembers(job: LocalJob, workerId: string, limit: number) {
+async function claimMembers(job: LocalJob, workerId: string, limit: number, checkJobActive = false) {
   const targetMemberLinkId = String(job.target_member_link_id ?? "").trim() || null;
   const filteredErrorRequestId = String(job.filtered_error_request_id ?? "").trim() || null;
   if (job.processing_scope === "member" && !targetMemberLinkId) {
@@ -227,6 +228,18 @@ async function claimMembers(job: LocalJob, workerId: string, limit: number) {
   const effectiveLimit = targetMemberLinkId ? 1 : limit;
 
   return withTransaction(async (client) => {
+    if (checkJobActive) {
+      // Serializa novo claim com solicitacoes de parada: nao puxar mais itens
+      // apos stop_requested_at, nem de um job que perdeu o ownership.
+      const activeJob = await clientQuery<{ id: string }>(client,
+        `select id from processing_jobs
+          where id = $1 and locked_by = $2::uuid
+            and status = 'running' and stop_requested_at is null
+          for update`,
+        [job.id, workerId]
+      );
+      if (!activeJob.rows[0]) return [] as ClaimedMember[];
+    }
     const candidates = await clientQuery<{ id: string }>(
       client,
       `select campaign_batch_members.id
@@ -860,15 +873,21 @@ export async function runLocalWorkerOnce(options?: {
     const exactMemberJob = Boolean(String(job.target_member_link_id ?? "").trim());
     const effectiveClaimLimit = exactMemberJob ? 1 : claimLimit;
     const effectiveConcurrency = exactMemberJob ? 1 : concurrency;
-    const claimed = await claimMembers(job, workerId, effectiveClaimLimit);
+    const slidingWindowEnabled = splitPipelineEnabled && !exactMemberJob &&
+      process.env.PROCESSING_PIPELINE_SLIDING_WINDOW_ENABLED === "true";
+    const claimed = slidingWindowEnabled ? [] as ClaimedMember[] :
+      await claimMembers(job, workerId, effectiveClaimLimit);
+    let claimedCount = claimed.length;
 
     if (splitPipelineEnabled) {
       type PreparedConsultation =
         | { ok: true; analysis: MonthlyAnalysis }
         | { ok: false; error: unknown; erpConsultStarted: boolean; fatal?: boolean };
 
-      await runSplitProcessingPipeline<ClaimedMember, PreparedConsultation>({
-        items: claimed,
+      const persistenceLimiter = createAsyncLimiter(config.persistenceConcurrency);
+      const processClaimedBatch = async (batchItems: ClaimedMember[]) => {
+        await runSplitProcessingPipeline<ClaimedMember, PreparedConsultation>({
+        items: batchItems,
         consultationConcurrency: effectiveConcurrency,
         persistenceConcurrency: config.persistenceConcurrency,
         maxBufferedResults: config.maxBufferedResults,
@@ -905,6 +924,7 @@ export async function runLocalWorkerOnce(options?: {
           }
         },
         persist: async (item, outcome) => {
+          const writeResult = async () => {
           const prepared: PreparedConsultation = outcome.kind === "success"
             ? outcome.value
             : { ok: false, error: outcome.error, erpConsultStarted: false };
@@ -941,8 +961,37 @@ export async function runLocalWorkerOnce(options?: {
             }));
             countFailure(failure);
           }
+          };
+          if (slidingWindowEnabled) await persistenceLimiter(writeResult);
+          else await writeResult();
         }
       });
+      };
+
+      if (slidingWindowEnabled) {
+        // Nunca existem mais que effectiveConcurrency itens reclamados
+        // simultaneamente. Lanes de 8 reposicionam uma nova janela enquanto
+        // outras lanes ainda aguardam consultas lentas ao ERP.
+        const budgetMs = Math.max(0, config.workerCycleBudgetMs -
+          config.shutdownReserveMs - config.finalizationReserveMs);
+        const windowResult = await runSlidingClaimedBatches({
+          maxItems: effectiveClaimLimit * 2,
+          maxConcurrentItems: effectiveConcurrency,
+          chunkSize: Math.min(8, effectiveConcurrency),
+          canClaim: () => performance.now() - cycleStartedAt < budgetMs,
+          claim: (limit) => claimMembers(job, workerId, limit, true),
+          process: processClaimedBatch
+        });
+        claimedCount = windowResult.claimed;
+        console.info("[LOCAL_WORKER_SLIDING_WINDOW_METRICS]", {
+          jobId: job.id,
+          ...windowResult,
+          maxConcurrentItems: effectiveConcurrency,
+          chunkSize: Math.min(8, effectiveConcurrency)
+        });
+      } else {
+        await processClaimedBatch(claimed);
+      }
     } else {
       // Fluxo de producao atual, preservado para comparacao e rollback imediato.
       await runWithConcurrency(claimed, effectiveConcurrency, async (item) => {
@@ -988,8 +1037,8 @@ export async function runLocalWorkerOnce(options?: {
 
     console.info("[LOCAL_WORKER_STAGE_METRICS]", {
       jobId: job.id,
-      mode: splitPipelineEnabled ? "split" : "legacy",
-      claimed: claimed.length,
+      mode: slidingWindowEnabled ? "sliding" : (splitPipelineEnabled ? "split" : "legacy"),
+      claimed: claimedCount,
       elapsedMs: Math.round(performance.now() - cycleStartedAt),
       erpCalls: stageMetrics.erp.count,
       erpAverageMs: stageMetrics.erp.count
@@ -1008,7 +1057,7 @@ export async function runLocalWorkerOnce(options?: {
       workerId,
       jobId: job.id,
       batchId: job.batch_id,
-      claimed: claimed.length,
+      claimed: claimedCount,
       succeeded,
       failed,
       retried,
