@@ -52,6 +52,7 @@ describe("janela movel de processamento", () => {
 
   it("interrompe novos claims por deadline ou parada sem perder itens ja reclamados", async () => {
     let allowed = true;
+    let claimCalls = 0;
     const pending = Array.from({ length: 18 }, (_, i) => i);
     const processed: number[] = [];
     const run = await runSlidingClaimedBatches({
@@ -59,11 +60,14 @@ describe("janela movel de processamento", () => {
       maxConcurrentItems: 6,
       chunkSize: 3,
       canClaim: () => allowed,
-      claim: async (limit) => pending.splice(0, limit),
-      process: async (items) => {
-        processed.push(...items);
-        allowed = false;
-      }
+      claim: async (limit) => {
+        const items = pending.splice(0, limit);
+        // Permite as duas lanes iniciais e bloqueia qualquer reposicao.
+        claimCalls++;
+        if (claimCalls === 2) allowed = false;
+        return items;
+      },
+      process: async (items) => { processed.push(...items); }
     });
     expect(run.claimed).toBe(6);
     expect(processed).toHaveLength(6);
