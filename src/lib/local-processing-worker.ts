@@ -233,7 +233,7 @@ async function claimMembers(job: LocalJob, workerId: string, limit: number, chec
       // apos stop_requested_at, nem de um job que perdeu o ownership.
       const activeJob = await clientQuery<{ id: string }>(client,
         `select id from processing_jobs
-          where id = $1 and locked_by = $2::uuid
+          where id = $1 and locked_by = $2
             and status = 'running' and stop_requested_at is null
           for update`,
         [job.id, workerId]
