@@ -56,7 +56,7 @@ function buildProcessingConfigFromEnvironment(): ProcessingConfig {
       "PROCESSING_MAX_BUFFERED_RESULTS",
       Number(process.env.PROCESSING_CONCURRENCY ?? 15),
       1,
-      60
+      100
     ),
     httpConnectTimeoutMs: readInteger("MENSALIDADES_API_CONNECT_TIMEOUT_MS", 30000, 1000, 120000),
     httpReadTimeoutMs: readInteger("MENSALIDADES_API_READ_TIMEOUT_MS", 30000, 1000, 120000),
@@ -139,7 +139,7 @@ function mergeStoredSettings(base: ProcessingConfig, stored: unknown): Processin
       ["processing_max_buffered_results", "maxBufferedResults"],
       base.maxBufferedResults,
       1,
-      60
+      100
     ),
     httpConnectTimeoutMs: storedInteger(
       config,
