@@ -24,7 +24,7 @@ const labels: Record<ProcessingPresetKey, string> = {
 const descriptions: Record<ProcessingPresetKey, string> = {
   conservador: "Menor pressão no ERP e operação mais cautelosa.",
   mediano: "Equilíbrio entre segurança operacional e velocidade.",
-  agressivo: "Perfil de alta performance validado em produção."
+  agressivo: "Perfil de alta performance com bloco 80 e concorrência ERP 80."
 };
 
 function technicalRows(config: ProcessingConfig) {
