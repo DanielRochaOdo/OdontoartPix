@@ -23,10 +23,7 @@ export function BatchActions({ batchId }: { batchId: string }) {
         Processar
       </button>
       <button disabled={busy !== null} onClick={() => run("pausar")} className="rounded-md border px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-50">
-        Pausar
-      </button>
-      <button title={automaticSyncEnabled ? AUTOMATIC_SYNC_LOCK_TOOLTIP : undefined} disabled={busy !== null || automaticSyncEnabled} onClick={() => run("retomar")} className="rounded-md border px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-50">
-        Retomar
+        Interromper
       </button>
       <button title={automaticSyncEnabled ? AUTOMATIC_SYNC_LOCK_TOOLTIP : undefined} disabled={busy !== null || automaticSyncEnabled} onClick={() => run("reprocessar-erros")} className="rounded-md border px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-50">
         Reprocessar erros

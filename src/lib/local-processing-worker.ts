@@ -50,7 +50,7 @@ export type LocalWorkerRunResult = {
   succeeded: number;
   failed: number;
   retried: number;
-  jobStatus: "idle" | "queued" | "completed" | "failed";
+  jobStatus: "idle" | "queued" | "completed" | "cancelled" | "failed";
 };
 
 function timeoutRetryDelayMs(attempt: number) {
@@ -104,7 +104,8 @@ async function recoverStaleLocalWork(staleHeartbeatMs: number) {
     await clientQuery(
       client,
       `update processing_jobs
-          set status = case when stop_requested_at is null then 'queued' else 'paused' end,
+          set status = case when stop_requested_at is null then 'queued' else 'cancelled' end,
+               finished_at = case when stop_requested_at is null then null else now() end,
               locked_by = null,
               locked_at = null,
               lease_expires_at = null,
@@ -670,7 +671,9 @@ async function releaseAndFinalizeJob(job: LocalJob, workerId: string) {
       await clientQuery(
         client,
         `update processing_jobs
-            set status = case when status = 'cancelled' then 'cancelled' else 'paused' end,
+            set status = 'cancelled',
+                 finished_at = coalesce(finished_at, now()),
+                 next_run_at = null,
                 locked_by = null,
                 locked_at = null,
                 lease_expires_at = null,
@@ -679,7 +682,7 @@ async function releaseAndFinalizeJob(job: LocalJob, workerId: string) {
           where id = $1 and locked_by = $2`,
         [job.id, workerId]
       );
-      return "queued" as const;
+      return "cancelled" as const;
     }
 
     const targetMemberLinkId = String(job.target_member_link_id ?? "").trim() || null;
@@ -778,7 +781,7 @@ async function failJob(job: LocalJob, workerId: string, error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
   await dbQuery(
     `update processing_jobs
-        set status = 'failed',
+        set status = case when stop_requested_at is null then 'failed' else 'cancelled' end,
             last_error = $3,
             finished_at = now(),
             locked_by = null,

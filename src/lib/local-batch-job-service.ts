@@ -33,6 +33,22 @@ export async function enqueueLocalBatchJob(input: {
   const processingPriority = Math.max(1, Math.min(100, Math.round(input.processingPriority ?? 60)));
 
   return withTransaction(async (client) => {
+    if (processingOrigin === "manual") {
+      // Pausas de versoes anteriores nao sao retomaveis.
+      await clientQuery(
+        client,
+        `update processing_jobs
+            set status = 'cancelled',
+                finished_at = now(),
+                next_run_at = null,
+                updated_at = now()
+          where batch_id = $1::uuid
+            and processing_origin = 'manual'
+            and status = 'paused'`,
+        [input.batchId]
+      );
+    }
+
     const activeResult = await clientQuery<JobRow>(
       client,
       `select id,
