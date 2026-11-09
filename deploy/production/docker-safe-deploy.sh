@@ -82,7 +82,7 @@ active_syncs() {
 }
 ensure_idle() {
   n="$(active_syncs)"
-  [[ "${n}" =~ ^[0-9]+$$ ]] || { echo "Falha na consulta de sincronizacoes" >&2; exit 1; }
+  [[ "${n}" =~ ^[0-9]+$ ]] || { echo "Falha na consulta de sincronizacoes" >&2; exit 1; }
   [ "${n}" -eq 0 ] || { echo "${n} sincronizacao(oes) ativa(s); deploy recusado para preservar leituras" >&2; exit 1; }
 }
 ensure_idle
