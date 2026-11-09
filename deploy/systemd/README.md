@@ -1,5 +1,8 @@
 # Aplicação web e worker local com systemd
 
+**Nota sobre a VPS Docker atual:** os serviços `odontoart-pix-worker` deste documento pertencem ao instalador local legado. Na VPS `/opt/odontopix`, utilize `odontopix-worker.timer` e o [runbook de continuidade](../production/README-worker-continuity.md). Não instale uma segunda unidade de processamento.
+
+
 A arquitetura de produção local usa dois componentes independentes:
 
 - `odontoartpix-app.service`: mantém o Next.js em execução;

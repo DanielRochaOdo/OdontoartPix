@@ -51,6 +51,11 @@ jobs:
         run: |
           bash -n deploy/systemd/install-app.sh
           bash -n deploy/systemd/install-worker.sh
+          bash -n deploy/production/docker-safe-deploy.sh
+          bash -n deploy/production/install-worker-watchdog.sh
+
+      - name: Validate worker watchdog behavior
+        run: python3 -m unittest discover -s deploy/production/tests -p 'test_*.py' -v
 
       - name: Apply local PostgreSQL migrations
         env:
