@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const localWorker = readFileSync("src/lib/local-processing-worker.ts", "utf8");
+const coreSchema = readFileSync("db/migrations/002_core_operational_schema.sql", "utf8");
 const preset = readFileSync("src/lib/processing-presets.ts", "utf8");
 const env = readFileSync(".env.example", "utf8");
 
@@ -39,4 +40,12 @@ describe("local processing pipeline safety contracts", () => {
     expect(localWorker).toContain("claim: (limit) => claimMembers(job, workerId, limit, true)");
     expect(localWorker).toContain("claim_token = $3::uuid");
   });
+  it("confere o owner como text conforme o schema de processing_jobs", () => {
+    expect(coreSchema).toMatch(/create table if not exists processing_jobs \([\s\S]*?locked_by text,/);
+    const guardedClaim = localWorker.match(/if \(checkJobActive\) \{[\s\S]*?const candidates = await clientQuery/);
+    expect(guardedClaim?.[0]).toContain("where id = $1 and locked_by = $2");
+    expect(guardedClaim?.[0]).not.toContain("locked_by = $2::uuid");
+    expect(guardedClaim?.[0]).toContain("and stop_requested_at is null");
+  });
+
 });
