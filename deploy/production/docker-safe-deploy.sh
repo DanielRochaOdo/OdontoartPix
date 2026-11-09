@@ -32,6 +32,7 @@ BACKUP_COMPOSE=""
 OVERRIDE=""
 MARKED=0
 SWITCH_STARTED=0
+COMPOSE_CHANGED=0
 
 cleanup() {
   rc=$?
@@ -40,8 +41,10 @@ cleanup() {
   [ "${rc}" -ne 0 ] || return 0
   echo "[SAFE_DEPLOY_FAILED] exit=${rc}" >&2
   [ "${MARKED}" -eq 1 ] || return 0
-  if [ "${SWITCH_STARTED}" -eq 1 ] && [ -f "${BACKUP_COMPOSE}" ]; then
+  if [ "${COMPOSE_CHANGED}" -eq 1 ] && [ -f "${BACKUP_COMPOSE}" ]; then
     cp -a "${BACKUP_COMPOSE}" "${COMPOSE}"
+  fi
+  if [ "${SWITCH_STARTED}" -eq 1 ]; then
     docker compose -f "${COMPOSE}" up -d --no-deps --no-build --force-recreate app || true
   fi
   running="$(docker inspect odontopix-app-1 --format '{{.Config.Image}}' 2>/dev/null || true)"
@@ -123,12 +126,13 @@ state="$(systemctl show -p ActiveState --value "${SERVICE}")"
 ensure_idle
 
 echo "=== RECRIAR SOMENTE APP ==="
-SWITCH_STARTED=1
 grep -Fq "${OLD_IMAGE}" "${COMPOSE}"
 sed -i "s|${OLD_IMAGE}|${NEW_IMAGE}|g" "${COMPOSE}"
+COMPOSE_CHANGED=1
 FINAL="$(docker compose -f "${COMPOSE}" config --format json |
   python3 -c 'import json,sys; print(json.load(sys.stdin)["services"]["app"]["image"])')"
 [ "${FINAL}" = "${NEW_IMAGE}" ]
+SWITCH_STARTED=1
 docker compose -f "${COMPOSE}" up -d --no-deps --no-build --force-recreate app
 
 test "$(docker inspect odontopix-app-1 --format '{{.Config.Image}}')" = "${NEW_IMAGE}"
