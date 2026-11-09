@@ -1,5 +1,8 @@
 # Runbook de produção — OdontoartPix local
 
+**VPS Docker atual (2026-11):** este documento descreve a arquitetura local antiga. Para a VPS `/opt/odontopix` com contêineres Docker e `odontopix-worker.timer`, utilize [o runbook de continuidade e deploy seguro](README-worker-continuity.md). Não use os comandos systemd legados deste arquivo nessa VPS.
+
+
 Este procedimento trata o corte da arquitetura com PostgreSQL próprio, autenticação local, Next.js local e worker systemd.
 
 ## Princípios do corte
