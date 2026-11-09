@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Deploy controlado da VPS Docker ODONTOPIX: somente app; PostgreSQL intocado.
 set -Eeuo pipefail
+umask 077
 [ "${EUID}" -eq 0 ] || { echo "Execute como root" >&2; exit 1; }
 
 ROOT="${ODONTOPIX_ROOT:-/opt/odontopix}"
