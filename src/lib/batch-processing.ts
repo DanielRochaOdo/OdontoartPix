@@ -32,7 +32,7 @@ export type ProcessingBlockResult = {
   succeeded: number;
   failed: number;
   retried: number;
-  status: "idle" | "queued" | "completed" | "failed" | "paused";
+  status: "idle" | "queued" | "completed" | "cancelled" | "failed";
   benchmark?: ErpBenchmarkMetrics;
 };
 

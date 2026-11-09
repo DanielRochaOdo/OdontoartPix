@@ -18,8 +18,8 @@ it("drain devolve o controle ao systemd quando um job nao faz progresso", () => 
   );
 });
 
-it("recuperacao de lease nao ressuscita job com parada solicitada", () => {
-  const recoveryGuard = /status = case when stop_requested_at is null then 'queued' else 'paused' end/;
+it("recuperacao de lease cancela job com parada solicitada", () => {
+  const recoveryGuard = /status = case when stop_requested_at is null then 'queued' else 'cancelled' end/;
   expect(workerEntrypointSource).toMatch(recoveryGuard);
   expect(localWorkerSource).toMatch(recoveryGuard);
   expect(localWorkerSource).toMatch(

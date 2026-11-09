@@ -362,6 +362,22 @@ export async function enqueueBatchJobWithReuse(input: {
   return withTransaction(async (client) => {
     await lockBatchOrigin(client, input.batchId, processingOrigin);
 
+    if (processingOrigin === "manual") {
+      // Pausas de versoes anteriores nao sao retomaveis.
+      await clientQuery(
+        client,
+        `update processing_jobs
+            set status = 'cancelled',
+                finished_at = now(),
+                next_run_at = null,
+                updated_at = now()
+          where batch_id = $1::uuid
+            and processing_origin = 'manual'
+            and status = 'paused'`,
+        [input.batchId]
+      );
+    }
+
     const activeResult = await clientQuery<JobRow>(
       client,
       `select id,

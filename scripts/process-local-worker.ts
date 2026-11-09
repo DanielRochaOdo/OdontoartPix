@@ -1,7 +1,7 @@
 import { getDbPool } from "../src/lib/db/pool";
 import { runLocalGeneralSyncCycle } from "../src/lib/general-sync-orchestrator";
 import { startDueLocalScheduledGeneralSync } from "../src/lib/general-sync-scheduled-start";
-import { finalizeQueuedLocalProcessingPauseRequests } from "../src/lib/local-processing-pause-checkpoint";
+import { finalizePendingLocalProcessingStops } from "../src/lib/local-processing-stop-checkpoint";
 import { runLocalWorkerOnce } from "../src/lib/local-processing-worker";
 
 const ADVISORY_LOCK_NAMESPACE = 17483621;
@@ -103,13 +103,13 @@ async function recoverInterruptedLocalWork() {
 
     await client.query(
       `update processing_jobs
-          set status = case when stop_requested_at is null then 'queued' else 'paused' end,
+          set status = case when stop_requested_at is null then 'queued' else 'cancelled' end,
               next_run_at = case when stop_requested_at is null then now() else null end,
               locked_by = null,
               locked_at = null,
               lease_expires_at = null,
               last_heartbeat_at = null,
-              finished_at = null,
+              finished_at = case when stop_requested_at is null then null else now() end,
               updated_at = now()
         where id = any($1::uuid[])`,
       [jobIds]
@@ -164,16 +164,16 @@ async function main() {
       // de verdade para a criacao automatica de novas sincronizacoes. Quando
       // desativado pela interface, esta chamada retorna action=disabled e o
       // worker continua consumindo normalmente os jobs iniciados manualmente.
+      const stopCheckpoint = await finalizePendingLocalProcessingStops();
+      if (stopCheckpoint.cancelledJobs > 0) {
+        console.info("[LOCAL_WORKER_STOP_CHECKPOINT]", stopCheckpoint);
+      }
+
       const scheduledStartResult = await startDueLocalScheduledGeneralSync();
       console.info("[LOCAL_SCHEDULED_SYNC_START_COMPLETED]", scheduledStartResult);
 
       const generalSyncResult = await runLocalGeneralSyncCycle();
       console.info("[LOCAL_GENERAL_SYNC_CYCLE_COMPLETED]", generalSyncResult);
-
-      const pauseCheckpoint = await finalizeQueuedLocalProcessingPauseRequests();
-      if (pauseCheckpoint.pausedJobs > 0) {
-        console.info("[LOCAL_WORKER_PAUSE_CHECKPOINT]", pauseCheckpoint);
-      }
 
       if (orchestrationOnly) {
         console.info("[LOCAL_WORKER_PROCESSING_SKIPPED]");

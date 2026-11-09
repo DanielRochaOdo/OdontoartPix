@@ -27,6 +27,6 @@ describe("general sync interruption while running", () => {
     expect(cancellation).toContain('set stop_requested_at = coalesce(stop_requested_at, now())');
     expect(cancellation).toContain("and status = 'running'");
     expect(worker).toContain('if (current.status === "cancelled" || current.stop_requested_at)');
-    expect(worker).toContain("else 'paused' end");
+    expect(worker).toContain("set status = 'cancelled'");
   });
 });
