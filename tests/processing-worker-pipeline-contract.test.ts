@@ -20,7 +20,7 @@ describe("local processing pipeline safety contracts", () => {
     expect(localWorker).toContain("consultationConcurrency: effectiveConcurrency");
     expect(localWorker).toContain("persistenceConcurrency: config.persistenceConcurrency");
     expect(localWorker).toContain("maxBufferedResults: config.maxBufferedResults");
-    expect(preset).toMatch(/agressivo:\s*\{[\s\S]*?claimBatchSize: 60,[\s\S]*?perWorkerConcurrency: 60,[\s\S]*?erpConcurrency: 60,[\s\S]*?persistenceConcurrency: 1,[\s\S]*?maxBufferedResults: 60,/);
+    expect(preset).toMatch(/agressivo:\s*\{[\s\S]*?claimBatchSize: 80,[\s\S]*?perWorkerConcurrency: 80,[\s\S]*?erpConcurrency: 80,[\s\S]*?persistenceConcurrency: 1,[\s\S]*?maxBufferedResults: 80,/);
   });
 
   it("preserva transacoes financeiras, politica de retries e finalizacao", () => {
