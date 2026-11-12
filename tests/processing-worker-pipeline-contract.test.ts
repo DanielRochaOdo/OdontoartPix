@@ -14,7 +14,12 @@ describe("local processing pipeline safety contracts", () => {
     expect(localWorker).toContain("runWithConcurrency(claimed, effectiveConcurrency");
     expect(env).toContain("PROCESSING_PIPELINE_SLIDING_WINDOW_ENABLED=false");
     expect(localWorker).toContain('process.env.PROCESSING_PIPELINE_SLIDING_WINDOW_ENABLED === "true"');
-    expect(localWorker).toContain('mode: slidingWindowEnabled ? "sliding"');
+    expect(env).toContain("PROCESSING_PIPELINE_SLIDING_WINDOW_V2_ENABLED=false");
+    expect(localWorker).toContain('process.env.PROCESSING_PIPELINE_SLIDING_WINDOW_V2_ENABLED === "true"');
+    expect(localWorker).toContain('mode: slidingWindowV2Enabled ? "sliding-v2"');
+    expect(localWorker).toContain('(slidingWindowEnabled ? "sliding"');
+    expect(localWorker).toContain("claimPrimary: (limit) => claimMembers(job, workerId, limit, true, \"primary\")");
+    expect(localWorker).toContain("claimRetry: (limit) => claimMembers(job, workerId, limit, true, \"retry\")");
   });
 
   it("respeita limite de claims, concorrencia e buffer existente", () => {
