@@ -6,6 +6,7 @@ import { consultMonthlyByAssociatedCode, ErpError } from "@/lib/mensalidades-api
 import { getProcessingConfig } from "@/lib/processing-config";
 import { runSplitProcessingPipeline } from "@/lib/processing-pipeline";
 import { createAsyncLimiter, runSlidingClaimedBatches } from "@/lib/processing-sliding-window";
+import { runContinuousTwoPassWindow } from "@/lib/processing-sliding-window-v2";
 
 type LocalJob = {
   id: string;
@@ -219,7 +220,13 @@ async function claimNextJob(workerId: string, leaseSeconds: number) {
   });
 }
 
-async function claimMembers(job: LocalJob, workerId: string, limit: number, checkJobActive = false) {
+async function claimMembers(
+  job: LocalJob,
+  workerId: string,
+  limit: number,
+  checkJobActive = false,
+  phase: "all" | "primary" | "retry" = "all"
+) {
   const targetMemberLinkId = String(job.target_member_link_id ?? "").trim() || null;
   const filteredErrorRequestId = String(job.filtered_error_request_id ?? "").trim() || null;
   if (job.processing_scope === "member" && !targetMemberLinkId) {
@@ -265,23 +272,29 @@ async function claimMembers(job: LocalJob, workerId: string, limit: number, chec
           and processing_attempts < max_attempts
           and (
             (
-              processing_status in ('pending', 'queued', 'aguardando')
+              $6::text in ('all', 'primary')
+              and processing_status in ('pending', 'queued', 'aguardando')
               and (next_check_at is null or next_check_at <= now())
             )
             or (
-              processing_status = 'retrying'
-              and (next_retry_at is null or next_retry_at <= now())
-            )
-            or (
-              $2::boolean
-              and processing_status = 'error'
-              and error_reprocess_requested_at is not null
+              $6::text in ('all', 'retry')
+              and (
+                (
+                  processing_status = 'retrying'
+                  and (next_retry_at is null or next_retry_at <= now())
+                )
+                or (
+                  $2::boolean
+                  and processing_status = 'error'
+                  and error_reprocess_requested_at is not null
+                )
+              )
             )
           )
         order by coalesce(next_retry_at, next_check_at, updated_at, created_at), created_at, campaign_batch_members.id
         for update skip locked
         limit $3`,
-      [job.batch_id, job.include_errors, effectiveLimit, targetMemberLinkId, filteredErrorRequestId]
+      [job.batch_id, job.include_errors, effectiveLimit, targetMemberLinkId, filteredErrorRequestId, phase]
     );
 
     const ids = candidates.rows.map((row) => row.id);
@@ -875,6 +888,8 @@ export async function runLocalWorkerOnce(options?: {
     const effectiveConcurrency = exactMemberJob ? 1 : concurrency;
     const slidingWindowEnabled = splitPipelineEnabled && !exactMemberJob &&
       process.env.PROCESSING_PIPELINE_SLIDING_WINDOW_ENABLED === "true";
+    const slidingWindowV2Enabled = slidingWindowEnabled &&
+      process.env.PROCESSING_PIPELINE_SLIDING_WINDOW_V2_ENABLED === "true";
     const claimed = slidingWindowEnabled ? [] as ClaimedMember[] :
       await claimMembers(job, workerId, effectiveClaimLimit);
     let claimedCount = claimed.length;
@@ -969,26 +984,46 @@ export async function runLocalWorkerOnce(options?: {
       };
 
       if (slidingWindowEnabled) {
-        // Nunca existem mais que effectiveConcurrency itens reclamados
-        // simultaneamente. Lanes de 8 reposicionam uma nova janela enquanto
-        // outras lanes ainda aguardam consultas lentas ao ERP.
         const budgetMs = Math.max(0, config.workerCycleBudgetMs -
           config.shutdownReserveMs - config.finalizationReserveMs);
-        const windowResult = await runSlidingClaimedBatches({
-          maxItems: effectiveClaimLimit * 2,
-          maxConcurrentItems: effectiveConcurrency,
-          chunkSize: Math.min(8, effectiveConcurrency),
-          canClaim: () => performance.now() - cycleStartedAt < budgetMs,
-          claim: (limit) => claimMembers(job, workerId, limit, true),
-          process: processClaimedBatch
-        });
-        claimedCount = windowResult.claimed;
-        console.info("[LOCAL_WORKER_SLIDING_WINDOW_METRICS]", {
-          jobId: job.id,
-          ...windowResult,
-          maxConcurrentItems: effectiveConcurrency,
-          chunkSize: Math.min(8, effectiveConcurrency)
-        });
+        const canClaim = () => performance.now() - cycleStartedAt < budgetMs;
+
+        if (slidingWindowV2Enabled) {
+          // V2: ate 80 vagas individuais, com uma reserva inicial em bloco.
+          // Uma vaga concluida busca uma fatura imediatamente; retentativas
+          // so comecam apos TODAS as reservas da primeira passagem terminarem.
+          const windowResult = await runContinuousTwoPassWindow({
+            maxItems: effectiveClaimLimit * 2,
+            maxConcurrentItems: effectiveConcurrency,
+            canClaim,
+            claimPrimary: (limit) => claimMembers(job, workerId, limit, true, "primary"),
+            claimRetry: (limit) => claimMembers(job, workerId, limit, true, "retry"),
+            process: (item) => processClaimedBatch([item])
+          });
+          claimedCount = windowResult.claimed;
+          console.info("[LOCAL_WORKER_SLIDING_WINDOW_V2_METRICS]", {
+            jobId: job.id,
+            ...windowResult,
+            maxConcurrentItems: effectiveConcurrency
+          });
+        } else {
+          // V1 conservadora permanece disponivel para rollback imediato.
+          const windowResult = await runSlidingClaimedBatches({
+            maxItems: effectiveClaimLimit * 2,
+            maxConcurrentItems: effectiveConcurrency,
+            chunkSize: Math.min(8, effectiveConcurrency),
+            canClaim,
+            claim: (limit) => claimMembers(job, workerId, limit, true),
+            process: processClaimedBatch
+          });
+          claimedCount = windowResult.claimed;
+          console.info("[LOCAL_WORKER_SLIDING_WINDOW_METRICS]", {
+            jobId: job.id,
+            ...windowResult,
+            maxConcurrentItems: effectiveConcurrency,
+            chunkSize: Math.min(8, effectiveConcurrency)
+          });
+        }
       } else {
         await processClaimedBatch(claimed);
       }
@@ -1037,7 +1072,8 @@ export async function runLocalWorkerOnce(options?: {
 
     console.info("[LOCAL_WORKER_STAGE_METRICS]", {
       jobId: job.id,
-      mode: slidingWindowEnabled ? "sliding" : (splitPipelineEnabled ? "split" : "legacy"),
+      mode: slidingWindowV2Enabled ? "sliding-v2" :
+        (slidingWindowEnabled ? "sliding" : (splitPipelineEnabled ? "split" : "legacy")),
       claimed: claimedCount,
       elapsedMs: Math.round(performance.now() - cycleStartedAt),
       erpCalls: stageMetrics.erp.count,
