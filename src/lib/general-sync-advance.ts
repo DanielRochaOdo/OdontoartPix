@@ -1,4 +1,5 @@
 import { generalSyncUniqueTargetsEnabled } from "@/lib/general-sync-unique-targets";
+import { prepareBatchForGeneralSync } from "@/lib/general-sync-batch-preparation";
 import { enqueueBatchJobWithReuse, PROCESSING_PRIORITIES, type ReuseWindow } from "@/lib/batch-job-service";
 import { dbQuery } from "@/lib/db/pool";
 import { clientQuery, withTransaction } from "@/lib/db/transaction";
@@ -325,26 +326,6 @@ async function markWaitingForExistingJob(input: {
   });
 }
 
-async function prepareBatchForFullSync(batchId: string) {
-  await dbQuery(
-    `update campaign_batch_members
-        set processing_status = 'pending',
-            last_error = null,
-            next_retry_at = null,
-            next_check_at = null,
-            processing_owner = null,
-            processing_started_at = null,
-            processing_heartbeat_at = null,
-            claim_token = null,
-            claimed_at = null,
-            updated_at = now()
-      where batch_id = $1::uuid
-        and deleted_at is null
-        and payment_status is distinct from 'paid'`,
-    [batchId]
-  );
-}
-
 async function attachProcessingJob(input: {
   runId: string;
   workerId: string;
@@ -592,7 +573,9 @@ export async function advanceClaimedLocalGeneralSyncRun(input: {
 
     const isScheduledRecheck = run.sync_mode === "scheduled_recheck";
     if (!isScheduledRecheck) {
-      await prepareBatchForFullSync(nextBatch.batch_id);
+      await prepareBatchForGeneralSync(nextBatch.batch_id, {
+        resetAttempts: run.sync_mode === "full_sync"
+      });
     }
 
     const reuseWindow = isScheduledRecheck
