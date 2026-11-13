@@ -1,6 +1,7 @@
 import type { PoolClient } from "pg";
 import { clientQuery, withTransaction } from "@/lib/db/transaction";
 import { DataAccessError } from "@/lib/errors/data-access-error";
+import { snapshotEligibleGeneralSyncLinks } from "@/lib/general-sync-unique-targets";
 import {
   getGeneralSyncRun,
   type GeneralSyncRunDetail
@@ -283,6 +284,8 @@ export async function startDueLocalScheduledGeneralSync(input: {
          )`,
         [runId, JSON.stringify(batchPayload)]
       );
+
+      await snapshotEligibleGeneralSyncLinks(client, { runId, scheduled: true });
 
       return {
         action: "created" as const,
