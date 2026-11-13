@@ -49,3 +49,19 @@ consultas realmente processadas por jobs. A tela ja soma
   contra `SUM(record_count)`. Aferir CPU do banco.
 - A nova regra nao deduplica consultas manuais independentes da
   sincronizacao geral.
+
+## Correcao de vinculacao e elegibilidade (migration 037)
+
+- `general_sync_run_id` passa a identificar **todos** os jobs de uma
+  sincronizacao geral, mesmo quando a deduplicacao esta desativada.
+  A flag controla apenas o registro de sucessos e o reaproveitamento.
+- O worker registra `[GENERAL_SYNC_DEDUP_MODE]` junto a cada lote com
+  runId, batchId e a flag efetivamente reconhecida.
+- Uma fotografia transacional dos links inicialmente elegiveis e gravada na
+  tabela `general_sync_run_eligible_links`. Isso impede que links
+  anteriormente terminais sejam contados como reaproveitados quando
+  outro lote promove o estado canonico da parcela.
+- A fotografia e removida ao concluir ou cancelar. Pausa e retomada
+  preservam a fotografia. A migration 037 deve ser executada com o
+  proprietario do banco da VPS (postgres_admin).
+- A ativacao experimental continua separada do deploy.
