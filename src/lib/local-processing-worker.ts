@@ -7,7 +7,7 @@ import { getProcessingConfig } from "@/lib/processing-config";
 import { runSplitProcessingPipeline } from "@/lib/processing-pipeline";
 import { createAsyncLimiter, runSlidingClaimedBatches } from "@/lib/processing-sliding-window";
 import { runContinuousTwoPassWindow } from "@/lib/processing-sliding-window-v2";
-import { recordSuccessfulGeneralSyncTarget } from "@/lib/general-sync-unique-targets";
+import { generalSyncUniqueTargetsEnabled, recordSuccessfulGeneralSyncTarget } from "@/lib/general-sync-unique-targets";
 
 type LocalJob = {
   id: string;
@@ -531,12 +531,14 @@ async function persistSuccess(input: {
       [job.id, workerId]
     );
 
-    await recordSuccessfulGeneralSyncTarget(client, {
-      runId: job.general_sync_run_id,
-      jobId: job.id,
-      batchId: job.batch_id,
-      memberLinkId: claimed.id
-    });
+    if (generalSyncUniqueTargetsEnabled()) {
+      await recordSuccessfulGeneralSyncTarget(client, {
+        runId: job.general_sync_run_id,
+        jobId: job.id,
+        batchId: job.batch_id,
+        memberLinkId: claimed.id
+      });
+    }
 
     return true;
   });

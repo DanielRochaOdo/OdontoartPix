@@ -72,6 +72,15 @@ async function setup(client: PoolClient, count = 4) {
      returning id`,
     ["test-dedup-" + suffix, count]
   );
+  await client.query(
+    `insert into general_sync_run_eligible_links (
+       run_id, member_link_id, batch_id, target_installment_ref_id
+     )
+     select $1::uuid, id, batch_id, target_installment_ref_id
+       from campaign_batch_members
+      where id = any($2::uuid[])`,
+    [sync.rows[0]!.id, links]
+  );
   const job = await client.query<{ id: string }>(
     `insert into processing_jobs(
        campaign_id, batch_id, status, general_sync_run_id
@@ -250,6 +259,26 @@ describeDatabase("general-sync unique targets (PostgreSQL rollback)", () => {
         [s.links[0]]
       );
       expect(state.rows[0]!.processing_status).toBe("completed");
+    });
+  });
+
+  it("nao conta link que ja era inelegivel no inicio do ciclo", async () => {
+    await rollbackScenario(async (client) => {
+      const s = await setup(client, 2);
+      // Simulates a terminal link absent from the initial eligibility snapshot.
+      // Existing canonical propagation can update it but may not count it as reuse.
+      await client.query(
+        "delete from general_sync_run_eligible_links where run_id = $1::uuid and member_link_id = $2::uuid",
+        [s.runId, s.links[1]]
+      );
+      await persistSimulatedErpSuccess(client, s.links[0]!, "paid");
+      await recordSuccessfulGeneralSyncTarget(client, {
+        runId: s.runId, jobId: s.jobId,
+        batchId: s.batchIds[0]!, memberLinkId: s.links[0]!
+      });
+      expect(await reuseSuccessfulGeneralSyncTargets(client, {
+        runId: s.runId, batchId: s.batchIds[1]!
+      })).toBe(0);
     });
   });
 

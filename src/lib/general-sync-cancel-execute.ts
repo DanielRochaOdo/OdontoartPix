@@ -323,6 +323,8 @@ export async function executeClaimedLocalGeneralSyncCancellation(input: {
 
       await clientQuery(client,
         `delete from general_sync_run_installments where run_id = $1::uuid`, [run.id]);
+      await clientQuery(client,
+        `delete from general_sync_run_eligible_links where run_id = $1::uuid`, [run.id]);
 
       await clientQuery(
         client,

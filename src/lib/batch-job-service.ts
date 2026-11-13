@@ -1,4 +1,4 @@
-import { reuseSuccessfulGeneralSyncTargets } from "@/lib/general-sync-unique-targets";
+import { generalSyncUniqueTargetsEnabled, reuseSuccessfulGeneralSyncTargets } from "@/lib/general-sync-unique-targets";
 import type { PoolClient } from "pg";
 import { dbQuery } from "@/lib/db/pool";
 import { clientQuery, withTransaction } from "@/lib/db/transaction";
@@ -419,12 +419,15 @@ export async function enqueueBatchJobWithReuse(input: {
       await requestErroredMembers(client, input.batchId);
     }
 
+    // Link every dashboard job to its run, independently of the feature flag.
+    // The flag controls only the reuse behavior.
     const runId = processingOrigin === "dashboard" ? input.generalSyncRunId ?? null : null;
+    const reuseRunId = generalSyncUniqueTargetsEnabled() ? runId : null;
     const runReusedCount = await reuseSuccessfulGeneralSyncTargets(client, {
-      runId,
+      runId: reuseRunId,
       batchId: input.batchId
     });
-    const reusedCount = runReusedCount + await countReusableResults(client, input.batchId, reuseWindow, runId);
+    const reusedCount = runReusedCount + await countReusableResults(client, input.batchId, reuseWindow, reuseRunId);
     const mergedIncludeErrors = Boolean(activeJob?.include_errors || includeErrors);
     const summary = await getClaimableSummary(client, input.batchId, mergedIncludeErrors);
 
