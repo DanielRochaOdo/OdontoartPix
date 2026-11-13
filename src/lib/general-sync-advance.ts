@@ -491,7 +491,7 @@ async function markBatchCompletedWithoutJob(input: {
         input.batch.id,
         input.runId,
         input.reusedCount > 0
-          ? `${input.reusedCount} resultado(s) recente(s) reaproveitado(s) do processamento manual; nenhuma nova consulta necessaria.`
+          ? `${input.reusedCount} resultado(s) reaproveitado(s); nenhuma nova consulta necessaria.`
           : "Nenhum registro elegivel foi encontrado no lote apos a preparacao.",
         input.reusedCount
       ]
@@ -599,6 +599,13 @@ export async function advanceClaimedLocalGeneralSyncRun(input: {
       ? await getWaitedManualReuseWindow(nextBatch.waiting_job_id)
       : null;
 
+    console.info("[GENERAL_SYNC_DEDUP_MODE]", {
+      runId: run.id,
+      batchId: nextBatch.batch_id,
+      enabled: generalSyncUniqueTargetsEnabled(),
+      flag: process.env.GENERAL_SYNC_UNIQUE_TARGETS_ENABLED ?? "unset"
+    });
+
     const { job, reusedCount: recentResults } = await enqueueBatchJobWithReuse({
       campaignId: nextBatch.campaign_id,
       batchId: nextBatch.batch_id,
@@ -611,7 +618,7 @@ export async function advanceClaimedLocalGeneralSyncRun(input: {
       processingOrigin: "dashboard",
       processingScope: "dashboard",
       processingPriority: PROCESSING_PRIORITIES.dashboard,
-      generalSyncRunId: generalSyncUniqueTargetsEnabled() ? run.id : null
+      generalSyncRunId: run.id
     });
 
     if (!run.requested_by) {
