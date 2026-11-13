@@ -7,11 +7,13 @@ import { getProcessingConfig } from "@/lib/processing-config";
 import { runSplitProcessingPipeline } from "@/lib/processing-pipeline";
 import { createAsyncLimiter, runSlidingClaimedBatches } from "@/lib/processing-sliding-window";
 import { runContinuousTwoPassWindow } from "@/lib/processing-sliding-window-v2";
+import { recordSuccessfulGeneralSyncTarget } from "@/lib/general-sync-unique-targets";
 
 type LocalJob = {
   id: string;
   campaign_id: string;
   batch_id: string;
+  general_sync_run_id: string | null;
   status: string;
   total_items: number;
   processed_items: number;
@@ -161,6 +163,7 @@ async function claimNextJob(workerId: string, leaseSeconds: number) {
       `select id,
               campaign_id,
               batch_id,
+              general_sync_run_id,
               status,
               total_items,
               processed_items,
@@ -202,6 +205,7 @@ async function claimNextJob(workerId: string, leaseSeconds: number) {
         returning id,
                   campaign_id,
                   batch_id,
+                  general_sync_run_id,
                   status,
                   total_items,
                   processed_items,
@@ -526,6 +530,13 @@ async function persistSuccess(input: {
         where id = $1 and locked_by = $2`,
       [job.id, workerId]
     );
+
+    await recordSuccessfulGeneralSyncTarget(client, {
+      runId: job.general_sync_run_id,
+      jobId: job.id,
+      batchId: job.batch_id,
+      memberLinkId: claimed.id
+    });
 
     return true;
   });

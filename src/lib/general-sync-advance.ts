@@ -1,3 +1,4 @@
+import { generalSyncUniqueTargetsEnabled } from "@/lib/general-sync-unique-targets";
 import { enqueueBatchJobWithReuse, PROCESSING_PRIORITIES, type ReuseWindow } from "@/lib/batch-job-service";
 import { dbQuery } from "@/lib/db/pool";
 import { clientQuery, withTransaction } from "@/lib/db/transaction";
@@ -609,7 +610,8 @@ export async function advanceClaimedLocalGeneralSyncRun(input: {
       reuseWindow,
       processingOrigin: "dashboard",
       processingScope: "dashboard",
-      processingPriority: PROCESSING_PRIORITIES.dashboard
+      processingPriority: PROCESSING_PRIORITIES.dashboard,
+      generalSyncRunId: generalSyncUniqueTargetsEnabled() ? run.id : null
     });
 
     if (!run.requested_by) {
