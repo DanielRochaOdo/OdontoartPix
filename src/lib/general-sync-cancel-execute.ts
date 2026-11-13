@@ -321,6 +321,9 @@ export async function executeClaimedLocalGeneralSyncCancellation(input: {
 
       const summary = summarize(batches);
 
+      await clientQuery(client,
+        `delete from general_sync_run_installments where run_id = $1::uuid`, [run.id]);
+
       await clientQuery(
         client,
         `update general_sync_runs

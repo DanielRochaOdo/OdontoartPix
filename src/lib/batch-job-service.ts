@@ -1,3 +1,4 @@
+import { reuseSuccessfulGeneralSyncTargets } from "@/lib/general-sync-unique-targets";
 import type { PoolClient } from "pg";
 import { dbQuery } from "@/lib/db/pool";
 import { clientQuery, withTransaction } from "@/lib/db/transaction";
@@ -266,16 +267,21 @@ async function reopenUnpaidMembersForManualProcessing(
   );
 }
 
-async function countReusableResults(client: PoolClient, batchId: string, window: ReuseWindow | null) {
+async function countReusableResults(client: PoolClient, batchId: string, window: ReuseWindow | null, runId: string | null) {
   if (!window) return 0;
   const result = await clientQuery<{ reused_count: number }>(
     client,
     `select count(*)::int as reused_count
-       from campaign_batch_members
+       from campaign_batch_members cbm
       where batch_id = $1::uuid
         and deleted_at is null
-        and ${reusableResultPredicate(2, 3)}`,
-    [batchId, window.startedAt, window.finishedAt]
+        and ${reusableResultPredicate(2, 3)}
+        ${runId ? `and not exists (
+          select 1 from general_sync_run_installments checked
+           where checked.run_id = $4::uuid
+             and checked.target_installment_ref_id = cbm.target_installment_ref_id
+        )` : ""}`,
+    runId ? [batchId, window.startedAt, window.finishedAt, runId] : [batchId, window.startedAt, window.finishedAt]
   );
   return Number(result.rows[0]?.reused_count ?? 0);
 }
@@ -344,6 +350,7 @@ export async function enqueueBatchJobWithReuse(input: {
   includeErrors?: boolean;
   scheduledRecheck?: boolean;
   reuseWindow?: ReuseWindow | null;
+  generalSyncRunId?: string | null;
   processingOrigin?: ProcessingOrigin;
   processingScope?: ProcessingJobScope;
   processingPriority?: number;
@@ -412,7 +419,12 @@ export async function enqueueBatchJobWithReuse(input: {
       await requestErroredMembers(client, input.batchId);
     }
 
-    const reusedCount = await countReusableResults(client, input.batchId, reuseWindow);
+    const runId = processingOrigin === "dashboard" ? input.generalSyncRunId ?? null : null;
+    const runReusedCount = await reuseSuccessfulGeneralSyncTargets(client, {
+      runId,
+      batchId: input.batchId
+    });
+    const reusedCount = runReusedCount + await countReusableResults(client, input.batchId, reuseWindow, runId);
     const mergedIncludeErrors = Boolean(activeJob?.include_errors || includeErrors);
     const summary = await getClaimableSummary(client, input.batchId, mergedIncludeErrors);
 
@@ -441,6 +453,7 @@ export async function enqueueBatchJobWithReuse(input: {
                 end,
                 total_items = greatest(total_items, processed_items + $5::int),
                 requested_by = $6::uuid,
+                general_sync_run_id = coalesce($7::uuid, general_sync_run_id),
                 updated_at = now()
           where id = $1
           returning id,
@@ -461,7 +474,8 @@ export async function enqueueBatchJobWithReuse(input: {
           mergedPriority,
           mergedScope,
           summary.claimable,
-          input.requestedBy
+          input.requestedBy,
+          runId
         ]
       );
 
@@ -516,6 +530,7 @@ export async function enqueueBatchJobWithReuse(input: {
          processing_origin,
          processing_scope,
          processing_priority,
+         general_sync_run_id,
          next_run_at,
          created_at,
          updated_at
@@ -533,6 +548,7 @@ export async function enqueueBatchJobWithReuse(input: {
          $6,
          $7,
          $8::int,
+         $9::uuid,
          now(),
          now(),
          now()
@@ -557,7 +573,8 @@ export async function enqueueBatchJobWithReuse(input: {
         includeErrors,
         processingOrigin,
         processingScope,
-        processingPriority
+        processingPriority,
+        runId
       ]
     );
 

@@ -325,6 +325,8 @@ async function finalizeRun(
     }
   });
 
+  // Persisted counters remain; free the per-run success registry.
+  await clientQuery(client, `delete from general_sync_run_installments where run_id = $1::uuid`, [input.run.id]);
   return { status, summary };
 }
 
