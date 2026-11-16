@@ -513,6 +513,8 @@ export async function getPaymentDateReconciliation(filters: PaymentFilters) {
       count(*) filter (where payment_status = 'paid' and paid_amount_cents is null)::int as missing_amount_rows
     from normalized
     where payment_date is not null and payment_date <= $6::date
+      and $8::text = 'payment'
+      and $7::text[] && array['paid', 'late']::text[]
       and ($1::date is null or payment_date >= $1::date)
       and ($2::date is null or payment_date <= $2::date)
       and ($3::text[] is null or plan = any($3::text[]))
