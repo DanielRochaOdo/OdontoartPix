@@ -127,7 +127,7 @@ describeDb("Pontualidade: Associados e filtros de lotes compartilhados", () => {
       expect(await select({ campaign: [cb], batch: [c] })).toEqual([shared, open].sort());
       expect(await select({ campaign: [ca], batch: [c] })).toEqual([]);
       expect(await select({ campaign: [cb], batch: [c], status: ["pending"] })).toEqual([shared]);
-      expect(await select({ campaign: [cb], batch: [c], status: ["completed"] })).toEqual([]);
+      expect(await select({ campaign: [cb], batch: [c], status: ["completed"] })).toEqual([open]);
       expect(await select({ campaign: [ca], batch: [a], payment: ["paid"] })).toEqual([second, shared].sort());
       expect(await select({ campaign: [cb], batch: [c], payment: ["unpaid"] })).toEqual([open]);
       expect(await select({ campaign: [ca], batch: [a], receipt: ["PIX"] })).toEqual([second, shared].sort());
