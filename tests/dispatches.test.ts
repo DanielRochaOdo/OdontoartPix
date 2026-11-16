@@ -45,6 +45,23 @@ describe("Modulo Disparos", () => {
     expect(dashboard).toContain('label="Último disparo"');
   });
 
+  it("monta opcoes de campanhas e lotes pelos IDs reais, nunca por textos agrupados", () => {
+    const domain = source("src/lib/dispatches.ts");
+    const sql = domain.split("export const DISPATCH_FILTER_OPTIONS_SQL = ")[1]
+      ?.split("export async function getDispatchFilterOptions")[0];
+    expect(sql).toBeTruthy();
+    expect(sql).toContain("select distinct campaign_id, campaign_name from scoped_links");
+    expect(sql).toContain("select distinct batch_id, batch_name from scoped_links");
+    expect(sql).toContain("jsonb_build_object('value', campaign_id, 'label', campaign_name)");
+    expect(sql).toContain("jsonb_build_object('value', batch_id, 'label', batch_name)");
+    expect(sql).not.toContain("'label', campaign_names");
+    expect(sql).not.toContain("'label', batch_names");
+
+    const dashboard = source("src/components/dispatches-dashboard.tsx");
+    expect(dashboard).toContain("campaign: filterOptions.campaign");
+    expect(dashboard).toContain("batch: filterOptions.batch");
+  });
+
   it("abre com Nao pago e preserva pagos para relatorio", () => {
     const dashboard = source("src/components/dispatches-dashboard.tsx");
     expect(dashboard).toContain('useState<string[]>(["unpaid"])');

@@ -405,6 +405,29 @@ export async function getDispatchPage(
   };
 }
 
+// Filtros individualizados por campanha/lote: nao usar rotulos concatenados de parcelas.
+export const DISPATCH_FILTER_OPTIONS_SQL = `${FILTERED_SCOPE_CTE}
+    select
+      coalesce(jsonb_agg(distinct jsonb_build_object('value', coalesce(processing_status, '-'), 'label', coalesce(processing_status, '-'))), '[]'::jsonb) as status,
+      coalesce(jsonb_agg(distinct jsonb_build_object('value', coalesce(payment_status, '-'), 'label', coalesce(payment_status, '-'))), '[]'::jsonb) as payment,
+      coalesce(jsonb_agg(distinct jsonb_build_object('value', receipt_description, 'label', receipt_description)), '[]'::jsonb) as receipt,
+      coalesce(jsonb_agg(distinct jsonb_build_object('value', coalesce(installment_type, '-'), 'label', coalesce(installment_type, '-'))), '[]'::jsonb) as installment_type,
+      coalesce((
+        select jsonb_agg(
+          jsonb_build_object('value', campaign_id, 'label', campaign_name)
+          order by campaign_name, campaign_id
+        )
+        from (select distinct campaign_id, campaign_name from scoped_links) campaign_options
+      ), '[]'::jsonb) as campaign,
+      coalesce((
+        select jsonb_agg(
+          jsonb_build_object('value', batch_id, 'label', batch_name)
+          order by batch_name, batch_id
+        )
+        from (select distinct batch_id, batch_name from scoped_links) batch_options
+      ), '[]'::jsonb) as batch
+    from base`;
+
 export async function getDispatchFilterOptions(): Promise<DispatchFilterOptions> {
   const result = await dbQuery<{
     status: DispatchFilterOption[];
@@ -413,15 +436,7 @@ export async function getDispatchFilterOptions(): Promise<DispatchFilterOptions>
     installment_type: DispatchFilterOption[];
     campaign: DispatchFilterOption[];
     batch: DispatchFilterOption[];
-  }>(`${FILTERED_SCOPE_CTE}
-    select
-      coalesce(jsonb_agg(distinct jsonb_build_object('value', coalesce(processing_status, '-'), 'label', coalesce(processing_status, '-'))), '[]'::jsonb) as status,
-      coalesce(jsonb_agg(distinct jsonb_build_object('value', coalesce(payment_status, '-'), 'label', coalesce(payment_status, '-'))), '[]'::jsonb) as payment,
-      coalesce(jsonb_agg(distinct jsonb_build_object('value', receipt_description, 'label', receipt_description)), '[]'::jsonb) as receipt,
-      coalesce(jsonb_agg(distinct jsonb_build_object('value', coalesce(installment_type, '-'), 'label', coalesce(installment_type, '-'))), '[]'::jsonb) as installment_type,
-      coalesce(jsonb_agg(distinct jsonb_build_object('value', campaign_id, 'label', campaign_names)), '[]'::jsonb) as campaign,
-      coalesce(jsonb_agg(distinct jsonb_build_object('value', batch_id, 'label', batch_names)), '[]'::jsonb) as batch
-    from base`, scopeValues({}, [], false));
+  }>(DISPATCH_FILTER_OPTIONS_SQL, scopeValues({}, [], false));
   const options = result.rows[0];
   const ordered = (rows: DispatchFilterOption[] = []) => rows.sort((a, b) => a.label.localeCompare(b.label, "pt-BR"));
   return {
