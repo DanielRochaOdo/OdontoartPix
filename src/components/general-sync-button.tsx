@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { useSearchParams } from "next/navigation";
 import { emitMetricsSync } from "@/lib/metrics-sync";
 import { formatDateTime } from "@/lib/date-time";
 import type { GeneralSyncPreview, GeneralSyncRunDetail } from "@/lib/general-sync";
@@ -187,16 +188,6 @@ function percentage(processed: number, total: number) {
   return total <= 0 ? 0 : Math.min(100, Math.max(0, (processed / total) * 100));
 }
 
-function progressPercentage(run: GeneralSyncRunDetail) {
-  const progress = normalizeProcessingProgress({
-    totalItems: run.recordCount,
-    processedItems: run.processedCount,
-    successItems: run.successCount,
-    errorItems: run.errorCount
-  });
-  return progress.totalItems <= 0 ? 0 : (progress.processedItems / progress.totalItems) * 100;
-}
-
 function batchProgressPercentage(run: GeneralSyncRunDetail | null) {
   if (!run?.currentBatch || run.currentBatch.recordCount <= 0) return 0;
   const progress = normalizeProcessingProgress({
@@ -225,9 +216,21 @@ export function GeneralSyncButton({
   processingCardCollapsed?: boolean;
 }) {
   const { automaticSyncEnabled } = useAutomaticSyncLock();
+  const appliedSearchParams = useSearchParams();
+  const appliedSearchQuery = appliedSearchParams.toString();
+  const appliedFilterQuery = useMemo(() => {
+    const fromUrl = new URLSearchParams(appliedSearchQuery);
+    const filters = new URLSearchParams();
+    for (const id of fromUrl.getAll("campaignId")) filters.append("campaignId", id);
+    for (const id of fromUrl.getAll("batchId")) filters.append("batchId", id);
+    return filters.toString();
+  }, [appliedSearchQuery]);
   const [open, setOpen] = useState(false);
   const [preview, setPreview] = useState<GeneralSyncPreview | null>(null);
   const [run, setRun] = useState<GeneralSyncRunDetail | null>(initialRun);
+  const [uniqueUnpaid, setUniqueUnpaid] = useState<{
+    runId: string; filterKey: string; processed: number; total: number;
+  } | null>(null);
   const [loadingPreview, setLoadingPreview] = useState(false);
   const [starting, setStarting] = useState(false);
   const [pausing, setPausing] = useState(false);
@@ -328,6 +331,58 @@ export function GeneralSyncButton({
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, [runId, shouldObserveRun]);
+
+  // Only the dashboard Registros counter uses unique unpaid installments.
+  // Dashboard URL filters are already applied; draft selections are ignored.
+  useEffect(() => {
+    if (!runId || !shouldObserveRun || processingCardCollapsed) return;
+
+    let active = true;
+    let loading = false;
+    async function refreshUniqueUnpaid() {
+      if (loading || document.visibilityState !== "visible") return;
+      loading = true;
+      try {
+        const params = new URLSearchParams(appliedFilterQuery);
+        params.set("runId", runId!);
+        const response = await fetch(
+          `/api/dashboard/general-sync/unpaid-progress?${params.toString()}`,
+          { headers: { Accept: "application/json" }, cache: "no-store" }
+        );
+        const payload = (await response.json().catch(() => null)) as ApiSuccess<{
+          processed: number; total: number;
+        }> | null;
+        if (!response.ok || !payload?.success || !payload.data) {
+          throw new Error(payload?.error?.message ?? "Falha ao atualizar parcelas únicas.");
+        }
+        if (active) {
+          setUniqueUnpaid({
+            runId: runId!, filterKey: appliedFilterQuery,
+            processed: payload.data.processed, total: payload.data.total
+          });
+        }
+      } catch {
+        // A query do card falhou: nao substituir pelos contadores de vinculos.
+      } finally {
+        loading = false;
+      }
+    }
+
+    const stopRealtime = subscribeProcessingRealtime(() => void refreshUniqueUnpaid());
+    const fallbackTimer = window.setInterval(() => void refreshUniqueUnpaid(), 10_000);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") void refreshUniqueUnpaid();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    void refreshUniqueUnpaid();
+
+    return () => {
+      active = false;
+      stopRealtime();
+      window.clearInterval(fallbackTimer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [runId, shouldObserveRun, processingCardCollapsed, appliedFilterQuery]);
 
   async function loadPreview() {
     if (loadingPreview || starting) return;
@@ -533,7 +588,12 @@ export function GeneralSyncButton({
   }
 
   const activeRun = run && (run.canCancel || run.canResume);
-  const runProgress = run ? progressPercentage(run) : 0;
+  const currentUniqueUnpaid = uniqueUnpaid?.runId === run?.id && uniqueUnpaid?.filterKey === appliedFilterQuery
+    ? uniqueUnpaid
+    : null;
+  const runProgress = currentUniqueUnpaid
+    ? percentage(currentUniqueUnpaid.processed, currentUniqueUnpaid.total)
+    : 0;
   const currentBatchProgress = batchProgressPercentage(run);
   const baseProgress = baseProgressPercentage(run);
   const currentBatch = run?.currentBatch ?? null;
@@ -673,8 +733,8 @@ export function GeneralSyncButton({
               <ProcessingIcon type="records" tone="sky" />
               <div>
                 <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Registros</p>
-                <p className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-50"><AnimatedNumber value={runCounters?.processedItems ?? 0} /> / <AnimatedNumber value={runCounters?.totalItems ?? 0} /></p>
-                <p className="text-xs text-slate-500 dark:text-slate-400"><AnimatedNumber value={runProgress} formatter={formatPercent} /> processados</p>
+                <p className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-50">{currentUniqueUnpaid ? <><AnimatedNumber value={currentUniqueUnpaid.processed} /> / <AnimatedNumber value={currentUniqueUnpaid.total} /></> : "— / —"}</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">{currentUniqueUnpaid ? <AnimatedNumber value={runProgress} formatter={formatPercent} /> : "—"} processados</p>
               </div>
             </div>
           </div>
@@ -881,7 +941,7 @@ export function GeneralSyncButton({
                     <article className="rounded-xl bg-white p-3">
                       <p className="text-xs uppercase tracking-wide text-slate-500">Registros</p>
                       <p className="mt-1 text-sm font-semibold text-slate-900">
-                        {formatInteger(runCounters?.processedItems ?? 0)}/{formatInteger(runCounters?.totalItems ?? 0)}
+                        {currentUniqueUnpaid ? `${formatInteger(currentUniqueUnpaid.processed)}/${formatInteger(currentUniqueUnpaid.total)}` : "—"}
                       </p>
                     </article>
                     <article className="rounded-xl bg-white p-3">
@@ -931,7 +991,7 @@ export function GeneralSyncButton({
                     <div className="mb-2 flex items-center justify-between gap-3 text-xs text-slate-500">
                       <span className="uppercase tracking-wide">Progresso fino</span>
                       <span>
-                        {formatInteger(runCounters?.processedItems ?? 0)}/{formatInteger(runCounters?.totalItems ?? 0)}
+                        {currentUniqueUnpaid ? `${formatInteger(currentUniqueUnpaid.processed)}/${formatInteger(currentUniqueUnpaid.total)}` : "—"}
                       </span>
                     </div>
                     <div className="h-2 overflow-hidden rounded-full bg-slate-100">
