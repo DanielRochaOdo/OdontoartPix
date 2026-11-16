@@ -319,7 +319,32 @@ export const PAYMENT_SOURCE_SQL = `with candidate as (
     join campaigns c on c.id = cbm.campaign_id and c.deleted_at is null
     join campaign_batches b on b.id = cbm.batch_id and b.deleted_at is null
     where cbm.target_installment_ref_id = canonical.id and cbm.deleted_at is null
+      and (coalesce(jsonb_array_length($9::jsonb->'campaign'), 0) = 0
+           or cbm.campaign_id::text in (select jsonb_array_elements_text($9::jsonb->'campaign')))
+      and (coalesce(jsonb_array_length($9::jsonb->'batch'), 0) = 0
+           or cbm.batch_id::text in (select jsonb_array_elements_text($9::jsonb->'batch')))
+      and (coalesce(jsonb_array_length($9::jsonb->'status'), 0) = 0
+           or cbm.processing_status in (select jsonb_array_elements_text($9::jsonb->'status')))
   )
+    and (nullif($9::jsonb->>'code', '') is null or m.external_user_code = $9::jsonb->>'code')
+    and (nullif($9::jsonb->>'installment', '') is null
+         or canonical.external_installment_code = $9::jsonb->>'installment')
+    and (
+      nullif($9::jsonb->>'query', '') is null
+      or lower(concat_ws(' ', m.name, m.cpf, m.external_user_code,
+            canonical.external_installment_code, canonical.installment_type,
+            canonical.due_date_text, canonical.payment_date_text,
+            canonical.payment_status, canonical.payment_description))
+         like '%' || lower($9::jsonb->>'query') || '%'
+      or exists (
+        select 1 from campaign_batch_members search_link
+        join campaigns search_campaign on search_campaign.id = search_link.campaign_id and search_campaign.deleted_at is null
+        join campaign_batches search_batch on search_batch.id = search_link.batch_id and search_batch.deleted_at is null
+        where search_link.target_installment_ref_id = canonical.id and search_link.deleted_at is null
+          and lower(concat_ws(' ', search_campaign.name, search_batch.name, search_link.processing_status))
+              like '%' || lower($9::jsonb->>'query') || '%'
+      )
+    )
 ), parsed as (
   select *,
     case
@@ -344,6 +369,28 @@ export const PAYMENT_SOURCE_SQL = `with candidate as (
       else coalesce(nullif(btrim(payment_description), ''), 'Não informado') end as method,
     extract(day from due_date)::int as due_day
   from parsed
+  where (nullif($9::jsonb->>'dueDateFrom', '') is null
+         or due_date >= nullif($9::jsonb->>'dueDateFrom', '')::date)
+    and (nullif($9::jsonb->>'dueDateTo', '') is null
+         or due_date <= nullif($9::jsonb->>'dueDateTo', '')::date)
+    and (nullif($9::jsonb->>'paymentDateFrom', '') is null
+         or payment_date >= nullif($9::jsonb->>'paymentDateFrom', '')::date)
+    and (nullif($9::jsonb->>'paymentDateTo', '') is null
+         or payment_date <= nullif($9::jsonb->>'paymentDateTo', '')::date)
+    and (coalesce(jsonb_array_length($9::jsonb->'payment'), 0) = 0
+         or payment_status in (select jsonb_array_elements_text($9::jsonb->'payment')))
+    and (coalesce(jsonb_array_length($9::jsonb->'receipt'), 0) = 0
+         or (case when payment_status = 'agreed' then '-'
+           else coalesce(nullif(btrim(payment_description), ''), '-') end)
+           in (select jsonb_array_elements_text($9::jsonb->'receipt')))
+    and (coalesce(jsonb_array_length($9::jsonb->'installmentType'), 0) = 0
+         or (case lower(btrim(coalesce(installment_type, '')))
+           when 'clinico' then 'Clínico' when 'orto' then 'Orto' else '-' end)
+           in (select jsonb_array_elements_text($9::jsonb->'installmentType')))
+    and (coalesce($9::jsonb->>'paidPending', 'all') = 'all'
+         or ($9::jsonb->>'paidPending' = 'yes'
+              and payment_status = 'paid' and pending_amount_cents > 0)
+         or ($9::jsonb->>'paidPending' = 'no' and coalesce(pending_amount_cents, 0) <= 0))
 ), selected as (
   select *, case when payment_status = 'unpaid'
       then greatest($6::date - due_date, 0)
@@ -404,7 +451,7 @@ function queryValues(filters: PaymentFilters): unknown[] {
     filters.plans.length ? filters.plans : null,
     filters.dues.length ? filters.dues : null,
     filters.methods.length ? filters.methods : null,
-    filters.asOf, filters.scopes, filters.dateBasis];
+    filters.asOf, filters.scopes, filters.dateBasis, JSON.stringify(filters.associated)];
 }
 
 type GroupRow = {
@@ -471,7 +518,7 @@ export async function getPaymentDateReconciliation(filters: PaymentFilters) {
       and ($3::text[] is null or plan = any($3::text[]))
       and ($4::int[] is null or due_day = any($4::int[]))
       and ($5::text[] is null or method = any($5::text[]))
-  `, queryValues(filters).slice(0, 6));
+  `, queryValues(filters));
   const row = result.rows[0];
   return {
     matchedRows: Number(row?.matched_rows ?? 0),
@@ -580,8 +627,8 @@ export async function getPaymentMethodChangeDetails(filters: PaymentFilters, con
       report_amount_cents::float8 as report_amount_cents
     from eligible
     where payment_status = 'paid'
-      and nullif(trim(configured_payment_description), '') = $9::text
-      and nullif(trim(payment_description), '') = $10::text
+      and nullif(trim(configured_payment_description), '') = $10::text
+      and nullif(trim(payment_description), '') = $11::text
     order by days desc, payment_date desc, id
     limit 50
   `, [...queryValues(filters), configured, received]);
@@ -624,10 +671,10 @@ export async function getPaymentDetails(filters: PaymentFilters, kind: GroupKind
       case when payment_date is null then null else to_char(payment_date, 'YYYY-MM-DD') end as payment_date,
       method, configured_payment_description, days, report_amount_cents::float8 as report_amount_cents
     from eligible
-    where ($9::text = 'total'
-      or ($9::text = 'plan' and plan = $10::text)
-      or ($9::text = 'due' and due_day::text = $10::text)
-      or ($9::text = 'method' and method = $10::text))
+    where ($10::text = 'total'
+      or ($10::text = 'plan' and plan = $11::text)
+      or ($10::text = 'due' and due_day::text = $11::text)
+      or ($10::text = 'method' and method = $11::text))
     order by days desc, due_date desc, id
     limit 50
   `, [...queryValues(filters), kind, key]);
