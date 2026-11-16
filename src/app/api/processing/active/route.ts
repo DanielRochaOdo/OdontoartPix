@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireApiUser } from "@/lib/auth/require-api-user";
 import { dbQuery } from "@/lib/db/pool";
 import { normalizeProcessingProgress } from "@/lib/processing-progress";
+import { getDashboardUniqueUnpaidProgress } from "@/lib/dashboard-unique-unpaid-progress";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -141,6 +142,24 @@ export async function GET() {
   });
   const hasExecutableJobs = executableRows.length > 0;
 
+  // Keep operational job counters intact for the worker/other consumers.
+  // The global dashboard indicator shows distinct, currently-unpaid invoices.
+  // Never silently fall back to link totals if this financial query fails.
+  let uniqueUnpaidProgress: { processed: number; total: number } | null = null;
+  if (activeRun) {
+    try {
+      uniqueUnpaidProgress = await getDashboardUniqueUnpaidProgress({
+        runId: activeRun.id,
+        campaignIds: [],
+        batchIds: []
+      });
+    } catch (error) {
+      console.error("[ACTIVE_UNIQUE_UNPAID_PROGRESS_FAILED]", {
+        message: error instanceof Error ? error.message : "Erro desconhecido"
+      });
+    }
+  }
+
   return NextResponse.json({
     success: true,
     data: {
@@ -158,6 +177,7 @@ export async function GET() {
       processedItems: progress.processedItems,
       successItems: progress.successItems,
       errorItems: progress.errorItems,
+      uniqueUnpaidProgress,
       origins: {
         manual: manualJobCount,
         dashboard: dashboardJobCount,
