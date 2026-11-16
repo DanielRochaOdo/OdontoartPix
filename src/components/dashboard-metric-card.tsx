@@ -23,6 +23,12 @@ function formatValue(value: number, kind: MetricKind) {
   return value.toLocaleString("pt-BR");
 }
 
+function readStoredNumber(key: string) {
+  const raw = window.localStorage.getItem(key);
+  if (raw === null || raw.trim() === "") return Number.NaN;
+  return Number(raw);
+}
+
 export function DashboardMetricCard({
   label,
   value,
@@ -55,13 +61,13 @@ export function DashboardMetricCard({
 
   useEffect(() => {
     try {
-      const storedValue = Number(window.localStorage.getItem(storageKey));
-      const legacyValue = Number(window.localStorage.getItem(`dashboard-metric-last:${label}`));
+      const storedValue = label === "Valor pago" ? readStoredNumber(storageKey) : Number(window.localStorage.getItem(storageKey));
+      const legacyValue = label === "Valor pago" ? readStoredNumber(`dashboard-metric-last:${label}`) : Number(window.localStorage.getItem(`dashboard-metric-last:${label}`));
       const readAtKey = `${storageKey}:read-at`;
       const previousKey = `${storageKey}:previous`;
       const previousReadAtKey = `${previousKey}:read-at`;
       const storedReadAt = window.localStorage.getItem(readAtKey);
-      const storedPrevious = Number(window.localStorage.getItem(previousKey));
+      const storedPrevious = label === "Valor pago" ? readStoredNumber(previousKey) : Number(window.localStorage.getItem(previousKey));
       const storedPreviousReadAt = window.localStorage.getItem(previousReadAtKey);
 
       if (initializedStorageKeyRef.current !== storageKey) {
