@@ -9,13 +9,7 @@ import { dbQuery } from "@/lib/db/pool";
  * successfully checked by this general-sync run. The per-run registry also
  * credits a consultation made through another batch in the same run.
  */
-export async function getDashboardUniqueUnpaidProgress(input: {
-  runId: string;
-  campaignIds: string[];
-  batchIds: string[];
-}): Promise<{ processed: number; total: number }> {
-  const result = await dbQuery<{ processed: number; total: number }>(
-    `with selected_targets as materialized (
+export const DASHBOARD_UNIQUE_UNPAID_PROGRESS_SQL = ``with selected_targets as materialized (
        select distinct cbm.target_installment_ref_id as target_id
          from campaign_batch_members cbm
          join campaign_batches cb on cb.id = cbm.batch_id
@@ -41,7 +35,15 @@ export async function getDashboardUniqueUnpaidProgress(input: {
                    and checked.target_installment_ref_id = unpaid_targets.id
               )
             )::int as processed
-       from unpaid_targets`,
+       from unpaid_targets`;
+
+export async function getDashboardUniqueUnpaidProgress(input: {
+  runId: string;
+  campaignIds: string[];
+  batchIds: string[];
+}): Promise<{ processed: number; total: number }> {
+  const result = await dbQuery<{ processed: number; total: number }>(
+    DASHBOARD_UNIQUE_UNPAID_PROGRESS_SQL,
     [input.runId, input.campaignIds, input.batchIds]
   );
 
