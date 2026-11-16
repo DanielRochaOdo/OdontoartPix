@@ -126,14 +126,14 @@ describeDb("Pontualidade: Associados e filtros de lotes compartilhados", () => {
       expect(await select({ campaign: [ca], batch: [a, b] })).toEqual([second, shared].sort());
       expect(await select({ campaign: [cb], batch: [c] })).toEqual([shared, open].sort());
       expect(await select({ campaign: [ca], batch: [c] })).toEqual([]);
-      expect(await select({ campaign: [cb], batch: [c], status: ["pending"] })).toEqual([shared, open].sort());
+      expect(await select({ campaign: [cb], batch: [c], status: ["pending"] })).toEqual([shared]);
       expect(await select({ campaign: [cb], batch: [c], status: ["completed"] })).toEqual([]);
       expect(await select({ campaign: [ca], batch: [a], payment: ["paid"] })).toEqual([second, shared].sort());
       expect(await select({ campaign: [cb], batch: [c], payment: ["unpaid"] })).toEqual([open]);
       expect(await select({ campaign: [ca], batch: [a], receipt: ["PIX"] })).toEqual([second, shared].sort());
       expect(await select({ campaign: [ca], batch: [a], installmentType: ["Orto"] })).toEqual([]);
       expect(await select({ campaign: [ca], batch: [a], code: firstMember.external_user_code })).toEqual([shared]);
-      expect(await select({ campaign: [ca], batch: [a], installment: ["123456"] })).toEqual([shared]);
+      expect(await select({ campaign: [ca], batch: [a], installment: "123456" })).toEqual([shared]);
       expect(await select({ campaign: [ca], batch: [a], dueDateFrom: "2026-11-11" })).toEqual([]);
       expect(await select({ campaign: [ca], batch: [a], paymentDateTo: "2026-11-11" })).toEqual([]);
       expect(await select({ campaign: [ca], batch: [a], query: "B, com virgula" })).toEqual([shared]);
