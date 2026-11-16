@@ -158,7 +158,7 @@ export function PunctualityFilters({
       {receiptFilters.map((value) => <input key={value} type="hidden" name="receipt" value={value} />)}
       {typeFilters.map((value) => <input key={value} type="hidden" name="installmentType" value={value} />)}
       {campaignFilters.map((value) => <input key={value} type="hidden" name="campaign" value={value} />)}
-      {batchFilters.map((value) => <input key={value} type="hidden" name="batch" value={value} />)
+      {batchFilters.map((value) => <input key={value} type="hidden" name="batch" value={value} />)}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 className="text-sm font-bold text-primary">Filtros da análise</h2>
