@@ -194,7 +194,7 @@ function progressPercentage(run: GeneralSyncRunDetail) {
     successItems: run.successCount,
     errorItems: run.errorCount
   });
-  return progress.totalItems <= 0 ? 0 : percentage(progress.processedItems + run.reusedCount, progress.totalItems);
+  return progress.totalItems <= 0 ? 0 : (progress.processedItems / progress.totalItems) * 100;
 }
 
 function batchProgressPercentage(run: GeneralSyncRunDetail | null) {
@@ -672,10 +672,9 @@ export function GeneralSyncButton({
             <div className="flex items-center gap-4 rounded-xl border border-slate-200 bg-slate-50 p-4 transition hover:border-sky-300 hover:bg-sky-50/40 dark:border-[#243650] dark:bg-[#111d30] dark:hover:border-sky-500/50 dark:hover:bg-[#14263a]">
               <ProcessingIcon type="records" tone="sky" />
               <div>
-                <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Registros cobertos</p>
-                <p className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-50"><AnimatedNumber value={(runCounters?.processedItems ?? 0) + run.reusedCount} /> / <AnimatedNumber value={runCounters?.totalItems ?? 0} /></p>
-                <p className="text-xs text-slate-500 dark:text-slate-400"><AnimatedNumber value={runProgress} formatter={formatPercent} /> cobertos</p>
-                {run.reusedCount > 0 ? <p className="mt-1 text-xs text-sky-700 dark:text-sky-300"><AnimatedNumber value={runCounters?.processedItems ?? 0} /> consultados · <AnimatedNumber value={run.reusedCount} /> reaproveitados</p> : null}
+                <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Registros</p>
+                <p className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-50"><AnimatedNumber value={runCounters?.processedItems ?? 0} /> / <AnimatedNumber value={runCounters?.totalItems ?? 0} /></p>
+                <p className="text-xs text-slate-500 dark:text-slate-400"><AnimatedNumber value={runProgress} formatter={formatPercent} /> processados</p>
               </div>
             </div>
           </div>
