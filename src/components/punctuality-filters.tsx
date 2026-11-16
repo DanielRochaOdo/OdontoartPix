@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import type { PaymentFilters } from "@/lib/payment-punctuality";
+import type { AssociadosFilterOptions } from "@/lib/associados-paginated";
 
 type Option = { value: string; label: string };
 
@@ -48,7 +49,7 @@ function MultiSelectFilter({
         <span className="truncate">{summary}</span>
         <span className="shrink-0 text-muted transition group-open:rotate-180">▾</span>
       </summary>
-      <div className="absolute left-0 top-full z-50 mt-2 w-full min-w-[230px] rounded-xl border border-default bg-surface-elevated p-2 shadow-xl">
+      <div className="absolute left-0 top-full z-50 mt-2 w-full min-w-0 rounded-xl border border-default bg-surface-elevated p-2 shadow-xl">
         <div className="mb-2 flex items-center gap-2">
           <input
             type="search" value={searchQuery}
@@ -115,7 +116,13 @@ const scopeOptions: Option[] = [
   { value: "open", label: "Em aberto e vencidas" }
 ];
 
-export function PunctualityFilters({ filters, methods }: { filters: PaymentFilters; methods: string[] }) {
+export function PunctualityFilters({
+  filters, methods, associatedOptions
+}: {
+  filters: PaymentFilters;
+  methods: string[];
+  associatedOptions: AssociadosFilterOptions;
+}) {
   const [plans, setPlans] = useState<string[]>(filters.plans);
   const [dues, setDues] = useState<string[]>(filters.dues.map(String));
   const [selectedMethods, setSelectedMethods] = useState<string[]>(filters.methods);
@@ -123,6 +130,21 @@ export function PunctualityFilters({ filters, methods }: { filters: PaymentFilte
   const [period, setPeriod] = useState(filters.period);
   const [customFrom, setCustomFrom] = useState(filters.period === "custom" ? filters.from : "");
   const [customTo, setCustomTo] = useState(filters.period === "custom" ? filters.to : "");
+  const advanced = filters.associated;
+  const [statusFilters, setStatusFilters] = useState(advanced.status);
+  const [paymentFilters, setPaymentFilters] = useState(advanced.payment);
+  const [receiptFilters, setReceiptFilters] = useState(advanced.receipt);
+  const [typeFilters, setTypeFilters] = useState(advanced.installmentType);
+  const [campaignFilters, setCampaignFilters] = useState(advanced.campaign);
+  const [batchFilters, setBatchFilters] = useState(advanced.batch);
+  const hasAdvancedFilters = Boolean(
+    advanced.query || advanced.code || advanced.installment ||
+    advanced.dueDateFrom || advanced.dueDateTo ||
+    advanced.paymentDateFrom || advanced.paymentDateTo ||
+    advanced.paidPending !== "all" ||
+    advanced.status.length || advanced.payment.length || advanced.receipt.length ||
+    advanced.installmentType.length || advanced.campaign.length || advanced.batch.length
+  );
 
   return (
     <form action="/pontualidade" method="get" className="odonto-card mt-6 p-4 sm:p-5">
@@ -131,6 +153,12 @@ export function PunctualityFilters({ filters, methods }: { filters: PaymentFilte
       {dues.map((value) => <input key={value} type="hidden" name="due" value={value} />)}
       {selectedMethods.map((value) => <input key={value} type="hidden" name="method" value={value} />)}
       {scopes.map((value) => <input key={value} type="hidden" name="scopes" value={value} />)}
+      {statusFilters.map((value) => <input key={value} type="hidden" name="status" value={value} />)}
+      {paymentFilters.map((value) => <input key={value} type="hidden" name="payment" value={value} />)}
+      {receiptFilters.map((value) => <input key={value} type="hidden" name="receipt" value={value} />)}
+      {typeFilters.map((value) => <input key={value} type="hidden" name="installmentType" value={value} />)}
+      {campaignFilters.map((value) => <input key={value} type="hidden" name="campaign" value={value} />)}
+      {batchFilters.map((value) => <input key={value} type="hidden" name="batch" value={value} />)
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 className="text-sm font-bold text-primary">Filtros da análise</h2>
@@ -179,12 +207,6 @@ export function PunctualityFilters({ filters, methods }: { filters: PaymentFilte
         <SingleSelect name="order" label="Ordem" selected={filters.order} options={[
           { value: "desc", label: "Maior para menor" }, { value: "asc", label: "Menor para maior" }
         ]} />
-        <div className="flex items-end">
-          <button type="submit" disabled={!scopes.length}
-            className="min-h-[42px] w-full rounded-lg bg-brand px-5 py-2 text-sm font-bold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50">
-            Aplicar filtros
-          </button>
-        </div>
       </div>
       {!scopes.length && <p role="alert" className="mt-2 text-xs text-danger">Selecione ao menos uma situação de pagamento.</p>}
       {period === "custom" ? (
@@ -205,6 +227,66 @@ export function PunctualityFilters({ filters, methods }: { filters: PaymentFilte
           </label>
         </div>
       ) : null}
+      <details defaultOpen={hasAdvancedFilters}
+        className="mt-5 min-w-0 rounded-xl border border-subtle bg-surface-secondary/60 p-3 sm:p-4">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold text-primary">
+          <span>Filtros de Associados <span className="text-xs font-normal text-muted">(complementares)</span></span>
+          <span className="shrink-0 text-xs text-secondary">Expandir / recolher ▾</span>
+        </summary>
+        <p className="mt-2 text-xs leading-relaxed text-secondary">
+          Combine os filtros abaixo com os de Pontualidade. Uma parcela vinculada a mais de um lote
+          permanece no resultado quando pelo menos um dos lotes escolhidos a contém.
+        </p>
+        <div className="mt-4 grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {([
+            ["query", "Buscar em todas as colunas", advanced.query, 200],
+            ["code", "Código do associado", advanced.code, 100],
+            ["installment", "Código da parcela", advanced.installment, 100]
+          ] as const).map(([name, label, value, maxLength]) => (
+            <label key={name} className="flex min-w-0 flex-col gap-1.5 text-xs font-semibold text-secondary">
+              {label}
+              <input type="search" name={name} defaultValue={value} maxLength={maxLength}
+                placeholder={label} className="odonto-control w-full min-w-0 px-3 py-2 text-[13px]" />
+            </label>
+          ))}
+          <SingleSelect name="paidPending" label="Pago com pendência" selected={advanced.paidPending} options={[
+            { value: "all", label: "Todos" },
+            { value: "yes", label: "Sim" },
+            { value: "no", label: "Não" }
+          ]} />
+          {([
+            ["dueDateFrom", "Vencimento: de", advanced.dueDateFrom, advanced.dueDateTo, "max"],
+            ["dueDateTo", "Vencimento: até", advanced.dueDateTo, advanced.dueDateFrom, "min"],
+            ["paymentDateFrom", "Pagamento: de", advanced.paymentDateFrom, advanced.paymentDateTo, "max"],
+            ["paymentDateTo", "Pagamento: até", advanced.paymentDateTo, advanced.paymentDateFrom, "min"]
+          ] as const).map(([name, label, value]) => (
+            <label key={name} className="flex min-w-0 flex-col gap-1.5 text-xs font-semibold text-secondary">
+              {label}
+              <input type="date" name={name} defaultValue={value}
+                className="odonto-control w-full min-w-0 px-3 py-2 text-[13px]" />
+            </label>
+          ))}
+          {([
+            ["Status de processamento", statusFilters, setStatusFilters, associatedOptions.status],
+            ["Pagamento", paymentFilters, setPaymentFilters, associatedOptions.payment],
+            ["Tipo de pagamento", receiptFilters, setReceiptFilters, associatedOptions.receipt],
+            ["Tipo de parcela", typeFilters, setTypeFilters, associatedOptions.installmentType],
+            ["Campanha", campaignFilters, setCampaignFilters, associatedOptions.campaign],
+            ["Lote", batchFilters, setBatchFilters, associatedOptions.batch]
+          ] as const).map(([label, selected, update, options]) => (
+            <div key={label} className="flex min-w-0 flex-col gap-1.5 text-xs font-semibold text-secondary">
+              {label}
+              <MultiSelectFilter label={label} values={selected} onChange={update} options={options} />
+            </div>
+          ))}
+        </div>
+      </details>
+      <div className="mt-4 flex justify-end">
+        <button type="submit" disabled={!scopes.length}
+          className="min-h-[42px] w-full rounded-lg bg-brand px-6 py-2 text-sm font-bold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto">
+          Aplicar filtros
+        </button>
+      </div>
       <p className="mt-3 text-xs leading-relaxed text-muted">
         O período usa a data de pagamento para parcelas quitadas, como em Associados, ou a data de vencimento, conforme a opção acima. Parcelas em aberto sempre usam o vencimento. Sem seleção de plano, dia ou forma de pagamento, todas as opções são consideradas.
       </p>
