@@ -5,6 +5,7 @@ import { ManualDashboardIcon, type ManualDashboardIconName } from "@/components/
 import { formatCurrencyBR } from "@/lib/money";
 
 type MetricKind = "count" | "currency" | "percentage";
+type PaidValueDetails = { installmentCount: number; memberCount: number };
 type PaidDetail = {
   id: string;
   memberName: string | null;
@@ -20,6 +21,12 @@ function formatValue(value: number, kind: MetricKind) {
   if (kind === "currency") return (value / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
   if (kind === "percentage") return `${value.toLocaleString("pt-BR", { maximumFractionDigits: 2 })}%`;
   return value.toLocaleString("pt-BR");
+}
+
+function readStoredNumber(key: string) {
+  const raw = window.localStorage.getItem(key);
+  if (raw === null || raw.trim() === "") return Number.NaN;
+  return Number(raw);
 }
 
 export function DashboardMetricCard({
@@ -48,18 +55,19 @@ export function DashboardMetricCard({
   const [previous, setPrevious] = useState<number | null>(null);
   const [previousReadAt, setPreviousReadAt] = useState<string | null>(null);
   const [paidDetails, setPaidDetails] = useState<PaidDetail[]>([]);
+  const [paidValueDetails, setPaidValueDetails] = useState<PaidValueDetails | null>(null);
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [paidPage, setPaidPage] = useState(0);
 
   useEffect(() => {
     try {
-      const storedValue = Number(window.localStorage.getItem(storageKey));
-      const legacyValue = Number(window.localStorage.getItem(`dashboard-metric-last:${label}`));
+      const storedValue = label === "Valor pago" ? readStoredNumber(storageKey) : Number(window.localStorage.getItem(storageKey));
+      const legacyValue = label === "Valor pago" ? readStoredNumber(`dashboard-metric-last:${label}`) : Number(window.localStorage.getItem(`dashboard-metric-last:${label}`));
       const readAtKey = `${storageKey}:read-at`;
       const previousKey = `${storageKey}:previous`;
       const previousReadAtKey = `${previousKey}:read-at`;
       const storedReadAt = window.localStorage.getItem(readAtKey);
-      const storedPrevious = Number(window.localStorage.getItem(previousKey));
+      const storedPrevious = label === "Valor pago" ? readStoredNumber(previousKey) : Number(window.localStorage.getItem(previousKey));
       const storedPreviousReadAt = window.localStorage.getItem(previousReadAtKey);
 
       if (initializedStorageKeyRef.current !== storageKey) {
@@ -115,6 +123,36 @@ export function DashboardMetricCard({
   async function openCard() {
     setModalOpen(true);
     setPaidPage(0);
+    if (label === "Valor pago") {
+      setDetailsLoading(true);
+      setPaidValueDetails(null);
+      try {
+        const [campaignScope = "all", batchScope = "all"] = scopeKey.split("|");
+        const params = new URLSearchParams();
+        if (campaignScope !== "all" && campaignScope) params.set("campaignIds", campaignScope);
+        if (batchScope !== "all" && batchScope) params.set("batchIds", batchScope);
+        const query = params.toString();
+        const response = await fetch(
+          `/api/dashboard/paid-value-details${query ? `?${query}` : ""}`,
+          { cache: "no-store" }
+        );
+        if (!response.ok) throw new Error("Falha ao carregar detalhes do valor pago.");
+        const payload = await response.json();
+        const installmentCount = Number(payload?.data?.installmentCount);
+        const memberCount = Number(payload?.data?.memberCount);
+        if (!payload?.success ||
+            !Number.isSafeInteger(installmentCount) || installmentCount < 0 ||
+            !Number.isSafeInteger(memberCount) || memberCount < 0) {
+          throw new Error("Contagens invalidas do valor pago.");
+        }
+        setPaidValueDetails({ installmentCount, memberCount });
+      } catch {
+        setPaidValueDetails(null);
+      } finally {
+        setDetailsLoading(false);
+      }
+      return;
+    }
     if (!detailEndpoint || label !== "Pagos" || variation === null || variation <= 0) return;
     setDetailsLoading(true);
     try {
@@ -143,9 +181,40 @@ export function DashboardMetricCard({
 
       {modalOpen ? (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/40 p-4 backdrop-blur-[2px]" onMouseDown={() => setModalOpen(false)}>
-          <section role="dialog" aria-modal="true" aria-labelledby={`metric-${label}`} onMouseDown={(event) => event.stopPropagation()} className="w-full max-w-4xl rounded-2xl border border-subtle bg-surface-primary p-5 text-primary shadow-2xl   ">
-            <div className="flex items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-[0.16em] text-brand ">Variação da leitura geral</p><h2 id={`metric-${label}`} className="mt-1 text-xl font-semibold">{label}</h2></div><button type="button" onClick={() => setModalOpen(false)} aria-label="Fechar" className="text-2xl leading-none text-secondary ">×</button></div>
-            <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
+          <section role="dialog" aria-modal="true" aria-labelledby={`metric-${label}`} onMouseDown={(event) => event.stopPropagation()} className={`w-full ${label === "Valor pago" ? "max-w-2xl" : "max-w-4xl"} rounded-2xl border border-subtle bg-surface-primary p-5 text-primary shadow-2xl   `}>
+            <div className="flex items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-[0.16em] text-brand ">{label === "Valor pago" ? "Recebimentos" : "Variação da leitura geral"}</p><h2 id={`metric-${label}`} className="mt-1 text-xl font-semibold">{label === "Valor pago" ? "Detalhes do valor pago" : label}</h2></div><button type="button" onClick={() => setModalOpen(false)} aria-label="Fechar" className="text-2xl leading-none text-secondary ">×</button></div>
+            {label === "Valor pago" ? (
+              <>
+                <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                  <div className="rounded-xl border border-subtle bg-surface-secondary p-4">
+                    <p className="text-xs text-secondary">Valor pago</p>
+                    <p className="mt-1 text-2xl font-semibold text-brand">{formatCurrencyBR(numericValue)}</p>
+                  </div>
+                  <div className="rounded-xl border border-subtle bg-surface-secondary p-4">
+                    <p className="text-xs text-secondary">Quantidade de parcelas</p>
+                    <p className="mt-1 text-2xl font-semibold">
+                      {detailsLoading ? "..." : paidValueDetails
+                        ? paidValueDetails.installmentCount.toLocaleString("pt-BR") : "Não disponível"}
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-subtle bg-surface-secondary p-4">
+                    <p className="text-xs text-secondary">Associados únicos</p>
+                    <p className="mt-1 text-2xl font-semibold">
+                      {detailsLoading ? "..." : paidValueDetails
+                        ? paidValueDetails.memberCount.toLocaleString("pt-BR") : "Não disponível"}
+                    </p>
+                    <p className="mt-1 text-[10px] text-muted">Um associado é contado uma vez, mesmo com várias parcelas pagas.</p>
+                  </div>
+                </div>
+                <div className="mt-3 rounded-xl border border-subtle bg-surface-secondary p-4">
+                  <p className="text-xs text-secondary">Última leitura geral</p>
+                  <p className="mt-1 font-medium">{previous === null ? "Não disponível" : formatCurrencyBR(previous)}</p>
+                  <p className="mt-3 text-xs text-secondary">Variação desde a última leitura</p>
+                  <p className="mt-1 font-semibold">{variationLabel}</p>
+                </div>
+              </>
+            ) : (
+              <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
               <div>
                 <div className="rounded-xl border border-subtle bg-surface-secondary p-4  "><p className="text-xs text-secondary ">Valor atual geral</p><p className="mt-1 text-2xl font-semibold">{formatValue(numericValue, kind)}</p><p className="mt-4 text-xs text-secondary ">Última leitura geral</p><p className="mt-1 font-medium">{previous === null ? "Não disponível" : formatValue(previous, kind)}</p></div>
                 <div className={`mt-3 rounded-xl border p-4 ${variation === null || variation === 0 ? "border-subtle bg-surface-secondary  " : variation > 0 ? "border-[#22D58C]/40 bg-[#22D58C]/10 text-[#08774e] dark:text-[#72f0bc]" : "border-[#FF5B5B]/40 bg-[#FF5B5B]/10 text-[#b52e3d] dark:text-[#ff9ba3]"}`}><p className="text-xs opacity-80">{kind === "currency" ? "Variação em valor" : kind === "percentage" ? "Variação em pontos percentuais" : "Variação em quantidade"}</p><p className="mt-1 text-lg font-semibold">{variationLabel}</p></div>
@@ -154,6 +223,7 @@ export function DashboardMetricCard({
                 <div className="rounded-xl border border-subtle bg-surface-secondary p-4  "><p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand ">Novos associados pagos na leitura geral</p>{detailsLoading ? <p className="mt-3 text-sm text-secondary ">Carregando detalhes...</p> : pageDetails.map((detail) => <div key={detail.id} className="mt-3 rounded-xl border border-subtle bg-surface-primary p-3 text-sm  "><p className="font-semibold">{detail.memberName ?? "Associado sem nome"}</p><p className="mt-1 text-xs text-secondary ">CPF: {detail.cpf ?? "-"} · Código: {detail.associatedCode ?? "-"}</p><p className="mt-2 text-xs text-secondary ">{detail.campaignName ?? "Campanha"} · {detail.batchName ?? "Lote"}</p><p className="mt-1 font-medium">Fatura {detail.invoiceCode ?? "-"} · {formatCurrencyBR(detail.invoiceAmountCents)}</p></div>)}{!detailsLoading && paidDetails.length === 0 ? <p className="mt-3 text-sm text-secondary ">Nenhum detalhe adicional encontrado.</p> : null}{!detailsLoading && paidDetails.length > 3 ? <div className="mt-4 flex items-center justify-between gap-3 text-xs"><button type="button" disabled={paidPage === 0} onClick={() => setPaidPage((page) => Math.max(0, page - 1))} className="rounded-lg border border-subtle px-3 py-2 disabled:opacity-40 ">Anterior</button><span className="text-secondary ">Página {paidPage + 1} de {totalPages}</span><button type="button" disabled={paidPage + 1 >= totalPages} onClick={() => setPaidPage((page) => page + 1)} className="rounded-lg border border-subtle px-3 py-2 disabled:opacity-40 ">Próxima</button></div> : null}</div>
               ) : null}
             </div>
+            )}
           </section>
         </div>
       ) : null}
