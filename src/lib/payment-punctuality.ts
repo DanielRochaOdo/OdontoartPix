@@ -8,6 +8,16 @@ export type ReportMetric = "avg" | "rate" | "count" | "amount";
 export type ReportOrder = "desc" | "asc";
 export type GroupKind = "total" | "plan" | "due" | "method";
 
+export type AssociatedReportFilters = {
+  query: string; code: string; installment: string;
+  dueDateFrom: string; dueDateTo: string;
+  paymentDateFrom: string; paymentDateTo: string;
+  status: string[]; payment: string[];
+  paidPending: "all" | "yes" | "no";
+  receipt: string[]; installmentType: string[];
+  campaign: string[]; batch: string[];
+};
+
 export type PaymentFilters = {
   period: "12m" | "30d" | "3m" | "6m" | "all" | "custom";
   dateBasis: ReportDateBasis;
@@ -21,6 +31,7 @@ export type PaymentFilters = {
   order: ReportOrder;
   tab: ReportTab;
   asOf: string;
+  associated: AssociatedReportFilters;
 };
 
 export type ReportGroup = {
@@ -143,6 +154,46 @@ export function readPaymentFilters(
   if (scopes.some((item) => !["paid", "late", "open"].includes(item))) {
     throw new Error("Situação de pagamento inválida.");
   }
+  const dateKeys = ["dueDateFrom", "dueDateTo", "paymentDateFrom", "paymentDateTo"] as const;
+  for (const key of dateKeys) {
+    if (value(key) && !validIsoDate(value(key)!)) throw new Error("Data de Associados inválida.");
+  }
+  if (value("dueDateFrom") && value("dueDateTo") && value("dueDateFrom")! > value("dueDateTo")!) {
+    throw new Error("Intervalo de vencimento inválido.");
+  }
+  if (value("paymentDateFrom") && value("paymentDateTo") && value("paymentDateFrom")! > value("paymentDateTo")!) {
+    throw new Error("Intervalo de pagamento inválido.");
+  }
+
+  const associated: AssociatedReportFilters = {
+    query: (value("query") ?? "").trim(),
+    code: (value("code") ?? "").trim(),
+    installment: (value("installment") ?? "").trim(),
+    dueDateFrom: value("dueDateFrom") ?? "",
+    dueDateTo: value("dueDateTo") ?? "",
+    paymentDateFrom: value("paymentDateFrom") ?? "",
+    paymentDateTo: value("paymentDateTo") ?? "",
+    status: [...new Set(values("status"))],
+    payment: [...new Set(values("payment"))],
+    paidPending: readEnum(value("paidPending"), ["all", "yes", "no"] as const, "all"),
+    receipt: [...new Set(values("receipt"))],
+    installmentType: [...new Set(values("installmentType"))],
+    campaign: [...new Set(values("campaign"))],
+    batch: [...new Set(values("batch"))]
+  };
+  for (const key of ["query", "code", "installment"] as const) {
+    if (associated[key].length > (key === "query" ? 200 : 100)) throw new Error("Filtro textual muito longo.");
+  }
+  for (const key of ["status", "payment", "receipt", "installmentType", "campaign", "batch"] as const) {
+    if (associated[key].length > 200 || associated[key].some((item) => item.length > 120)) {
+      throw new Error("Muitas opções de Associados ou opção muito longa.");
+    }
+  }
+  for (const key of ["campaign", "batch"] as const) {
+    if (associated[key].some((id) => !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(id))) {
+      throw new Error("Campanha ou lote inválido.");
+    }
+  }
   return {
     period, dateBasis, from, to,
     plans: requestedPlans as PaymentPlan[],
@@ -151,7 +202,7 @@ export function readPaymentFilters(
     metric: readEnum(value("metric"), ["avg", "rate", "count", "amount"] as const, "avg"),
     order: readEnum(value("order"), ["desc", "asc"] as const, "desc"),
     tab: readEnum(value("tab"), ["geral", "planos", "vencimentos", "formas", "trocas"] as const, "geral"),
-    asOf: today
+    asOf: today, associated
   };
 }
 
@@ -166,6 +217,15 @@ export function paymentFilterSearch(filters: PaymentFilters, updates: Record<str
   if (filters.period === "custom") {
     if (filters.from) params.set("from", filters.from);
     if (filters.to) params.set("to", filters.to);
+  }
+  const advanced = filters.associated;
+  for (const key of ["query", "code", "installment", "dueDateFrom", "dueDateTo",
+    "paymentDateFrom", "paymentDateTo"] as const) {
+    if (advanced[key]) params.set(key, advanced[key]);
+  }
+  if (advanced.paidPending !== "all") params.set("paidPending", advanced.paidPending);
+  for (const key of ["status", "payment", "receipt", "installmentType", "campaign", "batch"] as const) {
+    for (const item of advanced[key]) params.append(key, item);
   }
   for (const [key, value] of Object.entries(updates)) {
     if (value) params.set(key, value);
