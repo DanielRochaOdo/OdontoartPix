@@ -45,7 +45,7 @@ describe("Pontualidade: integra filtros de Associados sem alterar analise", () =
     expect(page).toContain("getAssociadosCardFilterOptions()");
     expect(page).toContain("associatedOptions={associatedOptions}");
     expect(ui).toContain("Filtros de Associados");
-    expect(ui).toContain("defaultOpen={hasAdvancedFilters}");
+    expect(ui).toContain("open={hasAdvancedFilters}");
     expect(ui).toContain("sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4");
     expect(ui).toContain("min-w-0");
     for (const name of ["status", "payment", "receipt", "installmentType", "campaign", "batch"]) {
