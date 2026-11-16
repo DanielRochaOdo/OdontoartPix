@@ -3,6 +3,7 @@ import { PageHeader } from "@/components/page-header";
 import { PageSurface } from "@/components/page-surface";
 import { PunctualityFilters } from "@/components/punctuality-filters";
 import { PunctualityListModal } from "@/components/punctuality-list-modal";
+import { getAssociadosCardFilterOptions } from "@/lib/associados-paginated";
 import {
   getPaymentDateReconciliation, getPaymentDetails, getPaymentMethods, getPaymentReport,
   getPaymentMethodChanges, getPaymentMethodChangeDetails,
@@ -165,10 +166,12 @@ export default async function PunctualityPage({
 
   let report: Awaited<ReturnType<typeof getPaymentReport>>;
   let methods: string[];
+  let associatedOptions: Awaited<ReturnType<typeof getAssociadosCardFilterOptions>>;
   let reconciliation: Awaited<ReturnType<typeof getPaymentDateReconciliation>>;
   try {
-    [report, methods, reconciliation] = await Promise.all([
-      getPaymentReport(filters), getPaymentMethods(), getPaymentDateReconciliation(filters)
+    [report, methods, reconciliation, associatedOptions] = await Promise.all([
+      getPaymentReport(filters), getPaymentMethods(), getPaymentDateReconciliation(filters),
+      getAssociadosCardFilterOptions()
     ]);
   } catch (error) {
     console.error("[PUNCTUALITY_REPORT_FAILED]", { message: error instanceof Error ? error.message : "Erro desconhecido" });
@@ -241,7 +244,8 @@ export default async function PunctualityPage({
         </span>
         <span className="rounded-full border border-subtle bg-surface-primary px-3 py-1.5">Dados reais · atualizados ao abrir</span>
       </div>
-      <PunctualityFilters key={paymentFilterSearch(filters)} filters={filters} methods={methods} />
+      <PunctualityFilters key={paymentFilterSearch(filters)} filters={filters} methods={methods}
+        associatedOptions={associatedOptions} />
 
       <nav aria-label="Relatórios de pontualidade" className="mt-6 flex gap-1 overflow-x-auto border-b border-subtle">
         {TABS.map((tab) => (
