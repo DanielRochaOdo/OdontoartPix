@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import type { PaymentFilters } from "@/lib/payment-punctuality";
 import type { AssociadosFilterOptions } from "@/lib/associados-paginated";
+import { uniqueOptionsByValue } from "@/lib/punctuality-filter-options";
 
 type Option = { value: string; label: string };
 
@@ -22,11 +23,14 @@ function MultiSelectFilter({
   onChange: (values: string[]) => void;
 }) {
   const [searchQuery, setSearchQuery] = useState("");
+  // A identidade é o ID real da entidade, não o texto exibido na lista.
+  // Deduplicar aqui garante um único checkbox por lote, mesmo se a API repetir o vínculo.
+  const uniqueOptions = uniqueOptionsByValue(options);
   const searched = normalized(searchQuery);
-  const visible = searched ? options.filter((option) => normalized(option.label).includes(searched)) : options;
+  const visible = searched ? uniqueOptions.filter((option) => normalized(option.label).includes(searched)) : uniqueOptions;
   const visibleValues = visible.map((option) => option.value);
   const allVisibleSelected = visibleValues.length > 0 && visibleValues.every((value) => values.includes(value));
-  const selectedLabels = options.filter((option) => values.includes(option.value)).map((option) => option.label);
+  const selectedLabels = uniqueOptions.filter((option) => values.includes(option.value)).map((option) => option.label);
   const summary = selectedLabels.length === 0
     ? `Todos: ${label}`
     : selectedLabels.length <= 2
@@ -73,7 +77,7 @@ function MultiSelectFilter({
         )}
         <div className="max-h-60 overflow-y-auto">
           {visible.length === 0
-            ? <p className="px-3 py-2 text-xs text-muted">{options.length ? "Nenhuma opção encontrada." : "Nenhuma opção disponível."}</p>
+            ? <p className="px-3 py-2 text-xs text-muted">{uniqueOptions.length ? "Nenhuma opção encontrada." : "Nenhuma opção disponível."}</p>
             : visible.map((option) => (
               <label key={option.value} className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm text-secondary hover:bg-surface-hover hover:text-primary">
                 <input type="checkbox" checked={values.includes(option.value)}
