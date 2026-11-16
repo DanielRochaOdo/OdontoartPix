@@ -156,9 +156,18 @@ export function GlobalProcessingIndicator() {
   if (!processing.active) return null;
 
   const progress = normalizeProcessingProgress(processing);
-  const percentage = progress.totalItems > 0
-    ? (progress.processedItems / progress.totalItems) * 100
+  const isGeneralSync = Boolean(processing.generalSync);
+  const financial = isGeneralSync ? processing.uniqueUnpaidProgress ?? null : null;
+  // The global synchronization view must not present operational link counts
+  // as financial installments if the unique-count query is unavailable.
+  const displayedProcessed = isGeneralSync ? financial?.processed ?? null : progress.processedItems;
+  const displayedTotal = isGeneralSync ? financial?.total ?? null : progress.totalItems;
+  const percentage = displayedTotal !== null && displayedProcessed !== null && displayedTotal > 0
+    ? Math.min(100, Math.max(0, (displayedProcessed / displayedTotal) * 100))
     : 0;
+  const percentageLabel = isGeneralSync && !financial
+    ? "—"
+    : `${Math.round(percentage)}%`;
   const sourceLabel = processingSourceLabel(processing);
   const deferredCount = processing.deferredJobCount ?? 0;
   const hasErrorReplay = errorReplay.requestedCount > 0;
@@ -168,12 +177,12 @@ export function GlobalProcessingIndicator() {
       <button
         type="button"
         aria-label="Ver processamento ativo"
-        title={`${sourceLabel} — ${Math.round(percentage)}%${deferredCount ? ` · ${deferredCount} aguardando prioridade` : ""}`}
+        title={`${sourceLabel} — ${percentageLabel}${deferredCount ? ` · ${deferredCount} aguardando prioridade` : ""}`}
         onClick={() => setOpen(true)}
         className="global-processing-orb fixed right-5 top-5 z-[60] h-12 w-12 rounded-full border border-[#00E5C3]/80 bg-[#00a98f] shadow-[0_0_18px_rgba(0,229,195,0.7)]"
       >
         <span className="absolute inset-2 rounded-full bg-[#73FFE8] opacity-80 blur-[5px]" />
-        <span className="relative text-xs font-bold text-[#05211e]">{Math.round(percentage)}%</span>
+        <span className="relative text-xs font-bold text-[#05211e]">{percentageLabel}</span>
       </button>
 
       {open ? (
@@ -249,14 +258,14 @@ export function GlobalProcessingIndicator() {
             <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
               <Metric label="Campanhas" value={integer(processing.campaignCount)} />
               <Metric label="Lotes" value={integer(processing.batchCount)} />
-              <Metric label="Processados" value={`${integer(progress.processedItems)}/${integer(progress.totalItems)}`} />
+              <Metric label="Processados" value={displayedProcessed !== null && displayedTotal !== null ? `${integer(displayedProcessed)}/${integer(displayedTotal)}` : "— / —"} />
               <Metric label="Jobs" value={integer(processing.jobCount)} />
             </div>
 
             <div className="mt-5">
               <div className="flex justify-between text-sm">
                 <span>Progresso geral</span>
-                <strong>{percentage.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%</strong>
+                <strong>{isGeneralSync && !financial ? "—" : `${percentage.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%`}</strong>
               </div>
               <div className="mt-2 h-2 overflow-hidden rounded-full bg-[#dce8ef] dark:bg-[#182433]">
                 <div
@@ -267,7 +276,7 @@ export function GlobalProcessingIndicator() {
             </div>
 
             <div className="mt-5 grid grid-cols-2 gap-3 text-sm">
-              <Metric label="Sucessos" value={integer(progress.successItems)} />
+              <Metric label="Sucessos" value={isGeneralSync ? (financial ? integer(financial.processed) : "—") : integer(progress.successItems)} />
               <Metric label="Erros atuais" value={integer(progress.errorItems)} />
             </div>
 

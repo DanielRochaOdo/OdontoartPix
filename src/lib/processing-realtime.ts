@@ -13,6 +13,8 @@ export type ProcessingActiveSnapshot = {
   processedItems: number;
   successItems: number;
   errorItems: number;
+  // Canonical, currently-unpaid installments for the dashboard/global indicator.
+  uniqueUnpaidProgress?: { processed: number; total: number } | null;
   origins?: { manual: number; dashboard: number; unknown: number };
   scopes?: { campaign: number; batch: number; member: number; dashboard: number };
   generalSync?: {
