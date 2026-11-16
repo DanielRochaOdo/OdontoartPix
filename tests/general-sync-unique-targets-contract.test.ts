@@ -28,13 +28,26 @@ describe("general sync per-run canonical dedup contracts", () => {
     expect(service).toContain("runReusedCount + await countReusableResults");
     expect(service).toContain("and not exists (");
     const dashboard = source("src/components/general-sync-button.tsx");
-    expect(dashboard).toContain("return progress.totalItems <= 0 ? 0 : (progress.processedItems / progress.totalItems) * 100;");
     expect(dashboard).toContain('>Registros</p>');
-    expect(dashboard).toContain('<AnimatedNumber value={runCounters?.processedItems ?? 0} /> / ');
-    expect(dashboard).toContain('<AnimatedNumber value={runProgress} formatter={formatPercent} /> processados');
+    expect(dashboard).toContain('<AnimatedNumber value={currentUniqueUnpaid.processed} /> / ');
+    expect(dashboard).toContain('<AnimatedNumber value={currentUniqueUnpaid.total} />');
+    expect(dashboard).toContain('percentage(currentUniqueUnpaid.processed, currentUniqueUnpaid.total)');
+    expect(dashboard).toContain('const appliedSearchQuery = appliedSearchParams.toString()');
+    expect(dashboard).toContain('/api/dashboard/general-sync/unpaid-progress?');
     expect(dashboard).not.toContain("(runCounters?.processedItems ?? 0) + run.reusedCount");
     expect(source("src/lib/general-sync-start.ts")).toContain("snapshotEligibleGeneralSyncLinks(client, { runId, scheduled: false })");
     expect(source("src/lib/general-sync-scheduled-start.ts")).toContain("snapshotEligibleGeneralSyncLinks(client, { runId, scheduled: true })");
+  });
+
+  it("filtra primeiro por lotes/campanhas e deduplica a parcela canonica", () => {
+    const sql = source("src/lib/dashboard-unique-unpaid-progress.ts");
+    expect(sql).toContain("select distinct cbm.target_installment_ref_id as target_id");
+    expect(sql).toContain("canonical.payment_status = 'unpaid'");
+    expect(sql).toContain("c.id = any($2::uuid[])");
+    expect(sql).toContain("cb.id = any($3::uuid[])");
+    expect(sql).toContain("checked.target_installment_ref_id = unpaid_targets.id");
+    expect(sql).toContain("checked.run_id = $1::uuid");
+    expect(sql).not.toContain("checked.source_batch_id");
   });
 
   it("preserva marcador somente ate fim ou cancelamento do ciclo", () => {
