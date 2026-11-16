@@ -8,6 +8,16 @@ export type ReportMetric = "avg" | "rate" | "count" | "amount";
 export type ReportOrder = "desc" | "asc";
 export type GroupKind = "total" | "plan" | "due" | "method";
 
+export type AssociatedReportFilters = {
+  query: string; code: string; installment: string;
+  dueDateFrom: string; dueDateTo: string;
+  paymentDateFrom: string; paymentDateTo: string;
+  status: string[]; payment: string[];
+  paidPending: "all" | "yes" | "no";
+  receipt: string[]; installmentType: string[];
+  campaign: string[]; batch: string[];
+};
+
 export type PaymentFilters = {
   period: "12m" | "30d" | "3m" | "6m" | "all" | "custom";
   dateBasis: ReportDateBasis;
@@ -21,6 +31,7 @@ export type PaymentFilters = {
   order: ReportOrder;
   tab: ReportTab;
   asOf: string;
+  associated: AssociatedReportFilters;
 };
 
 export type ReportGroup = {
@@ -143,6 +154,46 @@ export function readPaymentFilters(
   if (scopes.some((item) => !["paid", "late", "open"].includes(item))) {
     throw new Error("Situação de pagamento inválida.");
   }
+  const dateKeys = ["dueDateFrom", "dueDateTo", "paymentDateFrom", "paymentDateTo"] as const;
+  for (const key of dateKeys) {
+    if (value(key) && !validIsoDate(value(key)!)) throw new Error("Data de Associados inválida.");
+  }
+  if (value("dueDateFrom") && value("dueDateTo") && value("dueDateFrom")! > value("dueDateTo")!) {
+    throw new Error("Intervalo de vencimento inválido.");
+  }
+  if (value("paymentDateFrom") && value("paymentDateTo") && value("paymentDateFrom")! > value("paymentDateTo")!) {
+    throw new Error("Intervalo de pagamento inválido.");
+  }
+
+  const associated: AssociatedReportFilters = {
+    query: (value("query") ?? "").trim(),
+    code: (value("code") ?? "").trim(),
+    installment: (value("installment") ?? "").trim(),
+    dueDateFrom: value("dueDateFrom") ?? "",
+    dueDateTo: value("dueDateTo") ?? "",
+    paymentDateFrom: value("paymentDateFrom") ?? "",
+    paymentDateTo: value("paymentDateTo") ?? "",
+    status: [...new Set(values("status"))],
+    payment: [...new Set(values("payment"))],
+    paidPending: readEnum(value("paidPending"), ["all", "yes", "no"] as const, "all"),
+    receipt: [...new Set(values("receipt"))],
+    installmentType: [...new Set(values("installmentType"))],
+    campaign: [...new Set(values("campaign"))],
+    batch: [...new Set(values("batch"))]
+  };
+  for (const key of ["query", "code", "installment"] as const) {
+    if (associated[key].length > (key === "query" ? 200 : 100)) throw new Error("Filtro textual muito longo.");
+  }
+  for (const key of ["status", "payment", "receipt", "installmentType", "campaign", "batch"] as const) {
+    if (associated[key].length > 200 || associated[key].some((item) => item.length > 120)) {
+      throw new Error("Muitas opções de Associados ou opção muito longa.");
+    }
+  }
+  for (const key of ["campaign", "batch"] as const) {
+    if (associated[key].some((id) => !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(id))) {
+      throw new Error("Campanha ou lote inválido.");
+    }
+  }
   return {
     period, dateBasis, from, to,
     plans: requestedPlans as PaymentPlan[],
@@ -151,7 +202,7 @@ export function readPaymentFilters(
     metric: readEnum(value("metric"), ["avg", "rate", "count", "amount"] as const, "avg"),
     order: readEnum(value("order"), ["desc", "asc"] as const, "desc"),
     tab: readEnum(value("tab"), ["geral", "planos", "vencimentos", "formas", "trocas"] as const, "geral"),
-    asOf: today
+    asOf: today, associated
   };
 }
 
@@ -166,6 +217,15 @@ export function paymentFilterSearch(filters: PaymentFilters, updates: Record<str
   if (filters.period === "custom") {
     if (filters.from) params.set("from", filters.from);
     if (filters.to) params.set("to", filters.to);
+  }
+  const advanced = filters.associated;
+  for (const key of ["query", "code", "installment", "dueDateFrom", "dueDateTo",
+    "paymentDateFrom", "paymentDateTo"] as const) {
+    if (advanced[key]) params.set(key, advanced[key]);
+  }
+  if (advanced.paidPending !== "all") params.set("paidPending", advanced.paidPending);
+  for (const key of ["status", "payment", "receipt", "installmentType", "campaign", "batch"] as const) {
+    for (const item of advanced[key]) params.append(key, item);
   }
   for (const [key, value] of Object.entries(updates)) {
     if (value) params.set(key, value);
@@ -259,7 +319,32 @@ export const PAYMENT_SOURCE_SQL = `with candidate as (
     join campaigns c on c.id = cbm.campaign_id and c.deleted_at is null
     join campaign_batches b on b.id = cbm.batch_id and b.deleted_at is null
     where cbm.target_installment_ref_id = canonical.id and cbm.deleted_at is null
+      and (coalesce(jsonb_array_length($9::jsonb->'campaign'), 0) = 0
+           or cbm.campaign_id::text in (select jsonb_array_elements_text($9::jsonb->'campaign')))
+      and (coalesce(jsonb_array_length($9::jsonb->'batch'), 0) = 0
+           or cbm.batch_id::text in (select jsonb_array_elements_text($9::jsonb->'batch')))
+      and (coalesce(jsonb_array_length($9::jsonb->'status'), 0) = 0
+           or cbm.processing_status in (select jsonb_array_elements_text($9::jsonb->'status')))
   )
+    and (nullif($9::jsonb->>'code', '') is null or m.external_user_code = $9::jsonb->>'code')
+    and (nullif($9::jsonb->>'installment', '') is null
+         or canonical.external_installment_code = $9::jsonb->>'installment')
+    and (
+      nullif($9::jsonb->>'query', '') is null
+      or lower(concat_ws(' ', m.name, m.cpf, m.external_user_code,
+            canonical.external_installment_code, canonical.installment_type,
+            canonical.due_date_text, canonical.payment_date_text,
+            canonical.payment_status, canonical.payment_description))
+         like '%' || lower($9::jsonb->>'query') || '%'
+      or exists (
+        select 1 from campaign_batch_members search_link
+        join campaigns search_campaign on search_campaign.id = search_link.campaign_id and search_campaign.deleted_at is null
+        join campaign_batches search_batch on search_batch.id = search_link.batch_id and search_batch.deleted_at is null
+        where search_link.target_installment_ref_id = canonical.id and search_link.deleted_at is null
+          and lower(concat_ws(' ', search_campaign.name, search_batch.name, search_link.processing_status))
+              like '%' || lower($9::jsonb->>'query') || '%'
+      )
+    )
 ), parsed as (
   select *,
     case
@@ -284,6 +369,28 @@ export const PAYMENT_SOURCE_SQL = `with candidate as (
       else coalesce(nullif(btrim(payment_description), ''), 'Não informado') end as method,
     extract(day from due_date)::int as due_day
   from parsed
+  where (nullif($9::jsonb->>'dueDateFrom', '') is null
+         or due_date >= nullif($9::jsonb->>'dueDateFrom', '')::date)
+    and (nullif($9::jsonb->>'dueDateTo', '') is null
+         or due_date <= nullif($9::jsonb->>'dueDateTo', '')::date)
+    and (nullif($9::jsonb->>'paymentDateFrom', '') is null
+         or payment_date >= nullif($9::jsonb->>'paymentDateFrom', '')::date)
+    and (nullif($9::jsonb->>'paymentDateTo', '') is null
+         or payment_date <= nullif($9::jsonb->>'paymentDateTo', '')::date)
+    and (coalesce(jsonb_array_length($9::jsonb->'payment'), 0) = 0
+         or payment_status in (select jsonb_array_elements_text($9::jsonb->'payment')))
+    and (coalesce(jsonb_array_length($9::jsonb->'receipt'), 0) = 0
+         or (case when payment_status = 'agreed' then '-'
+           else coalesce(nullif(btrim(payment_description), ''), '-') end)
+           in (select jsonb_array_elements_text($9::jsonb->'receipt')))
+    and (coalesce(jsonb_array_length($9::jsonb->'installmentType'), 0) = 0
+         or (case lower(btrim(coalesce(installment_type, '')))
+           when 'clinico' then 'Clínico' when 'orto' then 'Orto' else '-' end)
+           in (select jsonb_array_elements_text($9::jsonb->'installmentType')))
+    and (coalesce($9::jsonb->>'paidPending', 'all') = 'all'
+         or ($9::jsonb->>'paidPending' = 'yes'
+              and payment_status = 'paid' and pending_amount_cents > 0)
+         or ($9::jsonb->>'paidPending' = 'no' and coalesce(pending_amount_cents, 0) <= 0))
 ), selected as (
   select *, case when payment_status = 'unpaid'
       then greatest($6::date - due_date, 0)
@@ -344,7 +451,7 @@ function queryValues(filters: PaymentFilters): unknown[] {
     filters.plans.length ? filters.plans : null,
     filters.dues.length ? filters.dues : null,
     filters.methods.length ? filters.methods : null,
-    filters.asOf, filters.scopes, filters.dateBasis];
+    filters.asOf, filters.scopes, filters.dateBasis, JSON.stringify(filters.associated)];
 }
 
 type GroupRow = {
@@ -406,12 +513,14 @@ export async function getPaymentDateReconciliation(filters: PaymentFilters) {
       count(*) filter (where payment_status = 'paid' and paid_amount_cents is null)::int as missing_amount_rows
     from normalized
     where payment_date is not null and payment_date <= $6::date
+      and $8::text = 'payment'
+      and $7::text[] && array['paid', 'late']::text[]
       and ($1::date is null or payment_date >= $1::date)
       and ($2::date is null or payment_date <= $2::date)
       and ($3::text[] is null or plan = any($3::text[]))
       and ($4::int[] is null or due_day = any($4::int[]))
       and ($5::text[] is null or method = any($5::text[]))
-  `, queryValues(filters).slice(0, 6));
+  `, queryValues(filters));
   const row = result.rows[0];
   return {
     matchedRows: Number(row?.matched_rows ?? 0),
@@ -520,8 +629,8 @@ export async function getPaymentMethodChangeDetails(filters: PaymentFilters, con
       report_amount_cents::float8 as report_amount_cents
     from eligible
     where payment_status = 'paid'
-      and nullif(trim(configured_payment_description), '') = $9::text
-      and nullif(trim(payment_description), '') = $10::text
+      and nullif(trim(configured_payment_description), '') = $10::text
+      and nullif(trim(payment_description), '') = $11::text
     order by days desc, payment_date desc, id
     limit 50
   `, [...queryValues(filters), configured, received]);
@@ -564,10 +673,10 @@ export async function getPaymentDetails(filters: PaymentFilters, kind: GroupKind
       case when payment_date is null then null else to_char(payment_date, 'YYYY-MM-DD') end as payment_date,
       method, configured_payment_description, days, report_amount_cents::float8 as report_amount_cents
     from eligible
-    where ($9::text = 'total'
-      or ($9::text = 'plan' and plan = $10::text)
-      or ($9::text = 'due' and due_day::text = $10::text)
-      or ($9::text = 'method' and method = $10::text))
+    where ($10::text = 'total'
+      or ($10::text = 'plan' and plan = $11::text)
+      or ($10::text = 'due' and due_day::text = $11::text)
+      or ($10::text = 'method' and method = $11::text))
     order by days desc, due_date desc, id
     limit 50
   `, [...queryValues(filters), kind, key]);
