@@ -27,7 +27,12 @@ describe("general sync per-run canonical dedup contracts", () => {
     expect(service).toContain("reuseSuccessfulGeneralSyncTargets(client");
     expect(service).toContain("runReusedCount + await countReusableResults");
     expect(service).toContain("and not exists (");
-    expect(source("src/components/general-sync-button.tsx")).toContain("progress.processedItems + run.reusedCount");
+    const dashboard = source("src/components/general-sync-button.tsx");
+    expect(dashboard).toContain("return progress.totalItems <= 0 ? 0 : (progress.processedItems / progress.totalItems) * 100;");
+    expect(dashboard).toContain('>Registros</p>');
+    expect(dashboard).toContain('<AnimatedNumber value={runCounters?.processedItems ?? 0} /> / ');
+    expect(dashboard).toContain('<AnimatedNumber value={runProgress} formatter={formatPercent} /> processados');
+    expect(dashboard).not.toContain("(runCounters?.processedItems ?? 0) + run.reusedCount");
     expect(source("src/lib/general-sync-start.ts")).toContain("snapshotEligibleGeneralSyncLinks(client, { runId, scheduled: false })");
     expect(source("src/lib/general-sync-scheduled-start.ts")).toContain("snapshotEligibleGeneralSyncLinks(client, { runId, scheduled: true })");
   });
