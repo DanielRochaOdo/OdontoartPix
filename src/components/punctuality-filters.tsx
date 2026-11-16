@@ -231,7 +231,7 @@ export function PunctualityFilters({
           </label>
         </div>
       ) : null}
-      <details defaultOpen={hasAdvancedFilters}
+      <details open={hasAdvancedFilters}
         className="mt-5 min-w-0 rounded-xl border border-subtle bg-surface-secondary/60 p-3 sm:p-4">
         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold text-primary">
           <span>Filtros de Associados <span className="text-xs font-normal text-muted">(complementares)</span></span>
