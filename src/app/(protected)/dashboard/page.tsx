@@ -270,6 +270,11 @@ export default async function DashboardPage({
                   icon={card.label === "Pagos" ? "paid" : "paidValue"}
                   detailEndpoint={card.label === "Pagos" ? `/api/dashboard/paid-details?campaignIds=${encodeURIComponent(selectedCampaignIds.join(","))}&batchIds=${encodeURIComponent(selectedBatchIds.join(","))}` : undefined}
                   scopeKey={dashboardScopeKey}
+                  analyticsHref={card.label === "Valor pago"
+                    ? "/visao-analitica?" + new URLSearchParams([
+                        ...selectedCampaignIds.map((id) => ["campaign", id]),
+                        ...selectedBatchIds.map((id) => ["batch", id])
+                      ]).toString() : undefined}
                   valueClassName={card.label === "Valor pago" ? "text-brand " : undefined}
                 />
               ) : card.label === "Erros" ? (
