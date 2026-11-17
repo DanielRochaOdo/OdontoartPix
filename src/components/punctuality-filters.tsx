@@ -14,7 +14,7 @@ function normalized(value: string) {
 
 // Mesmo padrão de interação de Associados: pesquisa, seleção múltipla,
 // selecionar todos os resultados visíveis e limpar seleção.
-function MultiSelectFilter({
+export function MultiSelectFilter({
   label, values, options, onChange
 }: {
   label: string;
