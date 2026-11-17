@@ -21,9 +21,11 @@ export function resolvePersistencePilot(input: {
   splitPipelineEnabled: boolean;
   slidingWindowV2Enabled: boolean;
   pilotEnabled: boolean;
+  activeGeneralSync: boolean;
 }): { concurrency: number; pilot: boolean } {
   const { job } = input;
   const pilot = input.pilotEnabled &&
+    !input.activeGeneralSync &&
     input.configuredConcurrency === 1 &&
     input.splitPipelineEnabled &&
     input.slidingWindowV2Enabled &&
