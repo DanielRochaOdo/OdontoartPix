@@ -56,3 +56,39 @@ nem renderização do navegador.
 - Registrar p50 e p95 de `request_data_total`, de cada `facet_*` e de
   `metrics`, `groups`, `page`, bem como o pico de `poolWaiting`.
 - Somente depois desse baseline iniciar cache, seletividade por aba e refatoração SQL.
+
+## Fase 2a — cache local de catálogo após a primeira medição
+
+**Linha de base de 17/11/2026:** 4 requisições completas de panorama,
+`request_data_total` P50=3109,9 ms e P95=3260,9 ms; pico de
+`poolWaiting`=6. Em média, as 6 facetas levaram 1,2–3,1 segundos
+incluindo espera no pool, enquanto as 3 consultas analíticas levaram
+~2,1–2,5 segundos. O P95 com N=4 é praticamente o máximo da amostra.
+
+O módulo agora conserva **somente** a resposta global, sem filtros, de
+`getAssociadosCardFilterOptions({})` por 180 segundos **após** concluir
+a busca. Uma requisição simultânea aguarda o mesmo carregamento
+(`singleflight`), e uma falha não é armazenada.
+
+A aba continua sempre executando `metrics`, `groups` e `page`
+diretamente no banco. Valores, status, somatórios e filtros financeiros
+não são armazenados no cache; o SQL do catálogo permaneceu inalterado.
+
+As etapas adicionais no log são `catalog_cache_hit`,
+`catalog_cache_miss` e `catalog_inflight_wait`. Em acertos, os
+eventos `facet_*` desaparecem porque as seis consultas realmente
+deixam de ser executadas.
+
+**Comparação pós-deploy:** antes e depois da publicação, medir
+3–5 aplicações de filtros no mesmo módulo, ignorando o primeiro acesso
+(cache frio). Comparar `request_data_total`, `poolWaiting` e
+número de `facet_*`; nunca somar durações de consultas paralelas.
+Primeiro acesso, ou acesso após TTL, ainda pode executar as seis facetas.
+
+Limitações assumidas: cada processo/contêiner possui seu cache e as
+opções podem ficar desatualizadas por até três minutos após mudanças.
+Não existe Redis nem invalidação distribuída. A presença de mais
+instâncias pode produzir um acerto e uma perda independentes.
+
+Apenas após medir este ganho iniciar o carregamento seletivo por aba
+(Fase 3) e o SQL *filter-first* com comparação de IDs canônicos (Fase 4).
