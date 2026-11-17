@@ -1,7 +1,7 @@
 -- Evidencias compactas das mudancas de status financeiro da parcela canonica.
 -- Nao altera o valor ou o status de pagamento utilizado pelo Dashboard.
-create table if not exists payment_hour_observations (
-  target_installment_id uuid primary key references member_target_installments(id) on delete cascade,
+create table if not exists public.payment_hour_observations (
+  target_installment_id uuid primary key references public.member_target_installments(id) on delete cascade,
   last_unpaid_at timestamptz,
   first_paid_at timestamptz,
   updated_at timestamptz not null default now(),
@@ -10,8 +10,12 @@ create table if not exists payment_hour_observations (
   )
 );
 
-create or replace function track_canonical_payment_hour_v1()
-returns trigger language plpgsql as $$
+create or replace function public.track_canonical_payment_hour_v1()
+returns trigger
+language plpgsql
+security definer
+set search_path = pg_catalog, public, pg_temp
+as $$
 declare
   v_at timestamptz;
   v_previous_status text;
@@ -24,7 +28,7 @@ begin
 
   if new.payment_status = 'unpaid' then
     -- Mantem a ultima evidencia nao paga, inclusive em leituras repetidas.
-    insert into payment_hour_observations (
+    insert into public.payment_hour_observations (
       target_installment_id, last_unpaid_at, first_paid_at, updated_at
     ) values (new.id, v_at, null, now())
     on conflict (target_installment_id) do update
@@ -36,7 +40,7 @@ begin
   elsif new.payment_status = 'paid'
     and v_previous_status is distinct from 'paid' then
     -- Primeira leitura ja paga: so existe o limite final (faixa indisponivel).
-    insert into payment_hour_observations (
+    insert into public.payment_hour_observations (
       target_installment_id, last_unpaid_at, first_paid_at, updated_at
     ) values (new.id, null, v_at, now())
     on conflict (target_installment_id) do update
@@ -51,26 +55,41 @@ begin
 end;
 $$;
 
-drop trigger if exists trg_track_canonical_payment_hour on member_target_installments;
+-- Impede a criacao de triggers arbitrarios que invoquem esta funcao privilegiada.
+-- O trigger legitimo abaixo e criado pelo proprio administrador do schema.
+revoke all on function public.track_canonical_payment_hour_v1() from public;
+
+drop trigger if exists trg_track_canonical_payment_hour on public.member_target_installments;
 create trigger trg_track_canonical_payment_hour
 after insert or update of payment_status, financial_observed_at, last_erp_status_at
-on member_target_installments
+on public.member_target_installments
 for each row
-execute function track_canonical_payment_hour_v1();
+execute function public.track_canonical_payment_hour_v1();
 
 -- Preserva a ultima leitura nao paga ja existente para pagamentos futuros.
 -- Parcelas historicas ja pagas nao recebem um horario artificial no backfill.
-insert into payment_hour_observations (target_installment_id, last_unpaid_at)
+insert into public.payment_hour_observations (target_installment_id, last_unpaid_at)
 select id, coalesce(financial_observed_at, last_erp_status_at, updated_at)
-from member_target_installments
+from public.member_target_installments
 where payment_status = 'unpaid'
   and coalesce(financial_observed_at, last_erp_status_at, updated_at) is not null
 on conflict (target_installment_id) do nothing;
 
 create index if not exists payment_hour_observations_first_paid_idx
-  on payment_hour_observations(first_paid_at)
+  on public.payment_hour_observations(first_paid_at)
   where first_paid_at is not null;
 
-insert into schema_migrations(version, name)
+-- O aplicativo consulta as observacoes, mas nao precisa modifica-las.
+-- A funcao de trigger executa com as permissoes do proprietario da migracao.
+-- Mesmo padrao de role previsto na migracao 037.
+do $$
+begin
+  if exists (select 1 from pg_roles where rolname = 'odontoart_pix_app') then
+    grant select on table public.payment_hour_observations to odontoart_pix_app;
+  end if;
+end;
+$$;
+
+insert into public.schema_migrations(version, name)
 values (38, 'canonical_payment_hour_observations')
 on conflict (version) do nothing;

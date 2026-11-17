@@ -109,4 +109,42 @@ describeDatabase("Visão Analítica: conciliação e horários (PostgreSQL rollb
       expect(r.rows[0]!.hour).toBe("unavailable");
     });
   });
+  it("registra mudanca de pagamento mesmo com usuario de aplicativo sem INSERT na tabela de horarios", async () => {
+    await withRollback(async (client) => {
+      const c = await campaign(client), b = await batch(client, c), m = await member(client);
+      const target = await link(client, c, b, m, "analytics-runtime-role");
+      const role = "analytics_role_" + randomUUID().replaceAll("-", "").slice(0, 15);
+      await client.query(`create role "${role}" nologin`);
+      await client.query(`grant usage on schema public to "${role}"`);
+      await client.query(`grant select, update on member_target_installments to "${role}"`);
+      await client.query(`grant select on payment_hour_observations to "${role}"`);
+      await client.query(`set local role "${role}"`);
+      const privileges = await client.query<{ allowed: boolean }>(
+        "select has_table_privilege(current_user, 'payment_hour_observations', 'INSERT') as allowed"
+      );
+      expect(privileges.rows[0]!.allowed).toBe(false);
+      const executeAccess = await client.query<{ allowed: boolean }>(
+        "select has_function_privilege(current_user, 'public.track_canonical_payment_hour_v1()', 'EXECUTE') as allowed"
+      );
+      expect(executeAccess.rows[0]!.allowed).toBe(false);
+
+      await client.query(
+        "update member_target_installments set payment_status = 'unpaid', financial_observed_at = $2::timestamptz where id = $1::uuid",
+        [target, "2026-11-17 09:59:00-03"]
+      );
+      await client.query(
+        "update member_target_installments set payment_status = 'paid', financial_observed_at = $2::timestamptz where id = $1::uuid",
+        [target, "2026-11-17 10:01:00-03"]
+      );
+      const rows = await client.query<{ last_unpaid_at: Date | null; first_paid_at: Date | null }>(
+        "select last_unpaid_at, first_paid_at from payment_hour_observations where target_installment_id = $1::uuid",
+        [target]
+      );
+      expect(rows.rows).toHaveLength(1);
+      expect(rows.rows[0]!.last_unpaid_at).not.toBeNull();
+      expect(rows.rows[0]!.first_paid_at).not.toBeNull();
+      await client.query("reset role");
+    });
+  });
+
 });
