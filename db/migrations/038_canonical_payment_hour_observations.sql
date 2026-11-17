@@ -15,7 +15,7 @@ returns trigger
 language plpgsql
 security definer
 set search_path = pg_catalog, public, pg_temp
-as $
+as $$
 declare
   v_at timestamptz;
   v_previous_status text;
@@ -78,13 +78,13 @@ create index if not exists payment_hour_observations_first_paid_idx
 -- O aplicativo consulta as observacoes, mas nao precisa modifica-las.
 -- A funcao de trigger executa com as permissoes do proprietario da migracao.
 -- Mesmo padrao de role previsto na migracao 037.
-do $
+do $$
 begin
   if exists (select 1 from pg_roles where rolname = 'odontoart_pix_app') then
     grant select on table payment_hour_observations to odontoart_pix_app;
   end if;
 end;
-$;
+$$;
 
 insert into schema_migrations(version, name)
 values (38, 'canonical_payment_hour_observations')
