@@ -1,11 +1,9 @@
 import { dbQuery } from "@/lib/db/pool";
 import type { AssociadosFilters } from "@/lib/associados-paginated";
 
-export const ANALYTIC_HOURS = [
-  "00-02", "02-04", "04-06", "06-08", "08-10", "10-12",
-  "12-14", "14-16", "16-18", "18-20", "20-22", "22-00"
-] as const;
-export type AnalyticHour = typeof ANALYTIC_HOURS[number] | "between" | "unavailable";
+export { ANALYTIC_HOURS } from "@/lib/analytics-hour-buckets";
+import { ANALYTIC_HOURS } from "@/lib/analytics-hour-buckets";
+export type { AnalyticHour } from "@/lib/analytics-hour-buckets";
 export type AnalyticPunctuality = "all" | "early" | "on-time" | "late" | "unavailable";
 
 export type AnalyticsFilters = AssociadosFilters & {
