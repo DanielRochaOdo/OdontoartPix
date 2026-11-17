@@ -38,7 +38,7 @@ export async function GET(request: Request) {
     const sheet = XLSX.utils.aoa_to_sheet([
       ["Associado", "Código associado", "CPF", "Parcela", "Tipo de parcela",
         "Campanhas", "Lotes", "Vencimento", "Data do pagamento",
-        "Faixa de horário", "Horário estimado", "Pontualidade",
+        "Faixa de detecção", "Horário de detecção estimado", "Origem do horário", "Pontualidade",
         "Forma de recebimento", "Valor da parcela (R$)",
         "Valor recebido (R$)", "Valor pendente (R$)"],
       ...rows.map((row) => [
@@ -47,14 +47,16 @@ export async function GET(request: Request) {
         row.campaigns ?? "", row.batches ?? "",
         humanDate(row.dueDate), humanDate(row.paymentDate),
         hours(row.hourBucket), row.estimatedHour ?? "",
+        row.hourSource === "observed-window" ? "Janela observada" :
+          row.hourSource === "erp-detection" ? "Confirmação no ERP" : "Indisponível",
         punctuality(row.delayDays), row.paymentMethod ?? "",
         row.amountCents / 100, (row.paidAmountCents ?? 0) / 100, row.pendingAmountCents / 100
       ])
     ]);
-    sheet["!cols"] = [28, 18, 19, 16, 17, 30, 30, 16, 20, 20, 20, 23, 31, 24, 24, 24]
+    sheet["!cols"] = [28, 18, 19, 16, 17, 30, 30, 16, 20, 20, 26, 22, 23, 31, 24, 24, 24]
       .map((wch) => ({ wch }));
-    sheet["!autofilter"] = { ref: "A1:P" + (rows.length + 1) };
-    for (let col = 13; col <= 15; col++) {
+    sheet["!autofilter"] = { ref: "A1:Q" + (rows.length + 1) };
+    for (let col = 14; col <= 16; col++) {
       for (let row = 2; row <= rows.length + 1; row++) {
         const cell = sheet[XLSX.utils.encode_cell({ r: row - 1, c: col })];
         if (cell) cell.z = '"R$" #,##0.00';
