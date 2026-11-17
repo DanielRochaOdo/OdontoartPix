@@ -64,12 +64,12 @@ describe("piloto de duas persistencias simultaneas", () => {
     })));
     await Promise.resolve();
     expect(active).toBe(2);
-    while (started < 5) {
+    for (let i = 0; i < 3; i++) {
       release.shift()!();
-      await Promise.resolve();
-      await Promise.resolve();
+      for (let turn = 0; turn < 12; turn++) await Promise.resolve();
+      expect(started).toBe(3 + i);
     }
-    for (const resolve of release) resolve();
+    for (const resolve of release.splice(0)) resolve();
     await Promise.all(writes);
     expect(peak).toBe(2);
     expect(active).toBe(0);
