@@ -183,11 +183,11 @@ export default async function AnalyticsPage({
         filters={filters} label={(key) => labelPunctuality[key] ?? key}
         change={(key) => ({ punctuality: key })} />
       <GroupChart title="Recebimentos por dia da semana" groups={groups} kind="weekday"
-        filters={filters} label={(key) => WEEKDAYS[Number(key)] ?? key} limit={7} />
+        filters={filters} label={(key) => WEEKDAYS[Number(key)] ?? key} limit={7} change={(key) => ({ weekday: key })} />
     </div>}
     {filters.tab === "horarios" && <div className="mt-4 grid gap-4 lg:grid-cols-2">
       <GroupChart title="Recebimentos por dia da semana" groups={groups} kind="weekday"
-        filters={filters} label={(key) => WEEKDAYS[Number(key)] ?? key} limit={7} />
+        filters={filters} label={(key) => WEEKDAYS[Number(key)] ?? key} limit={7} change={(key) => ({ weekday: key })} />
       <GroupChart title="Horários e pontualidade" description="Distribuição da pontualidade neste período"
         groups={groups} kind="punctuality" filters={filters}
         label={(key) => labelPunctuality[key] ?? key} change={(key) => ({ punctuality: key })} />
@@ -197,16 +197,16 @@ export default async function AnalyticsPage({
         filters={filters} label={(key) => labelPunctuality[key] ?? key}
         change={(key) => ({ punctuality: key })} />
       <GroupChart title="Formas de recebimento" groups={groups} kind="method"
-        filters={filters} label={(key) => key} limit={12} />
+        filters={filters} label={(key) => key} limit={12} change={(key) => ({ receipt: key })} />
     </div>}
     {filters.tab === "comparativos" && <div className="mt-5 grid gap-4 lg:grid-cols-2">
       <GroupChart title="Recebimentos por mês" groups={groups} kind="month" filters={filters}
         label={(key) => key.slice(5, 7) + "/" + key.slice(0, 4)}
         change={(key) => ({ from: key + "-01", to: new Date(Date.parse(nextMonth(key)) - 86400000).toISOString().slice(0, 10) })} />
       <GroupChart title="Recebimentos por dia da semana" groups={groups} kind="weekday"
-        filters={filters} label={(key) => WEEKDAYS[Number(key)] ?? key} limit={7} />
+        filters={filters} label={(key) => WEEKDAYS[Number(key)] ?? key} limit={7} change={(key) => ({ weekday: key })} />
       <GroupChart title="Formas de pagamento" groups={groups} kind="method"
-        filters={filters} label={(key) => key} limit={12} />
+        filters={filters} label={(key) => key} limit={12} change={(key) => ({ receipt: key })} />
       <GroupChart title="Pontualidade" groups={groups} kind="punctuality"
         filters={filters} label={(key) => labelPunctuality[key] ?? key}
         change={(key) => ({ punctuality: key })} />
