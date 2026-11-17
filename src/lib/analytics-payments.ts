@@ -12,6 +12,7 @@ export type AnalyticsFilters = AssociadosFilters & {
   from: string;
   to: string;
   hour: string;
+  weekday: string;
   punctuality: AnalyticPunctuality;
   amountMin: string;
   amountMax: string;
@@ -52,6 +53,8 @@ export function readAnalyticsFilters(params: Record<string, string | string[] | 
   if (single("paymentDateFrom") && single("paymentDateTo") && single("paymentDateFrom") > single("paymentDateTo")) throw new Error("Datas de pagamento inválidas.");
   const hour = single("hour") || "all";
   if (!["all", ...ANALYTIC_HOURS, "between", "unavailable"].includes(hour)) throw new Error("Faixa de horário inválida.");
+  const weekday = single("weekday") || "all";
+  if (!["all", "1", "2", "3", "4", "5", "6", "7"].includes(weekday)) throw new Error("Dia da semana inválido.");
   const punctuality = single("punctuality") || "all";
   if (!["all", "early", "on-time", "late", "unavailable"].includes(punctuality)) throw new Error("Pontualidade inválida.");
   const amountMin = single("amountMin"), amountMax = single("amountMax");
@@ -61,7 +64,7 @@ export function readAnalyticsFilters(params: Record<string, string | string[] | 
   }
   const page = Math.max(1, Math.min(100000, Number.parseInt(single("page"), 10) || 1));
   const raw: AnalyticsFilters = {
-    from, to, hour, punctuality: punctuality as AnalyticPunctuality, amountMin, amountMax, page,
+    from, to, hour, weekday, punctuality: punctuality as AnalyticPunctuality, amountMin, amountMax, page,
     tab: (["panorama", "horarios", "comportamento", "comparativos", "faturas"].includes(single("tab"))
       ? single("tab") : "panorama") as AnalyticsFilters["tab"],
     query: "", code: "", installment: "", dueDateFrom: "", dueDateTo: "",
@@ -85,7 +88,7 @@ export function readAnalyticsFilters(params: Record<string, string | string[] | 
 
 export function analyticsSearch(filters: AnalyticsFilters, changes: Record<string, string | number | null> = {}) {
   const p = new URLSearchParams();
-  for (const key of ["from", "to", "hour", "punctuality", "amountMin", "amountMax",
+  for (const key of ["from", "to", "hour", "weekday", "punctuality", "amountMin", "amountMax",
     "query", "code", "installment", "dueDateFrom", "dueDateTo",
     "paymentDateFrom", "paymentDateTo", "paidPending"] as const) {
     const value = filters[key];
@@ -150,7 +153,7 @@ export const ANALYTICS_BASE_SQL = `with scoped_links as (
          history.created_at as historical_created_at
   from linked
   join member_target_installments t on t.id = linked.target_installment_ref_id
-  join members m on m.id = t.member_id and m.deleted_at is null
+  left join members m on m.id = t.member_id
   left join payment_hour_observations o on o.target_installment_id = t.id
   left join lateral (
     select min(mi.created_at) as created_at
@@ -228,6 +231,7 @@ export const ANALYTICS_BASE_SQL = `with scoped_links as (
     and ($18::text = 'all' or punctuality = $18::text)
     and ($19::numeric is null or paid_amount_cents >= $19::numeric)
     and ($20::numeric is null or paid_amount_cents <= $20::numeric)
+    and ($21::text = 'all' or extract(isodow from payment_date)::int::text = $21::text)
 )`;
 
 const METRICS_SQL = ANALYTICS_BASE_SQL + `
@@ -272,7 +276,7 @@ select id, member_id as "memberId", member_name as "memberName", cpf, external_u
        delay_days as "delayDays", punctuality, hour_bucket as "hourBucket",
        estimated_hour as "estimatedHour"
 from filtered order by payment_date desc nulls last, id asc
-limit $21::int offset $22::int`;
+limit $22::int offset $23::int`;
 
 export type AnalyticsGroup = { kind: string; key: string; count: number; amountCents: number };
 export type AnalyticsMetric = {
@@ -299,7 +303,7 @@ function sqlArgs(f: AnalyticsFilters) {
     f.dueDateFrom || null, f.dueDateTo || null, f.paymentDateFrom || null,
     f.paymentDateTo || null, f.status ?? [], f.payment ?? [], f.paidPending ?? "all",
     f.receipt ?? [], f.installmentType ?? [], f.from || null, f.to || null,
-    f.hour, f.punctuality, money(f.amountMin), money(f.amountMax)
+    f.hour, f.punctuality, money(f.amountMin), money(f.amountMax), f.weekday
   ];
 }
 
