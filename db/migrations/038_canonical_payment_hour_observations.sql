@@ -1,7 +1,7 @@
 -- Evidencias compactas das mudancas de status financeiro da parcela canonica.
 -- Nao altera o valor ou o status de pagamento utilizado pelo Dashboard.
-create table if not exists payment_hour_observations (
-  target_installment_id uuid primary key references member_target_installments(id) on delete cascade,
+create table if not exists public.payment_hour_observations (
+  target_installment_id uuid primary key references public.member_target_installments(id) on delete cascade,
   last_unpaid_at timestamptz,
   first_paid_at timestamptz,
   updated_at timestamptz not null default now(),
@@ -10,7 +10,7 @@ create table if not exists payment_hour_observations (
   )
 );
 
-create or replace function track_canonical_payment_hour_v1()
+create or replace function public.track_canonical_payment_hour_v1()
 returns trigger
 language plpgsql
 security definer
@@ -55,12 +55,12 @@ begin
 end;
 $$;
 
-drop trigger if exists trg_track_canonical_payment_hour on member_target_installments;
+drop trigger if exists trg_track_canonical_payment_hour on public.member_target_installments;
 create trigger trg_track_canonical_payment_hour
 after insert or update of payment_status, financial_observed_at, last_erp_status_at
-on member_target_installments
+on public.member_target_installments
 for each row
-execute function track_canonical_payment_hour_v1();
+execute function public.track_canonical_payment_hour_v1();
 
 -- Preserva a ultima leitura nao paga ja existente para pagamentos futuros.
 -- Parcelas historicas ja pagas nao recebem um horario artificial no backfill.
@@ -72,7 +72,7 @@ where payment_status = 'unpaid'
 on conflict (target_installment_id) do nothing;
 
 create index if not exists payment_hour_observations_first_paid_idx
-  on payment_hour_observations(first_paid_at)
+  on public.payment_hour_observations(first_paid_at)
   where first_paid_at is not null;
 
 -- O aplicativo consulta as observacoes, mas nao precisa modifica-las.
@@ -81,11 +81,11 @@ create index if not exists payment_hour_observations_first_paid_idx
 do $$
 begin
   if exists (select 1 from pg_roles where rolname = 'odontoart_pix_app') then
-    grant select on table payment_hour_observations to odontoart_pix_app;
+    grant select on table public.payment_hour_observations to odontoart_pix_app;
   end if;
 end;
 $$;
 
-insert into schema_migrations(version, name)
+insert into public.schema_migrations(version, name)
 values (38, 'canonical_payment_hour_observations')
 on conflict (version) do nothing;
