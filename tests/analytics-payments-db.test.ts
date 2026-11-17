@@ -123,6 +123,10 @@ describeDatabase("Visão Analítica: conciliação e horários (PostgreSQL rollb
         "select has_table_privilege(current_user, 'payment_hour_observations', 'INSERT') as allowed"
       );
       expect(privileges.rows[0]!.allowed).toBe(false);
+      const executeAccess = await client.query<{ allowed: boolean }>(
+        "select has_function_privilege(current_user, 'public.track_canonical_payment_hour_v1()', 'EXECUTE') as allowed"
+      );
+      expect(executeAccess.rows[0]!.allowed).toBe(false);
 
       await client.query(
         "update member_target_installments set payment_status = 'unpaid', financial_observed_at = $2::timestamptz where id = $1::uuid",
