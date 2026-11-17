@@ -114,6 +114,10 @@ function GroupChart({ title, description, groups, kind, filters, label, change, 
   </section>;
 }
 
+function daysBefore(iso: string, days: number) {
+  return new Date(Date.parse(iso + "T12:00:00Z") - days * 86400000).toISOString().slice(0, 10);
+}
+
 function nextMonth(key: string) {
   const [year, month] = key.split("-").map(Number);
   const date = new Date(Date.UTC(year, month, 1));
@@ -149,12 +153,26 @@ export default async function AnalyticsPage({
     </PageSurface>;
   }
   const { metrics, groups, rows } = report;
+  const nowIso = readAnalyticsFilters({}).to;
   const paginationStart = (filters.page - 1) * report.pageSize;
   const pages = Math.max(1, Math.ceil(metrics.installmentCount / report.pageSize));
 
   return <PageSurface className="lg:px-5 xl:px-6">
     <PageHeader eyebrow="Recebimentos" title="Visão Analítica"
       description="Entenda os horários, a pontualidade e o comportamento dos pagamentos." />
+    <div className="mt-5 flex flex-wrap items-center gap-2">
+      <span className="mr-1 text-xs font-semibold text-secondary">Períodos rápidos:</span>
+      {([
+        ["Hoje", nowIso, nowIso],
+        ["Últimos 7 dias", daysBefore(nowIso, 6), nowIso],
+        ["Últimos 30 dias", daysBefore(nowIso, 29), nowIso],
+        ["Mês atual", nowIso.slice(0, 7) + "-01", nowIso]
+      ] as const).map(([label, from, to]) => <Link key={label}
+        href={"/visao-analitica?" + analyticsSearch(filters, { from, to, page: 1 })}
+        className="rounded-lg border border-default px-3 py-1.5 text-xs font-semibold text-secondary hover:bg-surface-hover">
+        {label}
+      </Link>)}
+    </div>
     <AnalyticsPaymentFilters filters={filters} options={options} />
     <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
       <Stat title="Valor recebido" value={money(metrics.paidAmountCents)} />
