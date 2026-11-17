@@ -250,6 +250,8 @@ select kind, key, count(*)::int as count,
 from (
   select 'hour' as kind, hour_bucket as key, paid_amount_cents from filtered
   union all
+  select 'hour-source', hour_source, paid_amount_cents from filtered
+  union all
   select 'punctuality', punctuality, paid_amount_cents from filtered
   union all
   select 'weekday', extract(isodow from payment_date)::int::text, paid_amount_cents from filtered where payment_date is not null
