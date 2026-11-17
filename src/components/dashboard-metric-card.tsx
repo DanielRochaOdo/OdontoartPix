@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { ManualDashboardIcon, type ManualDashboardIconName } from "@/components/manual-dashboard-icon";
 import { formatCurrencyBR } from "@/lib/money";
 
@@ -37,6 +38,7 @@ export function DashboardMetricCard({
   icon,
   detailEndpoint,
   scopeKey = "all",
+  analyticsHref,
   valueClassName = "text-primary "
 }: {
   label: string;
@@ -46,6 +48,7 @@ export function DashboardMetricCard({
   icon: ManualDashboardIconName;
   detailEndpoint?: string;
   scopeKey?: string;
+  analyticsHref?: string;
   valueClassName?: string;
 }) {
   const storageKey = `dashboard-metric-last:${label}:${scopeKey}`;
@@ -206,6 +209,12 @@ export function DashboardMetricCard({
                     <p className="mt-1 text-[10px] text-muted">Um associado é contado uma vez, mesmo com várias parcelas pagas.</p>
                   </div>
                 </div>
+                {analyticsHref ? <div className="mt-4 flex justify-end">
+                  <Link href={analyticsHref} onClick={() => setModalOpen(false)}
+                    className="rounded-lg border border-default bg-surface-secondary px-4 py-2 text-xs font-semibold text-brand hover:bg-surface-hover">
+                    Abrir Visão Analítica
+                  </Link>
+                </div> : null}
                 <div className="mt-3 rounded-xl border border-subtle bg-surface-secondary p-4">
                   <p className="text-xs text-secondary">Última leitura geral</p>
                   <p className="mt-1 font-medium">{previous === null ? "Não disponível" : formatCurrencyBR(previous)}</p>
