@@ -40,7 +40,11 @@ begin
       target_installment_id, last_unpaid_at, first_paid_at, updated_at
     ) values (new.id, null, v_at, now())
     on conflict (target_installment_id) do update
-      set first_paid_at = excluded.first_paid_at,
+      set last_unpaid_at = case
+            when payment_hour_observations.last_unpaid_at <= excluded.first_paid_at
+              then payment_hour_observations.last_unpaid_at
+            else null end,
+          first_paid_at = excluded.first_paid_at,
           updated_at = now();
   end if;
   return new;
