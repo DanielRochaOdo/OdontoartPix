@@ -309,20 +309,27 @@ export function analyticsSqlArgs(f: AnalyticsFilters) {
 
 export async function getAnalyticsReport(filters: AnalyticsFilters, trace?: AnalyticsPerfTrace | null) {
   const args = analyticsSqlArgs(filters);
-  // Preserve existing query semantics and concurrency: measurement only.
+  // Financial metrics remain live and identical on every tab.
+  // The invoice table is rendered only on "faturas"; charts are rendered
+  // only on the other tabs. Avoid the unused third query in each case.
+  // All SQL, canonical installment deduplication and search semantics stay unchanged.
   const measure = <T>(stage: string, operation: () => Promise<T>) =>
     trace ? trace.measure(stage, operation) : operation();
   const [metrics, groups, page] = await Promise.all([
     measure("metrics", () => dbQuery<AnalyticsMetric>(METRICS_SQL, args)),
-    measure("groups", () => dbQuery<AnalyticsGroup>(GROUP_SQL, args)),
-    measure("page", () => dbQuery<AnalyticsRow>(
-      PAGE_SQL, [...args, ANALYTICS_PAGE_SIZE, (filters.page - 1) * ANALYTICS_PAGE_SIZE]
-    ))
+    filters.tab === "faturas"
+      ? Promise.resolve(null)
+      : measure("groups", () => dbQuery<AnalyticsGroup>(GROUP_SQL, args)),
+    filters.tab === "faturas"
+      ? measure("page", () => dbQuery<AnalyticsRow>(
+          PAGE_SQL, [...args, ANALYTICS_PAGE_SIZE, (filters.page - 1) * ANALYTICS_PAGE_SIZE]
+        ))
+      : Promise.resolve(null)
   ]);
   return {
     metrics: metrics.rows[0]!,
-    groups: groups.rows,
-    rows: page.rows,
+    groups: groups?.rows ?? [],
+    rows: page?.rows ?? [],
     page: filters.page,
     pageSize: ANALYTICS_PAGE_SIZE
   };
