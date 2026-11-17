@@ -78,7 +78,7 @@ describe("Visao Analitica: cache de catalogo de filtros", () => {
     const source = readFileSync("src/lib/analytics-filter-catalog.ts", "utf8");
     const page = readFileSync("src/app/(protected)/visao-analitica/page.tsx", "utf8");
 
-    expect(source).toContain("getAssociadosCardFilterOptions({}, trace)");
+    expect(source).toContain("getAnalyticsGlobalFilterOptions(trace)");
     expect(source).not.toContain("getAnalyticsReport");
     expect(source).not.toContain("ANALYTICS_BASE_SQL");
     expect(page).toContain("getAnalyticsReport(filters, trace)");
