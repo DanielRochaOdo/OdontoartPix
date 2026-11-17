@@ -92,3 +92,33 @@ instâncias pode produzir um acerto e uma perda independentes.
 
 Apenas após medir este ganho iniciar o carregamento seletivo por aba
 (Fase 3) e o SQL *filter-first* com comparação de IDs canônicos (Fase 4).
+
+## Fase 3 — consultas seletivas por aba
+
+**Validação após o cache:** em quatro carregamentos de Panorama foram observados
+3 `catalog_cache_hit` e 1 `catalog_cache_miss`; o P50 conjunto de
+`request_data_total` foi 732,4 ms (amostra pequena e misturada). O cache
+de opções evitou as 6 consultas de facetas nos 3 acertos, mas as 3 consultas
+analíticas ainda foram chamadas mesmo quando sua resposta não era exibida.
+
+Agora `getAnalyticsReport` executa sempre a consulta `metrics` e apenas
+uma segunda consulta, dependendo da aba:
+
+| Abas | Queries | Não executa |
+|---|---|---|
+| Panorama, Horários, Comportamento, Comparativos | `metrics` + `groups` | `page` (50 faturas) |
+| Faturas | `metrics` + `page` | `groups` (gráficos) |
+
+Retornos `rows: []` fora da aba Faturas e `groups: []` na aba Faturas
+não afetam componentes, pois essas informações já não eram renderizadas
+nas respectivas abas. Todas as métricas financeiras e parâmetros SQL
+permanecem sem modificações; `ANALYTICS_BASE_SQL`, `METRICS_SQL`,
+`GROUP_SQL`, `PAGE_SQL`, as 21 entradas de filtro e `getAnalyticsExportRows`
+são preservados. A contagem e o pagamento da parcela canônica seguem
+independentes do número de lotes associados.
+
+O rastreamento mantém os nomes `metrics`, `groups` e `page`;
+uma etapa ausente indica **consulta eliminada por seletividade**, não erro.
+A próxima comparação deve medir cada aba com cache de catálogo aquecido
+e confirmar que o número de etapas analíticas é **2**, em vez de 3.
+Nenhuma alteração de banco, índices, pool ou worker.
