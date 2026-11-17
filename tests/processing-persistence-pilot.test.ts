@@ -54,15 +54,17 @@ describe("piloto de duas persistencias simultaneas", () => {
     const limit = createAsyncLimiter(decide().concurrency);
     let active = 0;
     let peak = 0;
+    let started = 0;
     const release: Array<() => void> = [];
     const writes = Array.from({ length: 5 }, () => limit(() => new Promise<void>((resolve) => {
       active++;
+      started++;
       peak = Math.max(peak, active);
       release.push(() => { active--; resolve(); });
     })));
     await Promise.resolve();
     expect(active).toBe(2);
-    while (release.length < 5) {
+    while (started < 5) {
       release.shift()!();
       await Promise.resolve();
       await Promise.resolve();
