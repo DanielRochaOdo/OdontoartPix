@@ -14,7 +14,7 @@ create or replace function track_canonical_payment_hour_v1()
 returns trigger
 language plpgsql
 security definer
-set search_path = public, pg_temp
+set search_path = pg_catalog, public, pg_temp
 as $
 declare
   v_at timestamptz;
@@ -28,25 +28,25 @@ begin
 
   if new.payment_status = 'unpaid' then
     -- Mantem a ultima evidencia nao paga, inclusive em leituras repetidas.
-    insert into payment_hour_observations (
+    insert into public.payment_hour_observations (
       target_installment_id, last_unpaid_at, first_paid_at, updated_at
     ) values (new.id, v_at, null, now())
     on conflict (target_installment_id) do update
       set last_unpaid_at = greatest(
-            payment_hour_observations.last_unpaid_at, excluded.last_unpaid_at
+            public.payment_hour_observations.last_unpaid_at, excluded.last_unpaid_at
           ),
           first_paid_at = null,
           updated_at = now();
   elsif new.payment_status = 'paid'
     and v_previous_status is distinct from 'paid' then
     -- Primeira leitura ja paga: so existe o limite final (faixa indisponivel).
-    insert into payment_hour_observations (
+    insert into public.payment_hour_observations (
       target_installment_id, last_unpaid_at, first_paid_at, updated_at
     ) values (new.id, null, v_at, now())
     on conflict (target_installment_id) do update
       set last_unpaid_at = case
-            when payment_hour_observations.last_unpaid_at <= excluded.first_paid_at
-              then payment_hour_observations.last_unpaid_at
+            when public.payment_hour_observations.last_unpaid_at <= excluded.first_paid_at
+              then public.payment_hour_observations.last_unpaid_at
             else null end,
           first_paid_at = excluded.first_paid_at,
           updated_at = now();
@@ -64,9 +64,9 @@ execute function track_canonical_payment_hour_v1();
 
 -- Preserva a ultima leitura nao paga ja existente para pagamentos futuros.
 -- Parcelas historicas ja pagas nao recebem um horario artificial no backfill.
-insert into payment_hour_observations (target_installment_id, last_unpaid_at)
+insert into public.payment_hour_observations (target_installment_id, last_unpaid_at)
 select id, coalesce(financial_observed_at, last_erp_status_at, updated_at)
-from member_target_installments
+from public.member_target_installments
 where payment_status = 'unpaid'
   and coalesce(financial_observed_at, last_erp_status_at, updated_at) is not null
 on conflict (target_installment_id) do nothing;
