@@ -93,22 +93,116 @@ describeDatabase("Visão Analítica: conciliação e horários (PostgreSQL rollb
     });
   });
 
-  it("indica indisponível quando a primeira leitura já é paga", async () => {
+  it("estima deteccao do ERP quando a primeira leitura ja retorna paga no dia", async () => {
     await withRollback(async (client) => {
       const c = await campaign(client), b = await batch(client, c), m = await member(client);
       const target = await link(client, c, b, m, "analytics-first-read");
       await client.query(
         `update member_target_installments
-            set payment_status = 'paid', paid_amount_cents = 7500,
+            set payment_status = 'paid', paid_amount_cents = 7500, amount_cents = 7500,
                 payment_date_text = '17/11/2026', due_date_text = '17/11/2026',
-                financial_observed_at = '2026-11-17 14:25:00-03'
+                last_erp_status_at = '2026-11-17 14:25:00-03',
+                financial_observed_at = '2026-11-17 14:24:00-03'
           where id = $1::uuid`, [target]);
-      const r = await client.query<{ hour: string }>(
-        ANALYTICS_BASE_SQL + "select hour_bucket as hour from filtered", args([b]));
+      const r = await client.query<{ hour: string; source: string; estimated: string | null }>(
+        ANALYTICS_BASE_SQL +
+        'select hour_bucket as hour, hour_source as source, estimated_hour as estimated from filtered',
+        args([b]));
       expect(r.rows).toHaveLength(1);
-      expect(r.rows[0]!.hour).toBe("unavailable");
+      expect(r.rows[0]).toEqual({ hour: "14-16", source: "erp-detection", estimated: "14:25" });
     });
   });
+
+  it("mantem indisponivel se a ultima consulta ERP for em dia posterior ao pagamento", async () => {
+    await withRollback(async (client) => {
+      const c = await campaign(client), b = await batch(client, c), m = await member(client);
+      const target = await link(client, c, b, m, "analytics-next-day");
+      await client.query(
+        `update member_target_installments
+            set payment_status = 'paid', paid_amount_cents = 7500,
+                payment_date_text = '17/11/2026', due_date_text = '17/11/2026',
+                last_erp_status_at = '2026-11-18 00:05:00-03',
+                financial_observed_at = '2026-11-18 00:04:00-03'
+          where id = $1::uuid`, [target]);
+      const r = await client.query<{ hour: string; source: string }>(
+        ANALYTICS_BASE_SQL + 'select hour_bucket as hour, hour_source as source from filtered',
+        args([b]));
+      expect(r.rows).toEqual([{ hour: "unavailable", source: "unavailable" }]);
+    });
+  });
+
+  it("nao usa updated_at nem snapshots como hora quando nao ha confirmacao do ERP", async () => {
+    await withRollback(async (client) => {
+      const c = await campaign(client), b = await batch(client, c), m = await member(client);
+      const code = "analytics-no-erp";
+      const target = await link(client, c, b, m, code);
+      const linkRow = await client.query<{ id: string }>(
+        'select id from campaign_batch_members where target_installment_ref_id = $1::uuid',
+        [target]);
+      await client.query(
+        `insert into member_installments (
+             campaign_batch_member_id, cod_parcela, base_amount_cents, payment_description,
+             payment_date_text, created_at
+           ) values ($1::uuid, $2, 7500, 'PIX', '17/11/2026', '2026-11-17 10:20:00-03')`,
+        [linkRow.rows[0]!.id, code]);
+      await client.query(
+        `update member_target_installments
+            set payment_status = 'paid', paid_amount_cents = 7500,
+                payment_date_text = '17/11/2026', due_date_text = '17/11/2026',
+                last_erp_status_at = null, financial_observed_at = '2026-11-17 10:21:00-03',
+                updated_at = '2026-11-17 10:21:00-03'
+          where id = $1::uuid`, [target]);
+      const r = await client.query<{ hour: string; source: string }>(
+        ANALYTICS_BASE_SQL + 'select hour_bucket as hour, hour_source as source from filtered',
+        args([b]));
+      expect(r.rows).toEqual([{ hour: "unavailable", source: "unavailable" }]);
+    });
+  });
+
+  it("prefere uma janela comprovada ao horario mais recente do ERP", async () => {
+    await withRollback(async (client) => {
+      const c = await campaign(client), b = await batch(client, c), m = await member(client);
+      const target = await link(client, c, b, m, "analytics-window-first");
+      await client.query(
+        `update member_target_installments
+          set payment_status = 'unpaid',
+              financial_observed_at = '2026-11-17 10:01:00-03'
+          where id = $1::uuid`, [target]);
+      await client.query(
+        `update member_target_installments
+          set payment_status = 'paid',
+              payment_date_text = '17/11/2026', paid_amount_cents = 7500,
+              financial_observed_at = '2026-11-17 10:03:00-03',
+              last_erp_status_at = '2026-11-17 15:30:00-03'
+          where id = $1::uuid`, [target]);
+      const r = await client.query<{ hour: string; source: string; estimated: string | null }>(
+        ANALYTICS_BASE_SQL +
+        'select hour_bucket as hour, hour_source as source, estimated_hour as estimated from filtered',
+        args([b]));
+      expect(r.rows).toEqual([{
+        hour: "10-12", source: "observed-window", estimated: "10:01–10:03"
+      }]);
+    });
+  });
+
+  it("nao usa timestamp ERP quando financial_observed_at diverge da data paga", async () => {
+    await withRollback(async (client) => {
+      const c = await campaign(client), b = await batch(client, c), m = await member(client);
+      const target = await link(client, c, b, m, "analytics-financial-mismatch");
+      await client.query(
+        `update member_target_installments
+            set payment_status = 'paid', paid_amount_cents = 7500,
+                payment_date_text = '17/11/2026',
+                last_erp_status_at = '2026-11-17 14:25:00-03',
+                financial_observed_at = '2026-11-18 00:05:00-03'
+          where id = $1::uuid`, [target]);
+      const r = await client.query<{ hour: string }>(
+        ANALYTICS_BASE_SQL + 'select hour_bucket as hour from filtered',
+        args([b]));
+      expect(r.rows).toEqual([{ hour: "unavailable" }]);
+    });
+  });
+
   it("registra mudanca de pagamento mesmo com usuario de aplicativo sem INSERT na tabela de horarios", async () => {
     await withRollback(async (client) => {
       const c = await campaign(client), b = await batch(client, c), m = await member(client);

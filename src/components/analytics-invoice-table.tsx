@@ -29,7 +29,7 @@ export function AnalyticsInvoiceTable({ rows }: { rows: AnalyticsRow[] }) {
       <table className="min-w-[950px] w-full text-left text-xs sm:text-sm">
         <thead className="bg-surface-secondary text-secondary">
           <tr>
-            {["Associado", "Fatura", "Pagamento", "Horário estimado", "Valor pago", "Pontualidade", ""].map((heading) =>
+            {["Associado", "Fatura", "Pagamento", "Faixa de detecção", "Valor pago", "Pontualidade", ""].map((heading) =>
               <th key={heading} className="whitespace-nowrap px-4 py-3 font-semibold">{heading}</th>)}
           </tr>
         </thead>
@@ -78,7 +78,8 @@ export function AnalyticsInvoiceTable({ rows }: { rows: AnalyticsRow[] }) {
             ["Tipo de parcela", selected.installmentType === "clinico" ? "Clínico" : selected.installmentType === "orto" ? "Orto" : "—"],
             ["Data de vencimento", humanDate(selected.dueDate)],
             ["Data do pagamento", humanDate(selected.paymentDate)],
-            ["Horário estimado", selected.hourBucket === "unavailable" ? "Indisponível" : selected.estimatedHour || hourLabel(selected)],
+            ["Horário de detecção (estimado)", selected.hourBucket === "unavailable" ? "Indisponível" : selected.estimatedHour || hourLabel(selected)],
+            ["Origem do horário", selected.hourSource === "observed-window" ? "Janela entre consulta em aberto e confirmação paga" : selected.hourSource === "erp-detection" ? "Última confirmação de pagamento pelo ERP" : "Sem evidência temporal suficiente"],
             ["Faixa de horário", hourLabel(selected)],
             ["Pontualidade", punctuality(selected)],
             ["Forma de pagamento", selected.paymentMethod],
@@ -93,6 +94,7 @@ export function AnalyticsInvoiceTable({ rows }: { rows: AnalyticsRow[] }) {
             <p className="mt-1 break-words text-sm font-semibold text-primary">{value || "—"}</p>
           </div>)}
         </div>
+        <p className="mt-5 text-xs text-secondary">O horário indica quando o ODONTOPIX identificou o pagamento, não o momento exato da transação bancária.</p>
       </section>
     </div>}
   </>;

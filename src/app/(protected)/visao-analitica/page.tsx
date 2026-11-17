@@ -50,8 +50,8 @@ function HoursChart({ groups, filters }: { groups: AnalyticsGroup[]; filters: An
   return <section className="odonto-card min-w-0 p-4 sm:p-5">
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div>
-        <h2 className="text-base font-bold text-primary">Pagamentos por faixa de horário</h2>
-        <p className="mt-1 text-xs text-secondary">Parcelas pagas por período de duas horas</p>
+        <h2 className="text-base font-bold text-primary">Detecção de pagamentos por faixa de horário</h2>
+        <p className="mt-1 max-w-2xl text-xs text-secondary">Estimativa da identificação do pagamento pelo ODONTOPIX, baseada em observações financeiras do ERP. Não representa o horário exato da transação bancária.</p>
       </div>
       <Link href={"/visao-analitica?" + analyticsSearch(filters, { hour: "all", page: 1, tab: "faturas" })}
         className="text-xs font-semibold text-brand hover:underline">Ver todas as faturas</Link>
@@ -77,6 +77,11 @@ function HoursChart({ groups, filters }: { groups: AnalyticsGroup[]; filters: An
         className="rounded-lg border border-default px-3 py-2 text-xs text-secondary hover:bg-surface-hover">
         {labelHour(item.key)}: <strong className="text-primary">{number(item.count)}</strong>
       </Link>)}
+    </div>
+    <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs text-secondary">
+      <span>Janela observada: <strong className="text-primary">{number(groups.find((item) => item.kind === "hour-source" && item.key === "observed-window")?.count ?? 0)}</strong></span>
+      <span>Confirmação no ERP: <strong className="text-primary">{number(groups.find((item) => item.kind === "hour-source" && item.key === "erp-detection")?.count ?? 0)}</strong></span>
+      <span>Sem evidência suficiente: <strong className="text-primary">{number(groups.find((item) => item.kind === "hour-source" && item.key === "unavailable")?.count ?? 0)}</strong></span>
     </div>
   </section>;
 }
@@ -159,7 +164,7 @@ export default async function AnalyticsPage({
 
   return <PageSurface className="lg:px-5 xl:px-6">
     <PageHeader eyebrow="Recebimentos" title="Visão Analítica"
-      description="Entenda os horários, a pontualidade e o comportamento dos pagamentos." />
+      description="Analise os horários estimados de detecção, a pontualidade e o comportamento dos pagamentos." />
     <div className="mt-5 flex flex-wrap items-center gap-2">
       <span className="mr-1 text-xs font-semibold text-secondary">Períodos rápidos:</span>
       {([

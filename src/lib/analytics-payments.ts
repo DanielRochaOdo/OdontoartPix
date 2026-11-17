@@ -144,22 +144,14 @@ export const ANALYTICS_BASE_SQL = `with scoped_links as (
   select t.id, t.member_id, t.external_installment_code, t.installment_type,
          t.due_date_text, t.payment_date_text, t.payment_description,
          t.payment_status, t.amount_cents, t.paid_amount_cents, t.pending_amount_cents,
-         t.created_at, t.financial_observed_at,
+         t.financial_observed_at, t.last_erp_status_at,
          m.name as member_name, m.cpf, m.external_user_code,
          linked.campaigns, linked.batches, linked.processing_status,
-         o.last_unpaid_at, o.first_paid_at,
-         history.created_at as historical_created_at
+         o.last_unpaid_at, o.first_paid_at
   from linked
   join member_target_installments t on t.id = linked.target_installment_ref_id
   left join members m on m.id = t.member_id
   left join payment_hour_observations o on o.target_installment_id = t.id
-  left join lateral (
-    select min(mi.created_at) as created_at
-    from campaign_batch_members cbm
-    join member_installments mi on mi.campaign_batch_member_id = cbm.id
-      and btrim(mi.cod_parcela) = btrim(t.external_installment_code)
-    where cbm.deleted_at is null and cbm.target_installment_ref_id = t.id
-  ) history on true
   where t.payment_status = 'paid'
 ), dated as (
   select *,
@@ -178,10 +170,13 @@ export const ANALYTICS_BASE_SQL = `with scoped_links as (
           and payment_date = (first_paid_at at time zone 'America/Fortaleza')::date
           and payment_date = (last_unpaid_at at time zone 'America/Fortaleza')::date
         then first_paid_at else null end as window_end,
-    case when first_paid_at is null and historical_created_at is not null
-          and historical_created_at >= created_at + interval '1 day'
-          and payment_date = (historical_created_at at time zone 'America/Fortaleza')::date
-        then historical_created_at else null end as historic_hour
+    -- Historico: o horario de deteccao vem da consulta financeira ao ERP,
+    -- nunca de created_at/updated_at de snapshots operacionais.
+    -- Ambas as evidencias canonicas devem coincidir com a data paga do ERP.
+    case when last_erp_status_at is not null and financial_observed_at is not null
+          and payment_date = (last_erp_status_at at time zone 'America/Fortaleza')::date
+          and payment_date = (financial_observed_at at time zone 'America/Fortaleza')::date
+        then last_erp_status_at else null end as detected_at
   from dated
 ), classified as (
   select *,
@@ -194,15 +189,17 @@ export const ANALYTICS_BASE_SQL = `with scoped_links as (
       when window_start is not null and window_end is not null then
         case when ${hourBucketSql("window_start")} = ${hourBucketSql("window_end")}
              then ${hourBucketSql("window_end")} else 'between' end
-      when historic_hour is not null then ${hourBucketSql("historic_hour")}
+      when detected_at is not null then ${hourBucketSql("detected_at")}
       else 'unavailable' end as hour_bucket,
     case when window_start is not null then
         to_char(window_start at time zone 'America/Fortaleza', 'HH24:MI') || '–' ||
         to_char(window_end at time zone 'America/Fortaleza', 'HH24:MI')
-      -- Para historico com apenas created_at, apresentar somente a faixa de 2h.
-      -- Nunca transformar esse marcador isolado em minuto exato de pagamento.
-      when historic_hour is not null then null
-      else null end as estimated_hour
+      when detected_at is not null then
+        to_char(detected_at at time zone 'America/Fortaleza', 'HH24:MI')
+      else null end as estimated_hour,
+    case when window_start is not null and window_end is not null then 'observed-window'
+         when detected_at is not null then 'erp-detection'
+         else 'unavailable' end as hour_source
   from with_hours
 ), filtered as (
   select * from classified
@@ -253,6 +250,8 @@ select kind, key, count(*)::int as count,
 from (
   select 'hour' as kind, hour_bucket as key, paid_amount_cents from filtered
   union all
+  select 'hour-source', hour_source, paid_amount_cents from filtered
+  union all
   select 'punctuality', punctuality, paid_amount_cents from filtered
   union all
   select 'weekday', extract(isodow from payment_date)::int::text, paid_amount_cents from filtered where payment_date is not null
@@ -273,7 +272,7 @@ select id, member_id as "memberId", member_name as "memberName", cpf, external_u
        amount_cents::float8 as "amountCents", paid_amount_cents::float8 as "paidAmountCents",
        pending_amount_cents::float8 as "pendingAmountCents",
        delay_days as "delayDays", punctuality, hour_bucket as "hourBucket",
-       estimated_hour as "estimatedHour"
+       estimated_hour as "estimatedHour", hour_source as "hourSource"
 from filtered order by payment_date desc nulls last, id asc
 limit $22::int offset $23::int`;
 
@@ -292,6 +291,7 @@ export type AnalyticsRow = {
   processingStatus: string; amountCents: number; paidAmountCents: number | null;
   pendingAmountCents: number; delayDays: number | null; punctuality: string;
   hourBucket: string; estimatedHour: string | null;
+  hourSource: "observed-window" | "erp-detection" | "unavailable";
 };
 export const ANALYTICS_PAGE_SIZE = 50;
 

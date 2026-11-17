@@ -53,15 +53,22 @@ describe("Visão Analítica: contrato de filtros e dados", () => {
     expect(ANALYTICS_BASE_SQL).toContain("t.payment_status = 'paid'");
     expect(ANALYTICS_BASE_SQL).toContain("t.paid_amount_cents");
     expect(ANALYTICS_BASE_SQL).toContain("payment_hour_observations");
-    expect(ANALYTICS_BASE_SQL).toContain("historical_created_at >= created_at + interval '1 day'");
+    expect(ANALYTICS_BASE_SQL).toContain("last_erp_status_at");
+    expect(ANALYTICS_BASE_SQL).toContain("financial_observed_at");
+    expect(ANALYTICS_BASE_SQL).toContain("detected_at");
+    expect(ANALYTICS_BASE_SQL).toContain("hour_source");
+    expect(ANALYTICS_BASE_SQL).not.toContain("historical_created_at");
+    expect(ANALYTICS_BASE_SQL).not.toContain("member_installments");
+    expect(ANALYTICS_BASE_SQL).not.toContain("t.updated_at");
   });
 
-  it("não inventa uma faixa no primeiro pagamento observado", () => {
+  it("registra primeiro pagamento observado sem fabricar janela anterior", () => {
     const migration = readFileSync("db/migrations/038_canonical_payment_hour_observations.sql", "utf8");
     expect(migration).toContain("last_unpaid_at");
     expect(migration).toContain("first_paid_at");
     expect(migration).toContain("payment_status = 'unpaid'");
     expect(ANALYTICS_BASE_SQL).toContain("else 'unavailable' end as hour_bucket");
+    expect(ANALYTICS_BASE_SQL).toContain("then 'erp-detection'");
   });
 
   it("rejeita filtros inconsistentes", () => {
