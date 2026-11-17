@@ -20,6 +20,7 @@ function decide(overrides: Partial<Parameters<typeof resolvePersistencePilot>[0]
     splitPipelineEnabled: true,
     slidingWindowV2Enabled: true,
     pilotEnabled: true,
+    activeGeneralSync: false,
     ...overrides
   });
 }
@@ -29,6 +30,7 @@ describe("piloto de duas persistencias simultaneas", () => {
     expect(decide()).toEqual({ concurrency: 2, pilot: true });
     expect(decide({}, { total_items: 2 })).toEqual({ concurrency: 2, pilot: true });
     expect(decide({ pilotEnabled: false })).toEqual({ concurrency: 1, pilot: false });
+    expect(decide({ activeGeneralSync: true })).toEqual({ concurrency: 1, pilot: false });
     expect(decide({ splitPipelineEnabled: false })).toEqual({ concurrency: 1, pilot: false });
     expect(decide({ slidingWindowV2Enabled: false })).toEqual({ concurrency: 1, pilot: false });
     expect(decide({}, { total_items: 1 })).toEqual({ concurrency: 1, pilot: false });
@@ -84,6 +86,8 @@ describe("piloto de duas persistencias simultaneas", () => {
     expect(worker).toContain("consultationConcurrency: effectiveConcurrency");
     expect(worker).toContain("persistenceConfiguredConcurrency: config.persistenceConcurrency");
     expect(worker).toContain("persistencePilot: persistenceMode.pilot");
+    expect(worker).toContain("[PERSISTENCE_PILOT_PREFLIGHT_FAILED]");
+    expect(worker).toContain("status in (\'queued\', \'running\', \'paused\', \'cancelling\')");
     expect(worker).toContain("recordSuccessfulGeneralSyncTarget(client");
     expect(worker).toContain("claim_token = $3::uuid");
     expect(env).toContain("PROCESSING_PERSISTENCE_CONCURRENCY=1");
