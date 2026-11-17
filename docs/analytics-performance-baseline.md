@@ -122,3 +122,54 @@ uma etapa ausente indica **consulta eliminada por seletividade**, não erro.
 A próxima comparação deve medir cada aba com cache de catálogo aquecido
 e confirmar que o número de etapas analíticas é **2**, em vez de 3.
 Nenhuma alteração de banco, índices, pool ou worker.
+
+## Fase 4a — consulta leve e única do catálogo global
+
+Baseline anterior à Fase 4a, medido na VPS após Fase 3: um carregamento
+frio de Panorama teve `catalog_cache_miss` de **2.619,3 ms**, com
+`facet_campaign` ~2.606 ms e `facet_batch` ~2.624 ms; as consultas
+financeiras foram executadas normalmente. Com cache aquecido, não houve
+repetição das seis facetas.
+
+Apenas a **Visão Analítica** troca a origem do seu catálogo global
+sem filtros. O módulo Associados **continua usando** a implementação
+original para catálogos que respondem a filtros cruzados. A cache
+`createAnalyticsCatalogCache` (3 min / singleflight / retry) não mudou.
+
+Antes: `getAssociadosCardFilterOptions({})` executava **seis**
+consultas independentes usando o SQL completo dos cards Associados,
+incluindo parse de datas, materialização de representantes, campos
+financeiros e strings que não eram necessários para opções sem filtro.
+
+Depois: `getAnalyticsGlobalFilterOptions()` usa **uma consulta
+somente**, com três etapas: vínculos ativos de campanhas/lotes; agregação
+única de status por parcela canônica; normalização do estado canônico
+para extrair as seis facetas. As opções de campanhas e lotes vêm de
+**todos** os vínculos ativos elegíveis, nunca só de um representante.
+Mantém membros ativos, grupos de processamento, normalizações de status,
+pagamentos, tipos, `agreed` com recebimento `-`, `distinct` e
+ordenação por rótulo/valor. Não limita quantidade nem agrupa por nome.
+
+Os SQLs de métricas, gráficos, faturas e exportações financeiras não
+foram alterados. O cache é apenas catálogo de opções e não possui
+resultados financeiros.
+
+O novo estágio do log é `catalog_fast_query` quando o cache precisa
+ser atualizado; os antigos `facet_*` deixam de aparecer **apenas na
+Visão Analítica**, pois seis leituras foram substituídas por uma.
+`catalog_cache_hit`, `catalog_cache_miss` e
+`request_data_total` continuam com o mesmo significado.
+
+**Gate de paridade antes da publicação:** teste em PostgreSQL CI
+comparando a resposta integral legada e a otimizada dentro da mesma
+transação com rollback: parcela em dois lotes, estados diferentes por
+vínculo, pagamentos paid/agreed, descrição PIX, tipos clínico/orto,
+membro e campanha/lote soft-deleted. A saída e a ordem devem ser
+exatamente iguais, além das verificações gerais de tipo e build.
+
+Depois da publicação, medir 3–5 carregamentos **de cache frio**
+(no primeiro acesso após reiniciar o app, ou após 3 minutos sem
+atualização), contrastar `catalog_fast_query` e
+`catalog_cache_miss` com o baseline de 2,6–3,1 s. Medir também
+`poolWaiting`. Não aumentar pool nem alterar índice/esquema sem
+evidência específica.
