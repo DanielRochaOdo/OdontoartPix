@@ -16,6 +16,7 @@ export type AnalyticsFilters = AssociadosFilters & {
   amountMin: string;
   amountMax: string;
   page: number;
+  tab: "panorama" | "horarios" | "comportamento" | "comparativos" | "faturas";
 };
 
 const listKeys = ["status", "payment", "receipt", "installmentType", "campaign", "batch"] as const;
@@ -61,6 +62,8 @@ export function readAnalyticsFilters(params: Record<string, string | string[] | 
   const page = Math.max(1, Math.min(100000, Number.parseInt(single("page"), 10) || 1));
   const raw: AnalyticsFilters = {
     from, to, hour, punctuality: punctuality as AnalyticPunctuality, amountMin, amountMax, page,
+    tab: (["panorama", "horarios", "comportamento", "comparativos", "faturas"].includes(single("tab"))
+      ? single("tab") : "panorama") as AnalyticsFilters["tab"],
     query: "", code: "", installment: "", dueDateFrom: "", dueDateTo: "",
     paymentDateFrom: "", paymentDateTo: "",
     status: [], payment: [], paidPending: "all", receipt: [], installmentType: [],
@@ -90,6 +93,7 @@ export function analyticsSearch(filters: AnalyticsFilters, changes: Record<strin
   }
   for (const key of listKeys) for (const value of filters[key] ?? []) p.append(key, value);
   if (filters.page !== 1) p.set("page", String(filters.page));
+  if (filters.tab !== "panorama") p.set("tab", filters.tab);
   for (const [key, value] of Object.entries(changes)) {
     p.delete(key);
     if (value != null && String(value)) p.set(key, String(value));
