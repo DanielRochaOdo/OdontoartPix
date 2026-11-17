@@ -75,6 +75,14 @@ export function AnalyticsPaymentFilters({
             <option value="unavailable">Indisponível</option>
           </select>
         </label>
+        <label className="flex min-w-0 flex-col gap-1.5 text-xs font-semibold text-secondary">
+          Dia da semana
+          <select name="weekday" defaultValue={filters.weekday} className="odonto-control w-full px-3 py-2 text-sm">
+            <option value="all">Todos os dias</option>
+            {["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"].map((day, i) =>
+              <option key={day} value={String(i + 1)}>{day}</option>)}
+          </select>
+        </label>
         <Field label="Valor pago mínimo (R$)" name="amountMin" value={filters.amountMin} placeholder="0,00" />
         <Field label="Valor pago máximo (R$)" name="amountMax" value={filters.amountMax} placeholder="1000,00" />
       </div>
