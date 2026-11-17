@@ -210,53 +210,53 @@ export async function getAssociadosCardFilterOptions(
   const facets = ["status", "payment", "receipt", "installmentType", "campaign", "batch"] as const;
   const results = await Promise.all(facets.map(async (facet) => {
     const loadFacet = async () => {
-    const values = filterValues(filters);
-    if (facet === "campaign") values[0] = [];
-    if (facet === "batch") values[1] = [];
-    // Mantemos os parâmetros tipados na consulta PostgreSQL.
-    // Remover uma cláusula com $11/$12/$14/$15 deixa um parâmetro sem tipo (42P18).
-    const ownIndex: Partial<Record<keyof AssociadosFilterOptions, number>> = {
-      status: 10, payment: 11, receipt: 13, installmentType: 14
-    };
-    const index = ownIndex[facet];
-    if (index !== undefined) values[index] = [];
-    const base = FILTERED_SQL;
-    if (facet === "campaign" || facet === "batch") {
-      // Uma parcela pode pertencer a mais de uma campanha/lote.
-      // Recuperamos as entidades reais pelos vínculos, nunca pelo nome agregado.
-      const entity = facet === "campaign" ? "c" : "b";
-      const linkConstraint = facet === "campaign"
-        ? "and (cardinality($2::uuid[]) = 0 or cbm.batch_id = any($2::uuid[]))"
-        : "and (cardinality($1::uuid[]) = 0 or cbm.campaign_id = any($1::uuid[]))";
+      const values = filterValues(filters);
+      if (facet === "campaign") values[0] = [];
+      if (facet === "batch") values[1] = [];
+      // Mantemos os parâmetros tipados na consulta PostgreSQL.
+      // Remover uma cláusula com $11/$12/$14/$15 deixa um parâmetro sem tipo (42P18).
+      const ownIndex: Partial<Record<keyof AssociadosFilterOptions, number>> = {
+        status: 10, payment: 11, receipt: 13, installmentType: 14
+      };
+      const index = ownIndex[facet];
+      if (index !== undefined) values[index] = [];
+      const base = FILTERED_SQL;
+      if (facet === "campaign" || facet === "batch") {
+        // Uma parcela pode pertencer a mais de uma campanha/lote.
+        // Recuperamos as entidades reais pelos vínculos, nunca pelo nome agregado.
+        const entity = facet === "campaign" ? "c" : "b";
+        const linkConstraint = facet === "campaign"
+          ? "and (cardinality($2::uuid[]) = 0 or cbm.batch_id = any($2::uuid[]))"
+          : "and (cardinality($1::uuid[]) = 0 or cbm.campaign_id = any($1::uuid[]))";
+        const result = await dbQuery<AssociadosFilterOption>(
+          base + `
+          , eligible as (
+            select distinct canonical.id as installment_id
+            from filtered f
+            join campaign_batch_members representative on representative.id = f.id
+            join member_target_installments canonical
+              on canonical.id = representative.target_installment_ref_id
+          )
+          select distinct ${entity}.id::text as value, ${entity}.name as label
+          from eligible e
+          join campaign_batch_members cbm on cbm.target_installment_ref_id = e.installment_id
+            and cbm.deleted_at is null
+          join campaign_batches b on b.id = cbm.batch_id and b.deleted_at is null
+          join campaigns c on c.id = cbm.campaign_id and c.deleted_at is null
+          where true ${linkConstraint}
+          order by label, value`, values
+        );
+        return result.rows;
+      }
+      const column = {
+        status: "status_key", payment: "payment_key",
+        receipt: "receipt_key", installmentType: "installment_type_label"
+      }[facet];
       const result = await dbQuery<AssociadosFilterOption>(
-        base + `
-        , eligible as (
-          select distinct canonical.id as installment_id
-          from filtered f
-          join campaign_batch_members representative on representative.id = f.id
-          join member_target_installments canonical
-            on canonical.id = representative.target_installment_ref_id
-        )
-        select distinct ${entity}.id::text as value, ${entity}.name as label
-        from eligible e
-        join campaign_batch_members cbm on cbm.target_installment_ref_id = e.installment_id
-          and cbm.deleted_at is null
-        join campaign_batches b on b.id = cbm.batch_id and b.deleted_at is null
-        join campaigns c on c.id = cbm.campaign_id and c.deleted_at is null
-        where true ${linkConstraint}
-        order by label, value`, values
+        base + ` select distinct ${column} as value, ${column} as label
+                 from filtered order by label`, values
       );
       return result.rows;
-    }
-    const column = {
-      status: "status_key", payment: "payment_key",
-      receipt: "receipt_key", installmentType: "installment_type_label"
-    }[facet];
-    const result = await dbQuery<AssociadosFilterOption>(
-      base + ` select distinct ${column} as value, ${column} as label
-               from filtered order by label`, values
-    );
-    return result.rows;
     };
     return trace ? trace.measure("facet_" + facet, loadFacet) : loadFacet();
   }));
