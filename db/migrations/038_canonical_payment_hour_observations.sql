@@ -14,9 +14,13 @@ create or replace function track_canonical_payment_hour_v1()
 returns trigger language plpgsql as $$
 declare
   v_at timestamptz;
+  v_previous_status text;
 begin
   -- A data/hora observada e preferivel ao timestamp de atualizacao de linha.
   v_at := coalesce(new.financial_observed_at, new.last_erp_status_at, now());
+  if tg_op = 'UPDATE' then
+    v_previous_status := old.payment_status;
+  end if;
 
   if new.payment_status = 'unpaid' then
     -- Mantem a ultima evidencia nao paga, inclusive em leituras repetidas.
@@ -30,7 +34,7 @@ begin
           first_paid_at = null,
           updated_at = now();
   elsif new.payment_status = 'paid'
-    and (tg_op = 'INSERT' or old.payment_status is distinct from 'paid') then
+    and v_previous_status is distinct from 'paid' then
     -- Primeira leitura ja paga: so existe o limite final (faixa indisponivel).
     insert into payment_hour_observations (
       target_installment_id, last_unpaid_at, first_paid_at, updated_at
@@ -49,6 +53,15 @@ after insert or update of payment_status, financial_observed_at, last_erp_status
 on member_target_installments
 for each row
 execute function track_canonical_payment_hour_v1();
+
+-- Preserva a ultima leitura nao paga ja existente para pagamentos futuros.
+-- Parcelas historicas ja pagas nao recebem um horario artificial no backfill.
+insert into payment_hour_observations (target_installment_id, last_unpaid_at)
+select id, coalesce(financial_observed_at, last_erp_status_at, updated_at)
+from member_target_installments
+where payment_status = 'unpaid'
+  and coalesce(financial_observed_at, last_erp_status_at, updated_at) is not null
+on conflict (target_installment_id) do nothing;
 
 create index if not exists payment_hour_observations_first_paid_idx
   on payment_hour_observations(first_paid_at)
