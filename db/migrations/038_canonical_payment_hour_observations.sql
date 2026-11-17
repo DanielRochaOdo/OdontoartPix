@@ -55,6 +55,10 @@ begin
 end;
 $$;
 
+-- Impede a criacao de triggers arbitrarios que invoquem esta funcao privilegiada.
+-- O trigger legitimo abaixo e criado pelo proprio administrador do schema.
+revoke all on function public.track_canonical_payment_hour_v1() from public;
+
 drop trigger if exists trg_track_canonical_payment_hour on public.member_target_installments;
 create trigger trg_track_canonical_payment_hour
 after insert or update of payment_status, financial_observed_at, last_erp_status_at
