@@ -1,4 +1,5 @@
 import { dbQuery } from "@/lib/db/pool";
+import type { AnalyticsPerfTrace } from "@/lib/analytics-performance";
 import type { AssociadosFilters } from "@/lib/associados-paginated";
 
 export { ANALYTIC_HOURS } from "@/lib/analytics-hour-buckets";
@@ -306,12 +307,17 @@ export function analyticsSqlArgs(f: AnalyticsFilters) {
   ];
 }
 
-export async function getAnalyticsReport(filters: AnalyticsFilters) {
+export async function getAnalyticsReport(filters: AnalyticsFilters, trace?: AnalyticsPerfTrace | null) {
   const args = analyticsSqlArgs(filters);
+  // Preserve existing query semantics and concurrency: measurement only.
+  const measure = <T>(stage: string, operation: () => Promise<T>) =>
+    trace ? trace.measure(stage, operation) : operation();
   const [metrics, groups, page] = await Promise.all([
-    dbQuery<AnalyticsMetric>(METRICS_SQL, args),
-    dbQuery<AnalyticsGroup>(GROUP_SQL, args),
-    dbQuery<AnalyticsRow>(PAGE_SQL, [...args, ANALYTICS_PAGE_SIZE, (filters.page - 1) * ANALYTICS_PAGE_SIZE])
+    measure("metrics", () => dbQuery<AnalyticsMetric>(METRICS_SQL, args)),
+    measure("groups", () => dbQuery<AnalyticsGroup>(GROUP_SQL, args)),
+    measure("page", () => dbQuery<AnalyticsRow>(
+      PAGE_SQL, [...args, ANALYTICS_PAGE_SIZE, (filters.page - 1) * ANALYTICS_PAGE_SIZE]
+    ))
   ]);
   return {
     metrics: metrics.rows[0]!,
