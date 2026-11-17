@@ -4,6 +4,7 @@ import { PageSurface } from "@/components/page-surface";
 import { AnalyticsPaymentFilters } from "@/components/analytics-payment-filters";
 import { AnalyticsInvoiceTable } from "@/components/analytics-invoice-table";
 import { getAssociadosCardFilterOptions } from "@/lib/associados-paginated";
+import { createAnalyticsPerfTrace } from "@/lib/analytics-performance";
 import {
   ANALYTIC_HOURS, analyticsSearch, getAnalyticsReport, readAnalyticsFilters,
   type AnalyticsFilters, type AnalyticsGroup
@@ -147,10 +148,16 @@ export default async function AnalyticsPage({
   }
   let report: Awaited<ReturnType<typeof getAnalyticsReport>>;
   let options: Awaited<ReturnType<typeof getAssociadosCardFilterOptions>>;
+  // Baseline only: no new queries, no caching, and no change to concurrency.
+  const trace = createAnalyticsPerfTrace(filters.tab);
   try {
-    [report, options] = await Promise.all([
-      getAnalyticsReport(filters), getAssociadosCardFilterOptions()
+    const load = () => Promise.all([
+      getAnalyticsReport(filters, trace),
+      getAssociadosCardFilterOptions({}, trace)
     ]);
+    [report, options] = trace
+      ? await trace.measure("request_data_total", load)
+      : await load();
   } catch (error) {
     console.error("[PAYMENT_ANALYTICS_LOAD_FAILED]", error);
     return <PageSurface><PageHeader title="Visão Analítica" description="Pagamentos e recebimentos" />
