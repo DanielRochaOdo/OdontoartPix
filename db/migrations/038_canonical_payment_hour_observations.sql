@@ -11,7 +11,11 @@ create table if not exists payment_hour_observations (
 );
 
 create or replace function track_canonical_payment_hour_v1()
-returns trigger language plpgsql as $$
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $
 declare
   v_at timestamptz;
   v_previous_status text;
@@ -70,6 +74,17 @@ on conflict (target_installment_id) do nothing;
 create index if not exists payment_hour_observations_first_paid_idx
   on payment_hour_observations(first_paid_at)
   where first_paid_at is not null;
+
+-- O aplicativo consulta as observacoes, mas nao precisa modifica-las.
+-- A funcao de trigger executa com as permissoes do proprietario da migracao.
+-- Mesmo padrao de role previsto na migracao 037.
+do $
+begin
+  if exists (select 1 from pg_roles where rolname = 'odontoart_pix_app') then
+    grant select on table payment_hour_observations to odontoart_pix_app;
+  end if;
+end;
+$;
 
 insert into schema_migrations(version, name)
 values (38, 'canonical_payment_hour_observations')
