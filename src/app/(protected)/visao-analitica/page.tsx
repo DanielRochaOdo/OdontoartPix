@@ -78,6 +78,11 @@ function HoursChart({ groups, filters }: { groups: AnalyticsGroup[]; filters: An
         {labelHour(item.key)}: <strong className="text-primary">{number(item.count)}</strong>
       </Link>)}
     </div>
+    <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs text-secondary">
+      <span>Janela observada: <strong className="text-primary">{number(groups.find((item) => item.kind === "hour-source" && item.key === "observed-window")?.count ?? 0)}</strong></span>
+      <span>Confirmação no ERP: <strong className="text-primary">{number(groups.find((item) => item.kind === "hour-source" && item.key === "erp-detection")?.count ?? 0)}</strong></span>
+      <span>Sem evidência suficiente: <strong className="text-primary">{number(groups.find((item) => item.kind === "hour-source" && item.key === "unavailable")?.count ?? 0)}</strong></span>
+    </div>
   </section>;
 }
 
