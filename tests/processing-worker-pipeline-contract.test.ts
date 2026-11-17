@@ -26,7 +26,8 @@ describe("local processing pipeline safety contracts", () => {
     expect(localWorker).toContain("config.claimBatchSize, config.maxBufferedResults, 500");
     expect(localWorker).toContain("config.erpConcurrency, config.perWorkerConcurrency, claimLimit, 100");
     expect(localWorker).toContain("consultationConcurrency: effectiveConcurrency");
-    expect(localWorker).toContain("persistenceConcurrency: config.persistenceConcurrency");
+    expect(localWorker).toContain("persistenceConcurrency: persistenceMode.concurrency");
+    expect(localWorker).toContain("configuredConcurrency: config.persistenceConcurrency");
     expect(localWorker).toContain("maxBufferedResults: config.maxBufferedResults");
     expect(localWorker).toContain("maxConcurrentItems: effectiveConcurrency");
     expect(localWorker).toContain("maxItems: effectiveClaimLimit * 2");
