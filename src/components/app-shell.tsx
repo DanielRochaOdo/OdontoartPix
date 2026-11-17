@@ -72,6 +72,15 @@ function AnalysisIcon({ className = "h-5 w-5" }: { className?: string }) {
   );
 }
 
+function SearchIcon({ className = "h-5 w-5" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden="true">
+      <circle cx="10.8" cy="10.8" r="6.6" className="stroke-current" strokeWidth="1.8" />
+      <path d="m15.7 15.7 4.6 4.6" className="stroke-current" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 function BanknoteArrowUpIcon({ className = "h-5 w-5" }: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor"
@@ -101,7 +110,7 @@ const navItems = [
   { href: "/associados", label: "Associados", icon: MembersIcon },
   { href: "/disparos", label: "Disparos", icon: DispatchIcon },
   { href: "/resumo-analise", label: "Resumo e Análise", icon: AnalysisIcon },
-  { href: "/visao-analitica", label: "Visão Analítica", icon: AnalysisIcon },
+  { href: "/visao-analitica", label: "Visão Analítica", icon: SearchIcon },
   { href: "/pontualidade", label: "Pontualidade de pagamentos", icon: BanknoteArrowUpIcon },
   { href: "/configuracoes", label: "Configurações", icon: SettingsIcon }
 ];
