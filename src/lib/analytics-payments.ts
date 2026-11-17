@@ -296,7 +296,7 @@ export type AnalyticsRow = {
 };
 export const ANALYTICS_PAGE_SIZE = 50;
 
-function sqlArgs(f: AnalyticsFilters) {
+export function analyticsSqlArgs(f: AnalyticsFilters) {
   const money = (value: string) => value ? Math.round(Number(value.replace(",", ".")) * 100) : null;
   return [
     f.campaign ?? [], f.batch ?? [], f.query ?? "", f.code ?? "", f.installment ?? "",
@@ -308,7 +308,7 @@ function sqlArgs(f: AnalyticsFilters) {
 }
 
 export async function getAnalyticsReport(filters: AnalyticsFilters) {
-  const args = sqlArgs(filters);
+  const args = analyticsSqlArgs(filters);
   const [metrics, groups, page] = await Promise.all([
     dbQuery<AnalyticsMetric>(METRICS_SQL, args),
     dbQuery<AnalyticsGroup>(GROUP_SQL, args),
@@ -324,7 +324,7 @@ export async function getAnalyticsReport(filters: AnalyticsFilters) {
 }
 
 export async function getAnalyticsExportRows(filters: AnalyticsFilters) {
-  const args = sqlArgs(filters);
+  const args = analyticsSqlArgs(filters);
   const limit = 100001;
   const result = await dbQuery<AnalyticsRow>(PAGE_SQL, [...args, limit, 0]);
   if (result.rows.length > 100000) throw new Error("Limite de exportação excedido (100.000 parcelas).");
