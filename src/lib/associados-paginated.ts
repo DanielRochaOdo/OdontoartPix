@@ -1,4 +1,5 @@
 import { dbQuery } from "@/lib/db/pool";
+import type { AnalyticsPerfTrace } from "@/lib/analytics-performance";
 import { ASSOCIADOS_CARD_BASE_SQL, type AssociadoCardListItem } from "@/lib/associados-card-read";
 
 export type AssociadosFilters = {
@@ -203,10 +204,12 @@ export async function getAssociadosFilteredIds(filters: AssociadosFilters, max =
 // Cada faceta considera todos os demais filtros, mas ignora a própria seleção.
 // A identidade financeira continua sendo a parcela canônica, sem LIMIT de página.
 export async function getAssociadosCardFilterOptions(
-  filters: AssociadosFilters = {}
+  filters: AssociadosFilters = {},
+  trace?: AnalyticsPerfTrace | null
 ): Promise<AssociadosFilterOptions> {
   const facets = ["status", "payment", "receipt", "installmentType", "campaign", "batch"] as const;
   const results = await Promise.all(facets.map(async (facet) => {
+    const loadFacet = async () => {
     const values = filterValues(filters);
     if (facet === "campaign") values[0] = [];
     if (facet === "batch") values[1] = [];
@@ -254,6 +257,8 @@ export async function getAssociadosCardFilterOptions(
                from filtered order by label`, values
     );
     return result.rows;
+    };
+    return trace ? trace.measure("facet_" + facet, loadFacet) : loadFacet();
   }));
   const options = Object.fromEntries(
     facets.map((facet, index) => [facet, results[index]])
