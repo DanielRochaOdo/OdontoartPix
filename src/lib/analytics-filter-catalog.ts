@@ -1,7 +1,5 @@
-import {
-  getAssociadosCardFilterOptions,
-  type AssociadosFilterOptions
-} from "@/lib/associados-paginated";
+import type { AssociadosFilterOptions } from "@/lib/associados-paginated";
+import { getAnalyticsGlobalFilterOptions } from "@/lib/analytics-global-filter-options";
 import type { AnalyticsPerfTrace } from "@/lib/analytics-performance";
 
 // Cache only the common, unfiltered catalog of options used by Visao Analitica.
@@ -52,7 +50,7 @@ export function createAnalyticsCatalogCache<T>(
 }
 
 const sharedCatalog = createAnalyticsCatalogCache<AssociadosFilterOptions>(
-  (trace) => getAssociadosCardFilterOptions({}, trace)
+  (trace) => getAnalyticsGlobalFilterOptions(trace)
 );
 
 export function getAnalyticsFilterCatalog(trace?: AnalyticsPerfTrace | null) {
