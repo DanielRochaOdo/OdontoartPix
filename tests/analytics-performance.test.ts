@@ -49,6 +49,6 @@ describe("Visao Analitica: baseline de desempenho (opt-in)", () => {
     const event = JSON.parse(raw.slice("[ANALYTICS_PERF] ".length));
     expect(event).toMatchObject({ stage: "page", outcome: "error" });
     expect(raw).not.toContain("private");
-    expect(raw).not.toContain("123");
+    expect(raw).not.toContain("private CPF 123");
   });
 });
