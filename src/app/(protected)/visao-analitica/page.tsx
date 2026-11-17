@@ -3,7 +3,8 @@ import { PageHeader } from "@/components/page-header";
 import { PageSurface } from "@/components/page-surface";
 import { AnalyticsPaymentFilters } from "@/components/analytics-payment-filters";
 import { AnalyticsInvoiceTable } from "@/components/analytics-invoice-table";
-import { getAssociadosCardFilterOptions } from "@/lib/associados-paginated";
+import type { AssociadosFilterOptions } from "@/lib/associados-paginated";
+import { getAnalyticsFilterCatalog } from "@/lib/analytics-filter-catalog";
 import { createAnalyticsPerfTrace } from "@/lib/analytics-performance";
 import {
   ANALYTIC_HOURS, analyticsSearch, getAnalyticsReport, readAnalyticsFilters,
@@ -147,13 +148,14 @@ export default async function AnalyticsPage({
     </PageSurface>;
   }
   let report: Awaited<ReturnType<typeof getAnalyticsReport>>;
-  let options: Awaited<ReturnType<typeof getAssociadosCardFilterOptions>>;
-  // Baseline only: no new queries, no caching, and no change to concurrency.
+  let options: AssociadosFilterOptions;
+  // Financial reporting always uses live SQL. Only the unfiltered options catalog
+  // is reused for 3 minutes inside the current application process.
   const trace = createAnalyticsPerfTrace(filters.tab);
   try {
     const load = () => Promise.all([
       getAnalyticsReport(filters, trace),
-      getAssociadosCardFilterOptions({}, trace)
+      getAnalyticsFilterCatalog(trace)
     ]);
     [report, options] = trace
       ? await trace.measure("request_data_total", load)
