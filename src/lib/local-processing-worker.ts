@@ -4,6 +4,7 @@ import { dbQuery } from "@/lib/db/pool";
 import { clientQuery, withTransaction } from "@/lib/db/transaction";
 import { consultMonthlyByAssociatedCode, ErpError } from "@/lib/mensalidades-api";
 import { getProcessingConfig } from "@/lib/processing-config";
+import { resolvePersistencePilot } from "@/lib/processing-persistence-pilot";
 import { runSplitProcessingPipeline } from "@/lib/processing-pipeline";
 import { createAsyncLimiter, runSlidingClaimedBatches } from "@/lib/processing-sliding-window";
 import { runContinuousTwoPassWindow } from "@/lib/processing-sliding-window-v2";
@@ -21,6 +22,7 @@ type LocalJob = {
   error_items: number;
   include_errors: boolean;
   processing_priority: number;
+  processing_origin: string;
   processing_scope: string;
   target_member_link_id: string | null;
   filtered_error_request_id: string | null;
@@ -171,6 +173,7 @@ async function claimNextJob(workerId: string, leaseSeconds: number) {
               error_items,
               include_errors,
               processing_priority,
+              processing_origin,
               processing_scope,
               target_member_link_id,
               filtered_error_request_id,
@@ -213,6 +216,7 @@ async function claimNextJob(workerId: string, leaseSeconds: number) {
                   error_items,
                   include_errors,
                   processing_priority,
+                  processing_origin,
                   processing_scope,
                   target_member_link_id,
                   filtered_error_request_id,
@@ -903,6 +907,34 @@ export async function runLocalWorkerOnce(options?: {
       process.env.PROCESSING_PIPELINE_SLIDING_WINDOW_ENABLED === "true";
     const slidingWindowV2Enabled = slidingWindowEnabled &&
       process.env.PROCESSING_PIPELINE_SLIDING_WINDOW_V2_ENABLED === "true";
+    const pilotOptIn = process.env.PROCESSING_PERSISTENCE_PILOT_ENABLED === "true";
+    // Fail closed: a manual pilot must never start alongside an active general
+    // sync. Query only for a plausible pilot, and do not touch the write path.
+    let activeGeneralSync = true;
+    if (pilotOptIn && slidingWindowV2Enabled &&
+        job.processing_origin === "manual" && job.processing_scope === "batch" &&
+        job.total_items >= 2 && job.total_items <= 160 &&
+        config.persistenceConcurrency === 1) {
+      try {
+        const active = await dbQuery<{ is_active: boolean }>(
+          `select exists (
+             select 1 from general_sync_runs
+              where status in ('queued', 'running', 'paused', 'cancelling')
+           ) as is_active`
+        );
+        activeGeneralSync = active.rows[0]?.is_active !== false;
+      } catch {
+        console.warn("[PERSISTENCE_PILOT_PREFLIGHT_FAILED]", { jobId: job.id });
+      }
+    }
+    const persistenceMode = resolvePersistencePilot({
+      job,
+      configuredConcurrency: config.persistenceConcurrency,
+      splitPipelineEnabled,
+      slidingWindowV2Enabled,
+      pilotEnabled: pilotOptIn,
+      activeGeneralSync
+    });
     const claimed = slidingWindowEnabled ? [] as ClaimedMember[] :
       await claimMembers(job, workerId, effectiveClaimLimit);
     let claimedCount = claimed.length;
@@ -912,12 +944,12 @@ export async function runLocalWorkerOnce(options?: {
         | { ok: true; analysis: MonthlyAnalysis }
         | { ok: false; error: unknown; erpConsultStarted: boolean; fatal?: boolean };
 
-      const persistenceLimiter = createAsyncLimiter(config.persistenceConcurrency);
+      const persistenceLimiter = createAsyncLimiter(persistenceMode.concurrency);
       const processClaimedBatch = async (batchItems: ClaimedMember[]) => {
         await runSplitProcessingPipeline<ClaimedMember, PreparedConsultation>({
         items: batchItems,
         consultationConcurrency: effectiveConcurrency,
-        persistenceConcurrency: config.persistenceConcurrency,
+        persistenceConcurrency: persistenceMode.concurrency,
         maxBufferedResults: config.maxBufferedResults,
         consult: async (item): Promise<PreparedConsultation> => {
           // Falhas de leitura do PostgreSQL sao fatais para o job, nao erros
@@ -1088,6 +1120,9 @@ export async function runLocalWorkerOnce(options?: {
       mode: slidingWindowV2Enabled ? "sliding-v2" :
         (slidingWindowEnabled ? "sliding" : (splitPipelineEnabled ? "split" : "legacy")),
       claimed: claimedCount,
+      persistenceConfiguredConcurrency: config.persistenceConcurrency,
+      persistenceConcurrency: persistenceMode.concurrency,
+      persistencePilot: persistenceMode.pilot,
       elapsedMs: Math.round(performance.now() - cycleStartedAt),
       erpCalls: stageMetrics.erp.count,
       erpAverageMs: stageMetrics.erp.count
