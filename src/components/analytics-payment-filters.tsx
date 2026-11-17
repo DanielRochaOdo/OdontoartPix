@@ -40,6 +40,7 @@ export function AnalyticsPaymentFilters({
 
   return (
     <form action="/visao-analitica" method="get" className="odonto-card mt-5 p-4 sm:p-5">
+      <input type="hidden" name="tab" value={filters.tab} />
       {KEYS.flatMap((key) => selected[key].map((value) =>
         <input key={key + ":" + value} type="hidden" name={key} value={value} />
       ))}
