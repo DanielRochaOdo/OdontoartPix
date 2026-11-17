@@ -4,7 +4,8 @@ import Link from "next/link";
 import { useState } from "react";
 import { MultiSelectFilter } from "@/components/punctuality-filters";
 import type { AssociadosFilterOptions } from "@/lib/associados-paginated";
-import { ANALYTIC_HOURS, type AnalyticsFilters } from "@/lib/analytics-payments";
+import { ANALYTIC_HOURS } from "@/lib/analytics-hour-buckets";
+import type { AnalyticsFilters } from "@/lib/analytics-payments";
 
 type MultiKey = "status" | "payment" | "receipt" | "installmentType" | "campaign" | "batch";
 const KEYS: MultiKey[] = ["status", "payment", "receipt", "installmentType", "campaign", "batch"];
