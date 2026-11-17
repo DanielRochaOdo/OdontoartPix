@@ -8,9 +8,10 @@ A migração corrigida usa `SECURITY DEFINER` para registrar a janela dos pagame
 
 ## Diagnóstico (somente leitura)
 
-No host da VPS, como root:
+No host da VPS, como root (confira também que o usuário de execução é o esperado, sem exibir senhas):
 
 ```bash
+docker exec odontopix-app-1 sh -lc 'printf "DATABASE_USER=%s\\n" "$DATABASE_USER"'
 docker exec odontopix-db-1 sh -lc 'psql -X -v ON_ERROR_STOP=1 -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-postgres}" -c "select current_user as migration_owner, pg_get_userbyid(c.relowner) as canonical_owner from pg_class c where c.oid = '\''public.member_target_installments'\''::regclass;"'
 docker exec odontopix-db-1 sh -lc 'psql -X -v ON_ERROR_STOP=1 -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-postgres}" -c "select version, name, applied_at from schema_migrations where version = 38;"'
 ```
