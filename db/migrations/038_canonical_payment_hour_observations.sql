@@ -33,7 +33,7 @@ begin
     ) values (new.id, v_at, null, now())
     on conflict (target_installment_id) do update
       set last_unpaid_at = greatest(
-            public.payment_hour_observations.last_unpaid_at, excluded.last_unpaid_at
+            payment_hour_observations.last_unpaid_at, excluded.last_unpaid_at
           ),
           first_paid_at = null,
           updated_at = now();
@@ -45,8 +45,8 @@ begin
     ) values (new.id, null, v_at, now())
     on conflict (target_installment_id) do update
       set last_unpaid_at = case
-            when public.payment_hour_observations.last_unpaid_at <= excluded.first_paid_at
-              then public.payment_hour_observations.last_unpaid_at
+            when payment_hour_observations.last_unpaid_at <= excluded.first_paid_at
+              then payment_hour_observations.last_unpaid_at
             else null end,
           first_paid_at = excluded.first_paid_at,
           updated_at = now();
