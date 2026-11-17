@@ -907,12 +907,33 @@ export async function runLocalWorkerOnce(options?: {
       process.env.PROCESSING_PIPELINE_SLIDING_WINDOW_ENABLED === "true";
     const slidingWindowV2Enabled = slidingWindowEnabled &&
       process.env.PROCESSING_PIPELINE_SLIDING_WINDOW_V2_ENABLED === "true";
+    const pilotOptIn = process.env.PROCESSING_PERSISTENCE_PILOT_ENABLED === "true";
+    // Fail closed: a manual pilot must never start alongside an active general
+    // sync. Query only for a plausible pilot, and do not touch the write path.
+    let activeGeneralSync = true;
+    if (pilotOptIn && slidingWindowV2Enabled &&
+        job.processing_origin === "manual" && job.processing_scope === "batch" &&
+        job.total_items >= 2 && job.total_items <= 160 &&
+        config.persistenceConcurrency === 1) {
+      try {
+        const active = await dbQuery<{ is_active: boolean }>(
+          `select exists (
+             select 1 from general_sync_runs
+              where status in ('queued', 'running', 'paused', 'cancelling')
+           ) as is_active`
+        );
+        activeGeneralSync = active.rows[0]?.is_active !== false;
+      } catch {
+        console.warn("[PERSISTENCE_PILOT_PREFLIGHT_FAILED]", { jobId: job.id });
+      }
+    }
     const persistenceMode = resolvePersistencePilot({
       job,
       configuredConcurrency: config.persistenceConcurrency,
       splitPipelineEnabled,
       slidingWindowV2Enabled,
-      pilotEnabled: process.env.PROCESSING_PERSISTENCE_PILOT_ENABLED === "true"
+      pilotEnabled: pilotOptIn,
+      activeGeneralSync
     });
     const claimed = slidingWindowEnabled ? [] as ClaimedMember[] :
       await claimMembers(job, workerId, effectiveClaimLimit);
