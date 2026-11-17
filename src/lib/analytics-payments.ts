@@ -199,8 +199,9 @@ export const ANALYTICS_BASE_SQL = `with scoped_links as (
     case when window_start is not null then
         to_char(window_start at time zone 'America/Fortaleza', 'HH24:MI') || '–' ||
         to_char(window_end at time zone 'America/Fortaleza', 'HH24:MI')
-      when historic_hour is not null then
-        to_char(historic_hour at time zone 'America/Fortaleza', 'HH24:MI')
+      -- Para historico com apenas created_at, apresentar somente a faixa de 2h.
+      -- Nunca transformar esse marcador isolado em minuto exato de pagamento.
+      when historic_hour is not null then null
       else null end as estimated_hour
   from with_hours
 ), filtered as (
