@@ -518,4 +518,217 @@ describeDatabase("canonical installment database invariant", () => {
     });
   });
 
+
+  it("preserva vínculos unpaid idênticos, seus agendamentos e recálculos de lote", async () => {
+    await withIsolatedTransaction(async (client) => {
+      const { campaignId, batchIds, memberId } = await createScenario(client);
+      const links: string[] = [];
+      let targetId = "";
+
+      for (const batchId of batchIds.slice(0, 2)) {
+        const inserted = await client.query<{
+          id: string;
+          target_installment_ref_id: string;
+        }>(
+          `insert into campaign_batch_members(
+             campaign_id, batch_id, member_id, target_installment_id,
+             installment_amount_cents, payment_status, payment_status_source,
+             processing_status
+           ) values ($1::uuid, $2::uuid, $3::uuid,
+                     'NOOP-043-UNPAID', 5000, 'unpaid', 'erp_explicit', 'pending')
+           returning id, target_installment_ref_id`,
+          [campaignId, batchId, memberId]
+        );
+        links.push(inserted.rows[0]!.id);
+        targetId = inserted.rows[0]!.target_installment_ref_id;
+      }
+
+      await client.query(
+        `update campaign_batch_members
+            set processing_status = 'completed',
+                next_check_at = now() + interval '55 minutes'
+          where id = $1::uuid`,
+        [links[0]]
+      );
+
+      // Establish the same canonical snapshot before measuring the no-op.
+      await client.query("select sync_target_installment_links_v1($1::uuid)", [targetId]);
+
+      const snapshot = () => client.query<{
+        id: string;
+        tuple_id: string;
+        processing_status: string;
+        next_check_at: Date | null;
+        updated_at: Date;
+      }>(
+        `select id, ctid::text as tuple_id, processing_status,
+                next_check_at, updated_at
+           from campaign_batch_members
+          where id = any($1::uuid[])
+          order by id`,
+        [links]
+      );
+
+      const before = (await snapshot()).rows;
+      expect(before).toHaveLength(2);
+      expect(before.map((row) => row.processing_status).sort()).toEqual([
+        "completed", "pending"
+      ]);
+      expect(before.find((row) => row.processing_status === "completed")?.next_check_at)
+        .not.toBeNull();
+      expect(before.find((row) => row.processing_status === "pending")?.next_check_at)
+        .toBeNull();
+
+      // Force a stale aggregate: propagation must still recalculate both
+      // batches even when every linked row is a true no-op.
+      await client.query(
+        `update campaign_batches
+            set total_records = 99, total_amount_cents = 99
+          where id = any($1::uuid[])`,
+        [batchIds.slice(0, 2)]
+      );
+
+      await client.query("select sync_target_installment_links_v1($1::uuid)", [targetId]);
+      expect((await snapshot()).rows).toEqual(before);
+
+      const batches = await client.query<{
+        total_records: number;
+        total_amount_cents: string;
+      }>(
+        `select total_records, total_amount_cents::text
+           from campaign_batches
+          where id = any($1::uuid[])
+          order by id`,
+        [batchIds.slice(0, 2)]
+      );
+      expect(batches.rows).toEqual([
+        { total_records: 1, total_amount_cents: "5000" },
+        { total_records: 1, total_amount_cents: "5000" }
+      ]);
+    });
+  });
+
+  it("propaga pagamento parcial, limpa terminal real e evita regravacoes seguintes", async () => {
+    await withIsolatedTransaction(async (client) => {
+      const { campaignId, batchIds, memberId } = await createScenario(client);
+      const links: string[] = [];
+      let targetId = "";
+
+      for (const batchId of batchIds.slice(0, 2)) {
+        const inserted = await client.query<{
+          id: string;
+          target_installment_ref_id: string;
+        }>(
+          `insert into campaign_batch_members(
+             campaign_id, batch_id, member_id, target_installment_id,
+             installment_amount_cents, processing_status
+           ) values ($1::uuid, $2::uuid, $3::uuid, 'NOOP-043-PAID', 5000, 'pending')
+           returning id, target_installment_ref_id`,
+          [campaignId, batchId, memberId]
+        );
+        links.push(inserted.rows[0]!.id);
+        targetId = inserted.rows[0]!.target_installment_ref_id;
+      }
+
+      await client.query(
+        `update campaign_batch_members
+            set processing_status = 'completed',
+                payment_status = 'paid',
+                payment_status_source = 'erp_explicit',
+                installment_amount_cents = 5000,
+                payment_amount_cents = 3000,
+                total_pending_amount_cents = 2000,
+                last_erp_status_at = now()
+          where id = $1::uuid`,
+        [links[0]]
+      );
+
+      const snapshot = () => client.query<{
+        id: string;
+        tuple_id: string;
+        processing_status: string;
+        payment_status: string;
+        payment_amount_cents: string;
+        total_pending_amount_cents: string;
+      }>(
+        `select id, ctid::text as tuple_id, processing_status,
+                payment_status, payment_amount_cents::text,
+                total_pending_amount_cents::text
+           from campaign_batch_members
+          where id = any($1::uuid[])
+          order by id`,
+        [links]
+      );
+
+      const paid = (await snapshot()).rows;
+      expect(paid).toHaveLength(2);
+      for (const row of paid) {
+        expect(row.processing_status).toBe("completed");
+        expect(row.payment_status).toBe("paid");
+        expect(row.payment_amount_cents).toBe("3000");
+        expect(row.total_pending_amount_cents).toBe("2000");
+      }
+
+      await client.query("select sync_target_installment_links_v1($1::uuid)", [targetId]);
+      expect((await snapshot()).rows).toEqual(paid);
+
+      // A terminal link with stale operational metadata is a REAL change.
+      await client.query(
+        `update campaign_batch_members
+            set processing_attempts = 3,
+                stale_reclaim_count = 2,
+                next_retry_at = now() + interval '1 hour',
+                last_error = 'obsolete retry'
+          where id = $1::uuid`,
+        [links[1]]
+      );
+
+      const beforeClean = (await snapshot()).rows;
+      await client.query("select sync_target_installment_links_v1($1::uuid)", [targetId]);
+      const cleaned = (await snapshot()).rows;
+      expect(cleaned.find((row) => row.id === links[0])?.tuple_id)
+        .toBe(beforeClean.find((row) => row.id === links[0])?.tuple_id);
+      expect(cleaned.find((row) => row.id === links[1])?.tuple_id)
+        .not.toBe(beforeClean.find((row) => row.id === links[1])?.tuple_id);
+
+      const operational = await client.query<{
+        processing_attempts: number;
+        stale_reclaim_count: number;
+        next_retry_at: Date | null;
+        last_error: string | null;
+      }>(
+        `select processing_attempts, stale_reclaim_count,
+                next_retry_at, last_error
+           from campaign_batch_members
+          where id = $1::uuid`,
+        [links[1]]
+      );
+      expect(operational.rows[0]).toEqual({
+        processing_attempts: 0,
+        stale_reclaim_count: 0,
+        next_retry_at: null,
+        last_error: null
+      });
+
+      await client.query("select sync_target_installment_links_v1($1::uuid)", [targetId]);
+      expect((await snapshot()).rows).toEqual(cleaned);
+
+      const totals = await client.query<{
+        total_records: number;
+        paid_records: number;
+        total_pending_amount_cents: string;
+      }>(
+        `select total_records, paid_records, total_pending_amount_cents::text
+           from campaign_batches
+          where id = any($1::uuid[])
+          order by id`,
+        [batchIds.slice(0, 2)]
+      );
+      expect(totals.rows).toEqual([
+        { total_records: 1, paid_records: 1, total_pending_amount_cents: "2000" },
+        { total_records: 1, paid_records: 1, total_pending_amount_cents: "2000" }
+      ]);
+    });
+  });
+
 });
