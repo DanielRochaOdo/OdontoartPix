@@ -16,6 +16,7 @@ import { runSplitProcessingPipeline } from "@/lib/processing-pipeline";
 import { createAsyncLimiter, runSlidingClaimedBatches } from "@/lib/processing-sliding-window";
 import { runContinuousTwoPassWindow } from "@/lib/processing-sliding-window-v2";
 import { generalSyncUniqueTargetsEnabled, recordSuccessfulGeneralSyncTarget } from "@/lib/general-sync-unique-targets";
+import { PersistenceProfiler, persistenceProfilingEnabled, type PersistenceProfileStage } from "@/lib/processing-persistence-profile";
 
 type LocalJob = {
   id: string;
@@ -374,12 +375,16 @@ async function persistSuccess(input: {
   claimed: ClaimedMember;
   workerId: string;
   analysis: MonthlyAnalysis;
+  profiler?: PersistenceProfiler;
 }) {
   const { job, claimed, workerId, analysis } = input;
   const financial = targetFinancialState(claimed, analysis);
+  const profiler = input.profiler;
+  const timedQuery = <T>(stage: PersistenceProfileStage, action: () => Promise<T>): Promise<T> =>
+    profiler ? profiler.measure(stage, action) : action();
 
-  return withTransaction(async (client) => {
-    const owned = await clientQuery<{ id: string }>(
+  return timedQuery("transaction", () => withTransaction(async (client) => {
+    const owned = await timedQuery("lock", () => clientQuery<{ id: string }>(
       client,
       `select id
          from campaign_batch_members
@@ -388,13 +393,13 @@ async function persistSuccess(input: {
           and claim_token = $3::uuid
         for update`,
       [claimed.id, workerId, claimed.claim_token]
-    );
+    ));
     if (!owned.rows[0]) return false;
 
     // Contatos pertencem ao associado, não à parcela. Não apaga contatos antigos
     // quando o ERP omite o campo em uma consulta posterior.
     for (const contact of analysis.mobileContacts ?? []) {
-      await clientQuery(
+      await timedQuery("contactUpsert", () => clientQuery(
         client,
         `insert into member_contacts
            (member_id, phone, contact_updated_at, source_invoice_number)
@@ -415,10 +420,10 @@ async function persistSuccess(input: {
                 last_synced_at = now(),
                 updated_at = now()`,
         [claimed.member_id, contact.phone, contact.updatedAt, contact.invoiceNumber]
-      );
+      ));
     }
 
-    await clientQuery(client, `delete from member_installments where campaign_batch_member_id = $1`, [claimed.id]);
+    await timedQuery("historyDelete", () => clientQuery(client, `delete from member_installments where campaign_batch_member_id = $1`, [claimed.id]));
 
     if (analysis.installments.length > 0) {
       const rows = analysis.installments.map((installment) => ({
@@ -444,7 +449,7 @@ async function persistSuccess(input: {
         observation: installment.observation ?? null
       }));
 
-      await clientQuery(
+      await timedQuery("historyInsert", () => clientQuery(
         client,
         `insert into member_installments(
            campaign_batch_member_id, cod_usuario, cod_parcela, due_date_text,
@@ -471,10 +476,10 @@ async function persistSuccess(input: {
              final_amount_cents bigint, plan_type text, observation text
            )`,
         [claimed.id, JSON.stringify(rows)]
-      );
+      ));
     }
 
-    await clientQuery(client, `delete from member_plan_totals where campaign_batch_member_id = $1`, [claimed.id]);
+    await timedQuery("planDelete", () => clientQuery(client, `delete from member_plan_totals where campaign_batch_member_id = $1`, [claimed.id]));
 
     if (analysis.totalsByPlan.length > 0) {
       const rows = analysis.totalsByPlan.map((total) => ({
@@ -483,7 +488,7 @@ async function persistSuccess(input: {
         total_amount_cents: total.totalAmountCents
       }));
 
-      await clientQuery(
+      await timedQuery("planInsert", () => clientQuery(
         client,
         `insert into member_plan_totals(
            campaign_batch_member_id, plan_type, installments_count,
@@ -495,10 +500,10 @@ async function persistSuccess(input: {
              plan_type text, installments_count integer, total_amount_cents bigint
            )`,
         [claimed.id, JSON.stringify(rows)]
-      );
+      ));
     }
 
-    await clientQuery(
+    await timedQuery("financialUpdateWithTriggers", () => clientQuery(
       client,
       `update campaign_batch_members
           set processing_status = 'completed',
@@ -536,9 +541,9 @@ async function persistSuccess(input: {
         financial.pendingAmountCents,
         analysis.installmentsCount
       ]
-    );
+    ));
 
-    await clientQuery(
+    await timedQuery("jobProgressUpdate", () => clientQuery(
       client,
       `update processing_jobs
           set processed_items = processed_items + 1,
@@ -548,19 +553,19 @@ async function persistSuccess(input: {
               updated_at = now()
         where id = $1 and locked_by = $2`,
       [job.id, workerId]
-    );
+    ));
 
     if (generalSyncUniqueTargetsEnabled()) {
-      await recordSuccessfulGeneralSyncTarget(client, {
+      await timedQuery("uniqueTargetRecord", () => recordSuccessfulGeneralSyncTarget(client, {
         runId: job.general_sync_run_id,
         jobId: job.id,
         batchId: job.batch_id,
         memberLinkId: claimed.id
-      });
+      }));
     }
 
     return true;
-  });
+  }));
 }
 
 function isTransientPostgresPersistenceError(error: unknown) {
@@ -918,6 +923,9 @@ export async function runLocalWorkerOnce(options?: {
     erp: { count: 0, totalMs: 0, maxMs: 0 },
     persistence: { count: 0, totalMs: 0, maxMs: 0 }
   };
+  const persistenceProfiler = persistenceProfilingEnabled(
+    process.env.PROCESSING_PERSISTENCE_PROFILE_ENABLED
+  ) ? new PersistenceProfiler() : undefined;
   const cycleStartedAt = performance.now();
 
   async function timed<T>(stage: keyof typeof stageMetrics, action: () => Promise<T>): Promise<T> {
@@ -1119,7 +1127,8 @@ export async function runLocalWorkerOnce(options?: {
               job,
               claimed: item,
               workerId,
-              analysis: prepared.analysis
+              analysis: prepared.analysis,
+            profiler: persistenceProfiler
             }));
             if (persisted) succeeded += 1;
           } catch (error) {
@@ -1211,7 +1220,8 @@ export async function runLocalWorkerOnce(options?: {
             job,
             claimed: item,
             workerId,
-            analysis: result.analysis
+            analysis: result.analysis,
+          profiler: persistenceProfiler
           }));
           if (persisted) succeeded += 1;
         } catch (error) {
@@ -1247,6 +1257,14 @@ export async function runLocalWorkerOnce(options?: {
         ? Math.round(stageMetrics.persistence.totalMs / stageMetrics.persistence.count) : 0,
       persistenceMaxMs: Math.round(stageMetrics.persistence.maxMs)
     });
+
+    if (persistenceProfiler) {
+      console.info("[LOCAL_WORKER_PERSISTENCE_PROFILE]", {
+        jobId: job.id,
+        scope: "successful-persistence-statements",
+        ...persistenceProfiler.summary()
+      });
+    }
 
     await recalculateBatch(job.batch_id);
     // Only the exact clean first wave of 160 can arm stage two. This is
