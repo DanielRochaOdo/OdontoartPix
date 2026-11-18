@@ -23,9 +23,9 @@ describe("persistence profile: opt-in only", () => {
     expect(output).toBe("ok");
     const report = profiler.summary();
     expect(report.transactionAttempts).toBe(1);
-    expect(report.stages.transaction.count).toBe(1);
-    expect(report.stages.historyDelete.count).toBe(1);
-    expect(report.stages.financialUpdateWithTriggers.count).toBe(2);
+    expect(report.stages.transaction?.count).toBe(1);
+    expect(report.stages.historyDelete?.count).toBe(1);
+    expect(report.stages.financialUpdateWithTriggers?.count).toBe(2);
     expect(report.measuredStatementAndMetadataMs).toBeGreaterThanOrEqual(0);
     expect(report.unattributedTransactionMs).toBeGreaterThanOrEqual(0);
     expect(JSON.stringify(report)).not.toContain("deleted");
