@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { GENERAL_SYNC_FIRST_WAVE_ELIGIBILITY_SQL } from "@/lib/processing-persistence-pilot";
+import {
+  GENERAL_SYNC_FIRST_WAVE_ELIGIBILITY_SQL,
+  GENERAL_SYNC_TWO_WAVE_ELIGIBILITY_SQL,
+  GENERAL_SYNC_TWO_WAVE_RESERVE_SQL
+} from "@/lib/processing-persistence-pilot";
 import { Pool, type PoolClient } from "pg";
 import { describe, expect, it } from "vitest";
 import {
@@ -192,6 +196,93 @@ describeDatabase("manual general sync persistence preflight (PostgreSQL rollback
         [scenario.runId]
       );
       expect(await eligible(1)).toBe(false);
+    });
+  });
+});
+
+describeDatabase("two-wave general-sync pilot reservation (PostgreSQL rollback)", () => {
+  it("admite apenas sync filtrada com um lote e reserva cada onda uma vez", async () => {
+    await rollbackScenario(async (client) => {
+      const test = await setup(client, 1);
+      const workerId = randomUUID();
+
+      await client.query(
+        `insert into general_sync_run_batches(
+           run_id, batch_id, campaign_id, batch_name, position, record_count
+         ) values ($1::uuid, $2::uuid, $3::uuid, 'Wave Pilot', 1, 240)`,
+        [test.runId, test.batchIds[0], test.campaignId]
+      );
+      await client.query(
+        `update general_sync_runs
+            set status = 'running', trigger_source = 'manual',
+                sync_mode = 'full_sync', scope_type = 'filtered', batch_count = 1
+          where id = $1::uuid`,
+        [test.runId]
+      );
+      await client.query(
+        `update processing_jobs
+            set status = 'running', locked_by = $2::uuid,
+                total_items = 240, processed_items = 0,
+                success_items = 0, error_items = 0
+          where id = $1::uuid`,
+        [test.jobId, workerId]
+      );
+
+      async function eligible() {
+        const result = await client.query<{ eligible: boolean }>(
+          GENERAL_SYNC_TWO_WAVE_ELIGIBILITY_SQL, [test.runId, test.batchIds[0]]
+        );
+        return result.rows[0]?.eligible === true;
+      }
+      async function reserve(stage: 1 | 2) {
+        const result = await client.query(
+          GENERAL_SYNC_TWO_WAVE_RESERVE_SQL, [test.jobId, workerId, stage]
+        );
+        return result.rowCount;
+      }
+      expect(await eligible()).toBe(true);
+      expect(await reserve(2)).toBe(0); // No second wave before first.
+      expect(await reserve(1)).toBe(1);
+      expect(await reserve(1)).toBe(0); // Crash/retry cannot replay first.
+      expect(await reserve(2)).toBe(0); // Not ready before clean first wave.
+
+      await client.query(
+        `update processing_jobs
+            set processed_items = 160, success_items = 160,
+                general_sync_two_wave_ready = true
+          where id = $1::uuid`,
+        [test.jobId]
+      );
+      expect(await reserve(2)).toBe(1);
+      expect(await reserve(2)).toBe(0);
+      expect(await reserve(1)).toBe(0);
+      const final = await client.query<{
+        general_sync_two_wave_pilot_wave: number;
+        general_sync_two_wave_ready: boolean;
+      }>(
+        `select general_sync_two_wave_pilot_wave, general_sync_two_wave_ready
+           from processing_jobs where id = $1::uuid`, [test.jobId]
+      );
+      expect(final.rows[0]).toMatchObject({
+        general_sync_two_wave_pilot_wave: 2,
+        general_sync_two_wave_ready: false
+      });
+
+      await client.query(
+        "update general_sync_runs set trigger_source = 'scheduled' where id = $1::uuid",
+        [test.runId]
+      );
+      expect(await eligible()).toBe(false);
+      await client.query(
+        "update general_sync_runs set trigger_source = 'manual', scope_type = 'all' where id = $1::uuid",
+        [test.runId]
+      );
+      expect(await eligible()).toBe(false);
+      await client.query(
+        "update general_sync_runs set scope_type = 'filtered', batch_count = 2 where id = $1::uuid",
+        [test.runId]
+      );
+      expect(await eligible()).toBe(false);
     });
   });
 });
