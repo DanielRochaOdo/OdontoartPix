@@ -221,7 +221,7 @@ describeDatabase("two-wave general-sync pilot reservation (PostgreSQL rollback)"
       );
       await client.query(
         `update processing_jobs
-            set status = 'running', locked_by = $2::uuid,
+            set status = 'running', locked_by = $2::text,
                 total_items = 240, processed_items = 0,
                 success_items = 0, error_items = 0
           where id = $1::uuid`,
