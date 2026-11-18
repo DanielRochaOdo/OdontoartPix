@@ -7,7 +7,7 @@
 create or replace function public.recalculate_batch_totals(p_batch_id uuid)
 returns void
 language plpgsql
-as $
+as $$
 declare
   v_use_index_lookup boolean;
 begin
