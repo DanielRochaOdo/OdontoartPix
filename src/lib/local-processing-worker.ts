@@ -1128,7 +1128,7 @@ export async function runLocalWorkerOnce(options?: {
               claimed: item,
               workerId,
               analysis: prepared.analysis,
-            profiler: persistenceProfiler
+              profiler: persistenceProfiler
             }));
             if (persisted) succeeded += 1;
           } catch (error) {
@@ -1221,7 +1221,7 @@ export async function runLocalWorkerOnce(options?: {
             claimed: item,
             workerId,
             analysis: result.analysis,
-          profiler: persistenceProfiler
+            profiler: persistenceProfiler
           }));
           if (persisted) succeeded += 1;
         } catch (error) {
