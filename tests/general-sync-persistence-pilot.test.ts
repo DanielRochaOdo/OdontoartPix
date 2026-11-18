@@ -89,7 +89,7 @@ describe("piloto de persistencia da sincronizacao geral (primeira onda)", () => 
     expect(worker).toContain("!twoWaveOptIn &&");
     expect(worker).toContain("persistenceConcurrency: persistenceMode.concurrency");
     expect(worker).toContain("createAsyncLimiter(persistenceMode.concurrency)");
-    expect(worker).toContain("retryTransientDatabaseErrors: generalSyncPilotActive");
+    expect(worker).toContain("retryTransientDatabaseErrors: persistenceMode.concurrency > 1");
     expect(worker).toContain('errorCode = transientDbFailure ? "DB_TRANSIENT_RETRY"');
     expect(worker).toContain("recordSuccessfulGeneralSyncTarget(client");
     expect(worker).toContain("claim_token = $3::uuid");

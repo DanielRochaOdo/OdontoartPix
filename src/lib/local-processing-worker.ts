@@ -1,3 +1,4 @@
+import { recalculateBatch } from "@/lib/batch-totals";
 import { randomUUID } from "node:crypto";
 import type { MonthlyAnalysis } from "@/lib/analysis";
 import { dbQuery } from "@/lib/db/pool";
@@ -589,7 +590,7 @@ async function persistFailure(input: {
   // Concurrency may briefly collide with PostgreSQL row locks. A transient
   // SQLSTATE must be retried using the established attempt/backoff policy,
   // never promoted to a successful financial result or a terminal ERP error.
-  // This special handling is enabled only for the general-sync pilot.
+  // Enable this handling whenever the effective write concurrency exceeds one.
   const transientDbFailure = input.retryTransientDatabaseErrors === true &&
     isTransientPostgresPersistenceError(error);
   const retryable = transientDbFailure || (erpError?.retryable ?? false);
@@ -681,47 +682,6 @@ async function persistFailure(input: {
 
     return { terminal, persisted: true };
   });
-}
-
-async function recalculateBatch(batchId: string) {
-  await dbQuery(
-    `with totals as (
-       select
-         count(*)::int as total_records,
-         count(*) filter (where processing_status = 'completed')::int as processed_records,
-         count(*) filter (where payment_status = 'paid')::int as paid_records,
-         count(*) filter (where payment_status = 'unpaid')::int as unpaid_records,
-         count(*) filter (
-           where processing_status = 'error'
-             and (payment_status is null or payment_status not in ('paid','agreed','excluded'))
-         )::int as error_records,
-         coalesce(sum(total_pending_amount_cents), 0)::bigint as total_pending_amount_cents,
-         count(*) filter (where processing_status = 'processing')::int as processing_records,
-         count(*) filter (
-           where processing_status in ('pending','queued','retrying','aguardando')
-             and (payment_status is null or payment_status not in ('paid','agreed','excluded'))
-         )::int as waiting_records
-       from campaign_batch_members
-      where batch_id = $1 and deleted_at is null
-     )
-     update campaign_batches b
-        set total_records = t.total_records,
-            processed_records = t.processed_records,
-            paid_records = t.paid_records,
-            unpaid_records = t.unpaid_records,
-            error_records = t.error_records,
-            total_pending_amount_cents = t.total_pending_amount_cents,
-            status = case
-                       when t.processing_records > 0 then 'processando'
-                       when t.waiting_records > 0 then 'aguardando'
-                       when t.error_records > 0 then 'concluido_com_erros'
-                       else 'concluido'
-                     end,
-            updated_at = now()
-       from totals t
-      where b.id = $1`,
-    [batchId]
-  );
 }
 
 async function releaseAndFinalizeJob(
@@ -1139,7 +1099,7 @@ export async function runLocalWorkerOnce(options?: {
               error,
               maxAttempts: config.maxAttemptsPerItem,
               erpConsultStarted: true,
-              retryTransientDatabaseErrors: generalSyncPilotActive || twoWavePilotStage > 0
+              retryTransientDatabaseErrors: persistenceMode.concurrency > 1
             }));
             countFailure(failure);
           }

@@ -107,7 +107,7 @@ describe("fase 3 — sincronizacao geral com exatamente duas ondas de 2 gravacoe
     expect(worker).toContain("GENERAL_SYNC_TWO_WAVE_RESERVE_SQL");
     expect(worker).toContain("generalSyncPilotCandidate && generalSyncPilotVerified");
     expect(worker).toContain("!twoWaveOptIn &&");
-    expect(worker).toContain("retryTransientDatabaseErrors: generalSyncPilotActive || twoWavePilotStage > 0");
+    expect(worker).toContain("retryTransientDatabaseErrors: persistenceMode.concurrency > 1");
     expect(worker).toContain("recordSuccessfulGeneralSyncTarget(client");
     expect(worker).toContain("claim_token = $3::uuid");
     expect(worker).toContain("createAsyncLimiter(persistenceMode.concurrency)");
