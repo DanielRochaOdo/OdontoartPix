@@ -93,7 +93,7 @@ describe("fase 3 — sincronizacao geral com exatamente duas ondas de 2 gravacoe
     expect(GENERAL_SYNC_TWO_WAVE_ELIGIBILITY_SQL).toContain("run.status = 'running'");
     expect(GENERAL_SYNC_TWO_WAVE_ELIGIBILITY_SQL).toContain("batch.record_count between 161 and 320");
     expect(GENERAL_SYNC_TWO_WAVE_RESERVE_SQL).toContain("general_sync_two_wave_pilot_wave = $3::smallint - 1");
-    expect(GENERAL_SYNC_TWO_WAVE_RESERVE_SQL).toContain("locked_by = $2::uuid");
+    expect(GENERAL_SYNC_TWO_WAVE_RESERVE_SQL).toContain("locked_by = $2::text");
     expect(GENERAL_SYNC_TWO_WAVE_RESERVE_SQL).toContain("general_sync_two_wave_ready = false");
   });
 
