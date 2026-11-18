@@ -380,4 +380,127 @@ describeDatabase("canonical installment database invariant", () => {
       expect((await getTotals()).rows).toEqual(after);
     });
   });
+  it("preserva os totais em ambos os caminhos: lote pequeno e lote acima do limite", async () => {
+    await withIsolatedTransaction(async (client) => {
+      const { campaignId, batchIds, memberId } = await createScenario(client);
+      const [largeId, smallId] = batchIds;
+      const links: string[] = [];
+
+      for (const batchId of [largeId, smallId]) {
+        const row = await client.query<{ id: string; target_installment_ref_id: string }>(
+          `insert into campaign_batch_members(
+             campaign_id, batch_id, member_id, target_installment_id,
+             installment_amount_cents, processing_status
+           ) values ($1::uuid, $2::uuid, $3::uuid, 'RECALC-041', 5000, 'pending')
+           returning id, target_installment_ref_id`,
+          [campaignId, batchId, memberId]
+        );
+        links.push(row.rows[0]!.id);
+      }
+
+      // 2,501 additional links without a canonical target make this batch
+      // follow the large-batch branch (> 2,500 active links). The target
+      // columns are nullable in the operational schema. Bulk insert remains
+      // fully transactionally rolled back after the test.
+      await client.query(
+        `insert into campaign_batch_members(
+           campaign_id, batch_id, member_id, target_installment_id,
+           installment_amount_cents, processing_status
+         )
+         select $1::uuid, $2::uuid, $3::uuid, null, 0, 'pending'
+           from generate_series(1, 2501)`,
+        [campaignId, largeId, memberId]
+      );
+
+      const getTotals = async () => (await client.query<{
+        id: string;
+        heap_tuple: string;
+        total_records: number;
+        processed_records: number;
+        paid_records: number;
+        total_amount_cents: string;
+        total_pending_amount_cents: string;
+        status: string;
+      }>(
+        `select id, ctid::text as heap_tuple, total_records,
+                processed_records, paid_records, total_amount_cents::text,
+                total_pending_amount_cents::text, status
+           from campaign_batches
+          where id = any($1::uuid[])
+          order by id`,
+        [[largeId, smallId]]
+      )).rows;
+
+      await client.query("select recalculate_batch_totals($1::uuid)", [largeId]);
+      await client.query("select recalculate_batch_totals($1::uuid)", [smallId]);
+
+      const initial = await getTotals();
+      const byId = (rows: typeof initial, id: string) => rows.find((row) => row.id === id)!;
+      expect(byId(initial, largeId)).toMatchObject({
+        total_records: 2502,
+        processed_records: 0,
+        paid_records: 0,
+        total_amount_cents: "5000",
+        status: "aguardando"
+      });
+      expect(byId(initial, smallId)).toMatchObject({
+        total_records: 1,
+        processed_records: 0,
+        paid_records: 0,
+        total_amount_cents: "5000",
+        status: "aguardando"
+      });
+
+      // The canonical truth capture propagates a partial paid installment
+      // to BOTH batches; neither path may omit the shared occurrence.
+      await client.query(
+        `update campaign_batch_members
+            set processing_status = 'completed',
+                payment_status = 'paid',
+                payment_status_source = 'erp_explicit',
+                installment_amount_cents = 5000,
+                payment_amount_cents = 3000,
+                total_pending_amount_cents = 2000,
+                last_erp_status_at = now(),
+                updated_at = now()
+          where id = $1::uuid`,
+        [links[0]]
+      );
+
+      await client.query("select recalculate_batch_totals($1::uuid)", [largeId]);
+      await client.query("select recalculate_batch_totals($1::uuid)", [smallId]);
+
+      const paid = await getTotals();
+      for (const batchId of [largeId, smallId]) {
+        const item = byId(paid, batchId);
+        expect(item.processed_records).toBe(1);
+        expect(item.paid_records).toBe(1);
+        expect(item.total_amount_cents).toBe("5000");
+        expect(item.total_pending_amount_cents).toBe("2000");
+      }
+      expect(byId(paid, largeId).status).toBe("aguardando");
+      expect(byId(paid, smallId).status).toBe("concluido");
+
+      const shared = await client.query<{
+        payment_status: string;
+        total_pending_amount_cents: string;
+      }>(
+        `select payment_status, total_pending_amount_cents::text
+           from campaign_batch_members
+          where id = any($1::uuid[])`,
+        [links]
+      );
+      expect(shared.rows).toHaveLength(2);
+      for (const row of shared.rows) {
+        expect(row.payment_status).toBe("paid");
+        expect(row.total_pending_amount_cents).toBe("2000");
+      }
+
+      // Repeating a no-op calculation must not rewrite either batch.
+      await client.query("select recalculate_batch_totals($1::uuid)", [largeId]);
+      await client.query("select recalculate_batch_totals($1::uuid)", [smallId]);
+      expect(await getTotals()).toEqual(paid);
+    });
+  }, 60_000);
+
 });
