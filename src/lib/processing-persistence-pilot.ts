@@ -43,3 +43,50 @@ export function resolvePersistencePilot(input: {
     pilot
   };
 }
+
+/**
+ * Second-stage pilot: one bounded initial worker cycle in a MANUAL general
+ * synchronization. All subsequent cycles of that job and every other batch
+ * remain on the configured single-write limit.
+ *
+ * "first_claim" comes from processing_jobs.started_at before the worker claims
+ * the job. It is persisted by the existing job lifecycle, so a crash/retry
+ * cannot rearm the pilot for the same job.
+ */
+export type GeneralSyncPersistencePilotJob = PersistencePilotJob & {
+  batch_id: string;
+  processed_items: number;
+  success_items: number;
+  error_items: number;
+  first_claim?: boolean;
+};
+
+export function canAttemptGeneralSyncPersistencePilot(input: {
+  job: GeneralSyncPersistencePilotJob;
+  configuredConcurrency: number;
+  splitPipelineEnabled: boolean;
+  slidingWindowV2Enabled: boolean;
+  pilotEnabled: boolean;
+  dedupEnabled: boolean;
+  cycleClaimLimit: number;
+}): boolean {
+  const { job } = input;
+  return input.pilotEnabled &&
+    input.dedupEnabled &&
+    input.configuredConcurrency === 1 &&
+    input.splitPipelineEnabled &&
+    input.slidingWindowV2Enabled &&
+    job.first_claim === true &&
+    job.processing_origin === "dashboard" &&
+    job.processing_scope === "dashboard" &&
+    typeof job.general_sync_run_id === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(job.general_sync_run_id) &&
+    job.target_member_link_id == null &&
+    job.filtered_error_request_id == null &&
+    Number.isSafeInteger(job.processed_items) && job.processed_items === 0 &&
+    Number.isSafeInteger(job.success_items) && job.success_items === 0 &&
+    Number.isSafeInteger(job.error_items) && job.error_items === 0 &&
+    Number.isSafeInteger(job.total_items) && job.total_items >= 2 &&
+    Number.isSafeInteger(input.cycleClaimLimit) &&
+    input.cycleClaimLimit >= 2 && input.cycleClaimLimit <= 160;
+}
