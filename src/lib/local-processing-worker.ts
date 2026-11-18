@@ -4,7 +4,7 @@ import { dbQuery } from "@/lib/db/pool";
 import { clientQuery, withTransaction } from "@/lib/db/transaction";
 import { consultMonthlyByAssociatedCode, ErpError } from "@/lib/mensalidades-api";
 import { getProcessingConfig } from "@/lib/processing-config";
-import { resolvePersistencePilot } from "@/lib/processing-persistence-pilot";
+import { resolvePersistencePilot, canAttemptGeneralSyncPersistencePilot } from "@/lib/processing-persistence-pilot";
 import { runSplitProcessingPipeline } from "@/lib/processing-pipeline";
 import { createAsyncLimiter, runSlidingClaimedBatches } from "@/lib/processing-sliding-window";
 import { runContinuousTwoPassWindow } from "@/lib/processing-sliding-window-v2";
@@ -27,6 +27,7 @@ type LocalJob = {
   target_member_link_id: string | null;
   filtered_error_request_id: string | null;
   stop_requested_at: string | null;
+  first_claim?: boolean;
 };
 
 type ClaimedMember = {
@@ -160,7 +161,7 @@ async function recoverStaleLocalWork(staleHeartbeatMs: number) {
 
 async function claimNextJob(workerId: string, leaseSeconds: number) {
   return withTransaction(async (client) => {
-    const selected = await clientQuery<LocalJob>(
+    const selected = await clientQuery<LocalJob & { started_at: string | null }>(
       client,
       `select id,
               campaign_id,
@@ -177,7 +178,8 @@ async function claimNextJob(workerId: string, leaseSeconds: number) {
               processing_scope,
               target_member_link_id,
               filtered_error_request_id,
-              stop_requested_at::text
+              stop_requested_at::text,
+              started_at::text
          from processing_jobs
         where status in ('queued', 'deferred')
           and stop_requested_at is null
@@ -224,7 +226,7 @@ async function claimNextJob(workerId: string, leaseSeconds: number) {
       [job.id, workerId, Math.max(leaseSeconds, 30)]
     );
 
-    return updated.rows[0] ?? null;
+    return updated.rows[0] ? { ...updated.rows[0], first_claim: job.started_at == null } : null;
   });
 }
 
@@ -927,7 +929,51 @@ export async function runLocalWorkerOnce(options?: {
         console.warn("[PERSISTENCE_PILOT_PREFLIGHT_FAILED]", { jobId: job.id });
       }
     }
-    const persistenceMode = resolvePersistencePilot({
+    const generalSyncPilotCandidate = canAttemptGeneralSyncPersistencePilot({
+      job,
+      configuredConcurrency: config.persistenceConcurrency,
+      splitPipelineEnabled,
+      slidingWindowV2Enabled,
+      pilotEnabled: process.env.PROCESSING_GENERAL_SYNC_PERSISTENCE_PILOT_ENABLED === "true",
+      dedupEnabled: generalSyncUniqueTargetsEnabled(),
+      cycleClaimLimit: effectiveClaimLimit * 2
+    });
+    let generalSyncPilotVerified = false;
+    if (generalSyncPilotCandidate) {
+      try {
+        // One job, one wave (at most 160 claims), only on the first nonempty
+        // batch of a full sync explicitly started by a user. Never scheduled.
+        const eligibility = await dbQuery<{ eligible: boolean }>(
+          `select exists (
+             select 1
+               from general_sync_runs run
+               join general_sync_run_batches batch
+                 on batch.run_id = run.id
+                and batch.batch_id = $2::uuid
+              where run.id = $1::uuid
+                and run.status = 'running'
+                and run.trigger_source = 'manual'
+                and run.sync_mode = 'full_sync'
+                and batch.record_count > 0
+                and batch.position = (
+                  select min(first_batch.position)
+                    from general_sync_run_batches first_batch
+                   where first_batch.run_id = run.id
+                     and first_batch.record_count > 0
+                )
+           ) as eligible`,
+          [job.general_sync_run_id, job.batch_id]
+        );
+        generalSyncPilotVerified = eligibility.rows[0]?.eligible === true;
+      } catch {
+        console.warn("[GENERAL_SYNC_PERSISTENCE_PILOT_PREFLIGHT_FAILED]", {
+          jobId: job.id,
+          runId: job.general_sync_run_id
+        });
+      }
+    }
+
+    const manualPersistenceMode = resolvePersistencePilot({
       job,
       configuredConcurrency: config.persistenceConcurrency,
       splitPipelineEnabled,
@@ -935,6 +981,12 @@ export async function runLocalWorkerOnce(options?: {
       pilotEnabled: pilotOptIn,
       activeGeneralSync
     });
+    const generalSyncPilotActive = generalSyncPilotCandidate && generalSyncPilotVerified;
+    const persistenceMode = generalSyncPilotActive
+      ? { concurrency: 2, pilot: true }
+      : manualPersistenceMode;
+    const persistencePilotScope = generalSyncPilotActive ? "general-sync-first-wave" :
+      (manualPersistenceMode.pilot ? "manual-small-batch" : "none");
     const claimed = slidingWindowEnabled ? [] as ClaimedMember[] :
       await claimMembers(job, workerId, effectiveClaimLimit);
     let claimedCount = claimed.length;
@@ -1123,6 +1175,7 @@ export async function runLocalWorkerOnce(options?: {
       persistenceConfiguredConcurrency: config.persistenceConcurrency,
       persistenceConcurrency: persistenceMode.concurrency,
       persistencePilot: persistenceMode.pilot,
+      persistencePilotScope,
       elapsedMs: Math.round(performance.now() - cycleStartedAt),
       erpCalls: stageMetrics.erp.count,
       erpAverageMs: stageMetrics.erp.count
