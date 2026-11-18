@@ -4,7 +4,14 @@ import { dbQuery } from "@/lib/db/pool";
 import { clientQuery, withTransaction } from "@/lib/db/transaction";
 import { consultMonthlyByAssociatedCode, ErpError } from "@/lib/mensalidades-api";
 import { getProcessingConfig } from "@/lib/processing-config";
-import { resolvePersistencePilot, canAttemptGeneralSyncPersistencePilot, GENERAL_SYNC_FIRST_WAVE_ELIGIBILITY_SQL } from "@/lib/processing-persistence-pilot";
+import {
+  resolvePersistencePilot,
+  canAttemptGeneralSyncPersistencePilot,
+  resolveTwoWaveGeneralSyncPilotStage,
+  GENERAL_SYNC_FIRST_WAVE_ELIGIBILITY_SQL,
+  GENERAL_SYNC_TWO_WAVE_ELIGIBILITY_SQL,
+  GENERAL_SYNC_TWO_WAVE_RESERVE_SQL
+} from "@/lib/processing-persistence-pilot";
 import { runSplitProcessingPipeline } from "@/lib/processing-pipeline";
 import { createAsyncLimiter, runSlidingClaimedBatches } from "@/lib/processing-sliding-window";
 import { runContinuousTwoPassWindow } from "@/lib/processing-sliding-window-v2";
@@ -28,6 +35,8 @@ type LocalJob = {
   filtered_error_request_id: string | null;
   stop_requested_at: string | null;
   first_claim?: boolean;
+  general_sync_two_wave_pilot_wave: number;
+  general_sync_two_wave_ready: boolean;
 };
 
 type ClaimedMember = {
@@ -179,7 +188,9 @@ async function claimNextJob(workerId: string, leaseSeconds: number) {
               target_member_link_id,
               filtered_error_request_id,
               stop_requested_at::text,
-              started_at::text
+              started_at::text,
+              general_sync_two_wave_pilot_wave,
+              general_sync_two_wave_ready
          from processing_jobs
         where status in ('queued', 'deferred')
           and stop_requested_at is null
@@ -222,7 +233,9 @@ async function claimNextJob(workerId: string, leaseSeconds: number) {
                   processing_scope,
                   target_member_link_id,
                   filtered_error_request_id,
-                  stop_requested_at::text`,
+                  stop_requested_at::text,
+                  general_sync_two_wave_pilot_wave,
+                  general_sync_two_wave_ready`,
       [job.id, workerId, Math.max(leaseSeconds, 30)]
     );
 
@@ -706,7 +719,11 @@ async function recalculateBatch(batchId: string) {
   );
 }
 
-async function releaseAndFinalizeJob(job: LocalJob, workerId: string) {
+async function releaseAndFinalizeJob(
+  job: LocalJob,
+  workerId: string,
+  firstTwoWaveSucceededCompletely = false
+) {
   return withTransaction(async (client) => {
     const control = await clientQuery<{ status: string; stop_requested_at: string | null }>(
       client,
@@ -827,9 +844,16 @@ async function releaseAndFinalizeJob(job: LocalJob, workerId: string) {
               locked_at = null,
               lease_expires_at = null,
               last_heartbeat_at = now(),
+              general_sync_two_wave_ready = case
+                when $6::boolean and $3 = 'queued'
+                  and general_sync_two_wave_pilot_wave = 1
+                  and processed_items = 160 and success_items = 160
+                  and error_items = 0
+                then true else false end,
               updated_at = now()
         where id = $1 and locked_by = $2`,
-      [job.id, workerId, completed ? "completed" : "queued", immediate, nextRetryAt]
+      [job.id, workerId, completed ? "completed" : "queued", immediate, nextRetryAt,
+       firstTwoWaveSucceededCompletely]
     );
 
     return completed ? "completed" as const : "queued" as const;
@@ -943,12 +967,16 @@ export async function runLocalWorkerOnce(options?: {
         console.warn("[PERSISTENCE_PILOT_PREFLIGHT_FAILED]", { jobId: job.id });
       }
     }
+    // Third-stage pilot is exclusive: while opted in, the former single-wave
+    // general-sync pilot MUST NOT run as a fallback for an ineligible scope.
+    const twoWaveOptIn = process.env.PROCESSING_GENERAL_SYNC_TWO_WAVE_PILOT_ENABLED === "true";
     const generalSyncPilotCandidate = canAttemptGeneralSyncPersistencePilot({
       job,
       configuredConcurrency: config.persistenceConcurrency,
       splitPipelineEnabled,
       slidingWindowV2Enabled,
-      pilotEnabled: process.env.PROCESSING_GENERAL_SYNC_PERSISTENCE_PILOT_ENABLED === "true",
+      pilotEnabled: !twoWaveOptIn &&
+        process.env.PROCESSING_GENERAL_SYNC_PERSISTENCE_PILOT_ENABLED === "true",
       dedupEnabled: generalSyncUniqueTargetsEnabled(),
       cycleClaimLimit: effectiveClaimLimit * 2
     });
@@ -970,6 +998,39 @@ export async function runLocalWorkerOnce(options?: {
       }
     }
 
+    const twoWaveCandidate = resolveTwoWaveGeneralSyncPilotStage({
+      job,
+      configuredConcurrency: config.persistenceConcurrency,
+      splitPipelineEnabled,
+      slidingWindowV2Enabled,
+      pilotEnabled: twoWaveOptIn,
+      dedupEnabled: generalSyncUniqueTargetsEnabled(),
+      cycleClaimLimit: effectiveClaimLimit * 2
+    });
+    let twoWavePilotStage: 0 | 1 | 2 = 0;
+    if (twoWaveCandidate !== 0) {
+      try {
+        const eligibility = await dbQuery<{ eligible: boolean }>(
+          GENERAL_SYNC_TWO_WAVE_ELIGIBILITY_SQL,
+          [job.general_sync_run_id, job.batch_id]
+        );
+        if (eligibility.rows[0]?.eligible === true) {
+          const reserved = await dbQuery<{ general_sync_two_wave_pilot_wave: number }>(
+            GENERAL_SYNC_TWO_WAVE_RESERVE_SQL,
+            [job.id, workerId, twoWaveCandidate]
+          );
+          if (Number(reserved.rows[0]?.general_sync_two_wave_pilot_wave) === twoWaveCandidate) {
+            twoWavePilotStage = twoWaveCandidate;
+          }
+        }
+      } catch {
+        console.warn("[GENERAL_SYNC_TWO_WAVE_PILOT_PREFLIGHT_FAILED]", {
+          jobId: job.id, runId: job.general_sync_run_id,
+          stage: twoWaveCandidate
+        });
+      }
+    }
+
     const manualPersistenceMode = resolvePersistencePilot({
       job,
       configuredConcurrency: config.persistenceConcurrency,
@@ -979,11 +1040,13 @@ export async function runLocalWorkerOnce(options?: {
       activeGeneralSync
     });
     const generalSyncPilotActive = generalSyncPilotCandidate && generalSyncPilotVerified;
-    const persistenceMode = generalSyncPilotActive
+    const persistenceMode = twoWavePilotStage > 0 || generalSyncPilotActive
       ? { concurrency: 2, pilot: true }
       : manualPersistenceMode;
-    const persistencePilotScope = generalSyncPilotActive ? "general-sync-first-wave" :
-      (manualPersistenceMode.pilot ? "manual-small-batch" : "none");
+    const persistencePilotScope = twoWavePilotStage > 0
+      ? `general-sync-two-wave-${twoWavePilotStage}`
+      : (generalSyncPilotActive ? "general-sync-first-wave" :
+        (manualPersistenceMode.pilot ? "manual-small-batch" : "none"));
     const claimed = slidingWindowEnabled ? [] as ClaimedMember[] :
       await claimMembers(job, workerId, effectiveClaimLimit);
     let claimedCount = claimed.length;
@@ -1067,7 +1130,7 @@ export async function runLocalWorkerOnce(options?: {
               error,
               maxAttempts: config.maxAttemptsPerItem,
               erpConsultStarted: true,
-              retryTransientDatabaseErrors: generalSyncPilotActive
+              retryTransientDatabaseErrors: generalSyncPilotActive || twoWavePilotStage > 0
             }));
             countFailure(failure);
           }
@@ -1186,7 +1249,13 @@ export async function runLocalWorkerOnce(options?: {
     });
 
     await recalculateBatch(job.batch_id);
-    const jobStatus = await releaseAndFinalizeJob(job, workerId);
+    // Only the exact clean first wave of 160 can arm stage two. This is
+    // persisted in the SAME transaction that releases the job as queued.
+    const firstTwoWaveSucceededCompletely = twoWavePilotStage === 1 &&
+      claimedCount === 160 && succeeded === 160 && failed === 0 && retried === 0;
+    const jobStatus = await releaseAndFinalizeJob(
+      job, workerId, firstTwoWaveSucceededCompletely
+    );
 
     return {
       workerId,

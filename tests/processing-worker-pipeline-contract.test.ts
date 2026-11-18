@@ -41,7 +41,8 @@ describe("local processing pipeline safety contracts", () => {
     expect(localWorker).toContain("persistFailure({");
     expect(localWorker).toContain("countFailure(failure)");
     expect(localWorker).toMatch(/await runSplitProcessingPipeline[\s\S]*await recalculateBatch\(job\.batch_id\);/);
-    expect(localWorker).toContain("await releaseAndFinalizeJob(job, workerId)");
+    expect(localWorker).toContain("const jobStatus = await releaseAndFinalizeJob(");
+    expect(localWorker).toContain("job, workerId, firstTwoWaveSucceededCompletely");
     expect(localWorker).toContain("and stop_requested_at is null");
     expect(localWorker).toContain("claim: (limit) => claimMembers(job, workerId, limit, true)");
     expect(localWorker).toContain("claim_token = $3::uuid");

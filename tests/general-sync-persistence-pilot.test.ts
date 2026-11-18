@@ -85,7 +85,8 @@ describe("piloto de persistencia da sincronizacao geral (primeira onda)", () => 
     expect(worker).toContain("generalSyncUniqueTargetsEnabled()");
     expect(worker).toContain("GENERAL_SYNC_FIRST_WAVE_ELIGIBILITY_SQL");
     expect(worker).toContain("generalSyncPilotCandidate && generalSyncPilotVerified");
-    expect(worker).toContain('persistencePilotScope = generalSyncPilotActive ? "general-sync-first-wave"');
+    expect(worker).toContain('generalSyncPilotActive ? "general-sync-first-wave"');
+    expect(worker).toContain("!twoWaveOptIn &&");
     expect(worker).toContain("persistenceConcurrency: persistenceMode.concurrency");
     expect(worker).toContain("createAsyncLimiter(persistenceMode.concurrency)");
     expect(worker).toContain("retryTransientDatabaseErrors: generalSyncPilotActive");
