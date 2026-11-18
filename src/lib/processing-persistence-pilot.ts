@@ -206,7 +206,7 @@ export const GENERAL_SYNC_TWO_WAVE_RESERVE_SQL = `
          general_sync_two_wave_ready = false,
          updated_at = now()
    where id = $1::uuid
-     and locked_by = $2::uuid
+     and locked_by = $2::text
      and status = 'running'
      and general_sync_two_wave_pilot_wave = $3::smallint - 1
      and (
