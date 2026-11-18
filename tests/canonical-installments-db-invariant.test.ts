@@ -240,4 +240,144 @@ describeDatabase("canonical installment database invariant", () => {
       });
     });
   });
+
+  it("evita regravar lotes cujos totais calculados ja sao iguais", async () => {
+    await withIsolatedTransaction(async (client) => {
+      const { campaignId, batchIds, memberId } = await createScenario(client);
+      const affectedBatches = batchIds.slice(0, 2);
+
+      for (const batchId of affectedBatches) {
+        await client.query(
+          `insert into campaign_batch_members(
+             campaign_id, batch_id, member_id, target_installment_id,
+             installment_amount_cents, processing_status
+           ) values ($1::uuid, $2::uuid, $3::uuid, 'RECALC-1', 5000, 'pending')`,
+          [campaignId, batchId, memberId]
+        );
+        await client.query("select recalculate_batch_totals($1::uuid)", [batchId]);
+      }
+
+      const snapshot = () =>
+        client.query<{
+          id: string;
+          heap_tuple: string;
+          total_records: number;
+          total_amount_cents: string;
+          status: string;
+        }>(
+          `select id, ctid::text as heap_tuple,
+                  total_records, total_amount_cents::text, status
+             from campaign_batches
+            where id = any($1::uuid[])
+            order by id`,
+          [affectedBatches]
+        );
+      const before = (await snapshot()).rows;
+      expect(before).toHaveLength(2);
+      for (const row of before) {
+        expect(row.total_records).toBe(1);
+        expect(row.total_amount_cents).toBe("5000");
+        expect(row.status).toBe("aguardando");
+      }
+
+      for (const batchId of affectedBatches) {
+        await client.query("select recalculate_batch_totals($1::uuid)", [batchId]);
+        await client.query("select recalculate_batch_totals($1::uuid)", [batchId]);
+      }
+      // Every real heap UPDATE changes ctid, even inside the same transaction.
+      expect((await snapshot()).rows).toEqual(before);
+    });
+  });
+
+  it("propaga pagamento parcial entre lotes e mantem no-op idempotente", async () => {
+    await withIsolatedTransaction(async (client) => {
+      const { campaignId, batchIds, memberId } = await createScenario(client);
+      const affectedBatches = batchIds.slice(0, 2);
+      const links: string[] = [];
+
+      for (const batchId of affectedBatches) {
+        const inserted = await client.query<{ id: string }>(
+          `insert into campaign_batch_members(
+             campaign_id, batch_id, member_id, target_installment_id,
+             installment_amount_cents, processing_status
+           ) values ($1::uuid, $2::uuid, $3::uuid, 'RECALC-2', 5000, 'pending')
+           returning id`,
+          [campaignId, batchId, memberId]
+        );
+        links.push(inserted.rows[0]!.id);
+        await client.query("select recalculate_batch_totals($1::uuid)", [batchId]);
+      }
+
+      const before = await client.query<{ id: string; heap_tuple: string }>(
+        `select id, ctid::text as heap_tuple from campaign_batches
+          where id = any($1::uuid[]) order by id`,
+        [affectedBatches]
+      );
+
+      await client.query(
+        `update campaign_batch_members
+            set processing_status = 'completed',
+                payment_status = 'paid',
+                payment_status_source = 'erp_explicit',
+                installment_amount_cents = 5000,
+                payment_amount_cents = 3000,
+                total_pending_amount_cents = 2000,
+                last_erp_status_at = now(),
+                updated_at = now()
+          where id = $1::uuid`,
+        [links[0]]
+      );
+
+      const getTotals = () =>
+        client.query<{
+          id: string;
+          heap_tuple: string;
+          total_records: number;
+          processed_records: number;
+          paid_records: number;
+          total_amount_cents: string;
+          total_pending_amount_cents: string;
+          status: string;
+        }>(
+          `select id, ctid::text as heap_tuple, total_records,
+                  processed_records, paid_records, total_amount_cents::text,
+                  total_pending_amount_cents::text, status
+             from campaign_batches
+            where id = any($1::uuid[]) order by id`,
+          [affectedBatches]
+        );
+
+      const after = (await getTotals()).rows;
+      expect(after).toHaveLength(2);
+      for (const [index, row] of after.entries()) {
+        expect(row.heap_tuple).not.toBe(before.rows[index]!.heap_tuple);
+        expect(row.total_records).toBe(1);
+        expect(row.processed_records).toBe(1);
+        expect(row.paid_records).toBe(1);
+        expect(row.total_amount_cents).toBe("5000");
+        expect(row.total_pending_amount_cents).toBe("2000");
+        expect(row.status).toBe("concluido");
+      }
+
+      const siblings = await client.query<{
+        payment_status: string;
+        total_pending_amount_cents: string;
+      }>(
+        `select payment_status, total_pending_amount_cents::text
+           from campaign_batch_members
+          where id = any($1::uuid[])`,
+        [links]
+      );
+      expect(siblings.rows).toHaveLength(2);
+      for (const link of siblings.rows) {
+        expect(link.payment_status).toBe("paid");
+        expect(link.total_pending_amount_cents).toBe("2000");
+      }
+
+      for (const batchId of affectedBatches) {
+        await client.query("select recalculate_batch_totals($1::uuid)", [batchId]);
+      }
+      expect((await getTotals()).rows).toEqual(after);
+    });
+  });
 });
