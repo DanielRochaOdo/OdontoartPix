@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { GENERAL_SYNC_FIRST_WAVE_ELIGIBILITY_SQL } from "@/lib/processing-persistence-pilot";
 import { Pool, type PoolClient } from "pg";
 import { describe, expect, it } from "vitest";
 import {
@@ -139,6 +140,61 @@ async function persistSimulatedErpSuccess(
     ]
   );
 }
+
+describeDatabase("manual general sync persistence preflight (PostgreSQL rollback)", () => {
+  it("seleciona somente o primeiro lote nao vazio de uma sync manual ativa", async () => {
+    await rollbackScenario(async (client) => {
+      const scenario = await setup(client, 3);
+      for (let i = 0; i < scenario.batchIds.length; i++) {
+        await client.query(
+          `insert into general_sync_run_batches(
+             run_id, batch_id, campaign_id, batch_name, position, record_count
+           ) values ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6)`,
+          [
+            scenario.runId, scenario.batchIds[i], scenario.campaignId,
+            "Batch " + i, i + 1, i === 0 ? 0 : 3
+          ]
+        );
+      }
+
+      async function eligible(batchIndex: number) {
+        const result = await client.query<{ eligible: boolean }>(
+          GENERAL_SYNC_FIRST_WAVE_ELIGIBILITY_SQL,
+          [scenario.runId, scenario.batchIds[batchIndex]]
+        );
+        return result.rows[0]?.eligible === true;
+      }
+
+      // A paused/completed run or a scheduled run must NEVER use the pilot.
+      expect(await eligible(1)).toBe(false);
+      await client.query(
+        `update general_sync_runs
+            set status = 'running', trigger_source = 'manual', sync_mode = 'full_sync'
+          where id = $1::uuid`,
+        [scenario.runId]
+      );
+      expect(await eligible(0)).toBe(false); // Empty first batch skipped.
+      expect(await eligible(1)).toBe(true);  // First nonempty batch only.
+      expect(await eligible(2)).toBe(false);
+
+      await client.query(
+        "update general_sync_runs set trigger_source = 'scheduled' where id = $1::uuid",
+        [scenario.runId]
+      );
+      expect(await eligible(1)).toBe(false);
+      await client.query(
+        "update general_sync_runs set trigger_source = 'manual', sync_mode = 'error_reprocess' where id = $1::uuid",
+        [scenario.runId]
+      );
+      expect(await eligible(1)).toBe(false);
+      await client.query(
+        "update general_sync_runs set sync_mode = 'full_sync', status = 'paused' where id = $1::uuid",
+        [scenario.runId]
+      );
+      expect(await eligible(1)).toBe(false);
+    });
+  });
+});
 
 describe("general-sync unique targets flag", () => {
   it("fica desativada por padrao", () => {
