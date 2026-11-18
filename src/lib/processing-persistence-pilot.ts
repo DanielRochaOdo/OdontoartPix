@@ -90,3 +90,24 @@ export function canAttemptGeneralSyncPersistencePilot(input: {
     Number.isSafeInteger(input.cycleClaimLimit) &&
     input.cycleClaimLimit >= 2 && input.cycleClaimLimit <= 160;
 }
+
+/** Read-only database preflight; index-backed by run_id / batch_id. */
+export const GENERAL_SYNC_FIRST_WAVE_ELIGIBILITY_SQL = `
+  select exists (
+    select 1
+      from general_sync_runs run
+      join general_sync_run_batches batch
+        on batch.run_id = run.id
+       and batch.batch_id = $2::uuid
+     where run.id = $1::uuid
+       and run.status = 'running'
+       and run.trigger_source = 'manual'
+       and run.sync_mode = 'full_sync'
+       and batch.record_count > 0
+       and batch.position = (
+         select min(first_batch.position)
+           from general_sync_run_batches first_batch
+          where first_batch.run_id = run.id
+            and first_batch.record_count > 0
+       )
+  ) as eligible`;
