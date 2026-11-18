@@ -550,6 +550,12 @@ async function persistSuccess(input: {
   });
 }
 
+function isTransientPostgresPersistenceError(error: unknown) {
+  const code = error && typeof error === "object" &&
+    "code" in error ? String(error.code ?? "") : "";
+  return code === "40P01" || code === "40001" || code === "55P03";
+}
+
 async function persistFailure(input: {
   job: LocalJob;
   claimed: ClaimedMember;
@@ -557,14 +563,22 @@ async function persistFailure(input: {
   error: unknown;
   maxAttempts: number;
   erpConsultStarted: boolean;
+  retryTransientDatabaseErrors?: boolean;
 }) {
   const { job, claimed, workerId, error, maxAttempts, erpConsultStarted } = input;
   const erpError = error instanceof ErpError ? error : null;
 
-  const retryable = erpError?.retryable ?? false;
+  // Concurrency may briefly collide with PostgreSQL row locks. A transient
+  // SQLSTATE must be retried using the established attempt/backoff policy,
+  // never promoted to a successful financial result or a terminal ERP error.
+  // This special handling is enabled only for the general-sync pilot.
+  const transientDbFailure = input.retryTransientDatabaseErrors === true &&
+    isTransientPostgresPersistenceError(error);
+  const retryable = transientDbFailure || (erpError?.retryable ?? false);
   const attemptLimit = Math.min(maxAttempts, claimed.max_attempts);
   const terminal = !retryable || claimed.processing_attempts >= attemptLimit;
-  const errorCode = erpError?.code ?? "PROCESSING_INTERNAL_ERROR";
+  const errorCode = transientDbFailure ? "DB_TRANSIENT_RETRY" :
+    (erpError?.code ?? "PROCESSING_INTERNAL_ERROR");
   const errorMessage =
     error instanceof Error
       ? error.message
@@ -1069,7 +1083,8 @@ export async function runLocalWorkerOnce(options?: {
               workerId,
               error,
               maxAttempts: config.maxAttemptsPerItem,
-              erpConsultStarted: true
+              erpConsultStarted: true,
+              retryTransientDatabaseErrors: generalSyncPilotActive
             }));
             countFailure(failure);
           }
