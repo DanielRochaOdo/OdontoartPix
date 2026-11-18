@@ -380,7 +380,7 @@ describeDatabase("canonical installment database invariant", () => {
       expect((await getTotals()).rows).toEqual(after);
     });
   });
-  it("preserva os totais em ambos os caminhos: lote pequeno e lote acima do limite", async () => {
+  it("preserva totais de lotes pequenos e grandes apos restaurar a 040", async () => {
     await withIsolatedTransaction(async (client) => {
       const { campaignId, batchIds, memberId } = await createScenario(client);
       const [largeId, smallId] = batchIds;
@@ -398,10 +398,9 @@ describeDatabase("canonical installment database invariant", () => {
         links.push(row.rows[0]!.id);
       }
 
-      // 2,501 additional links without a canonical target make this batch
-      // follow the large-batch branch (> 2,500 active links). The target
-      // columns are nullable in the operational schema. Bulk insert remains
-      // fully transactionally rolled back after the test.
+      // 2,501 additional links create a larger batch for regression coverage.
+      // The NULL canonical targets are counted but contribute no amounts.
+      // The test transaction is fully rolled back.
       await client.query(
         `insert into campaign_batch_members(
            campaign_id, batch_id, member_id, target_installment_id,
@@ -502,5 +501,21 @@ describeDatabase("canonical installment database invariant", () => {
       expect(await getTotals()).toEqual(paid);
     });
   }, 60_000);
+
+  it("restaura o recálculo da 040 sem o seletor introduzido na 041", async () => {
+    await withIsolatedTransaction(async (client) => {
+      const ddl = await client.query<{ definition: string }>(
+        `select pg_get_functiondef(
+             'public.recalculate_batch_totals(uuid)'::regprocedure
+           ) as definition`
+      );
+      const definition = ddl.rows[0]!.definition.toLowerCase();
+      expect(definition).toContain("left join member_target_installments canonical");
+      expect(definition).toContain("and row(");
+      expect(definition).toContain("is distinct from row(");
+      expect(definition).not.toContain("v_use_index_lookup");
+      expect(definition).not.toContain("left join lateral");
+    });
+  });
 
 });
