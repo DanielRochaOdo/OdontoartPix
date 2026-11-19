@@ -1,0 +1,3 @@
+- Ao concluir cada modificação, informe se houve migration e, em caso positivo, qual(is).
+- Informe se houve criação ou alteração de Functions que não sejam provenientes de migration e identifique qual(is).
+- Use a linguagem padrão ASD-TSE100 para se comunicar comigo.
