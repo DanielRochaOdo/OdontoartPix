@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
+import { shouldContinueLocalDrain } from "@/lib/local-worker-drain";
 
 const workerEntrypointSource = readFileSync(
   new URL("../scripts/process-local-worker.ts", import.meta.url),
@@ -11,11 +12,30 @@ const localWorkerSource = readFileSync(
 );
 
 it("drain devolve o controle ao systemd quando um job nao faz progresso", () => {
-  expect(workerEntrypointSource).toMatch(/if \(result\.claimed === 0\)/);
+  expect(workerEntrypointSource).toContain("if (!shouldContinueLocalDrain({");
   expect(workerEntrypointSource).toMatch(/LOCAL_WORKER_NO_PROGRESS_BREAK/);
   expect(workerEntrypointSource).toMatch(
-    /if \(!drain \|\| result\.jobStatus === "idle"\) return;[\s\S]*if \(result\.claimed === 0\)/
+    /if \(!drain\) return;[\s\S]*if \(!shouldContinueLocalDrain/
   );
+});
+
+it.each(["batch_completed_no_job", "completed_empty_batch"])(
+  "drain continua apos %s sem job e permite reconciliar o fim do run", advanceAction => {
+    expect(shouldContinueLocalDrain({ jobStatus: "idle", claimed: 0, advanceAction })).toBe(true);
+    expect(shouldContinueLocalDrain({ jobStatus: "completed", claimed: 12 })).toBe(true);
+    expect(shouldContinueLocalDrain({ jobStatus: "idle", claimed: 0 })).toBe(false);
+  }
+);
+
+it.each([undefined, "active_batch", "waiting_active_job", "no_pending_batch", "cancelling", "unknown"])(
+  "nao gira sem trabalho para acao %s", advanceAction => {
+    expect(shouldContinueLocalDrain({ jobStatus: "idle", claimed: 0, advanceAction })).toBe(false);
+    expect(shouldContinueLocalDrain({ jobStatus: "queued", claimed: 0, advanceAction })).toBe(false);
+  }
+);
+
+it("falha do worker encerra drain mesmo havendo claims", () => {
+  expect(shouldContinueLocalDrain({ jobStatus: "failed", claimed: 2 })).toBe(false);
 });
 
 it("recuperacao de lease cancela job com parada solicitada", () => {

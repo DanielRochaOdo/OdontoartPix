@@ -1,3 +1,4 @@
+import { recalculateBatch } from "@/lib/batch-totals";
 import { z } from "zod";
 import { parseMemberFile } from "@/lib/imports";
 import { hashAssociatedCode } from "@/lib/hash";
@@ -413,7 +414,7 @@ export async function POST(request: Request) {
           await clientQuery(client, "delete from campaigns where id = $1", [campaign.id]);
         }
       } else if (importedRecords > 0) {
-        await clientQuery(client, `select public.recalculate_batch_totals($1::uuid)`, [batch.id]);
+        await recalculateBatch(batch.id, client);
         await clientQuery(
           client,
           `update campaigns set status = 'aguardando', updated_at = now() where id = $1`,

@@ -502,11 +502,11 @@ describeDatabase("canonical installment database invariant", () => {
     });
   }, 60_000);
 
-  it("restaura o recálculo da 040 sem o seletor introduzido na 041", async () => {
+  it("preserva as formulas da 040 no calculo agrupado sem o seletor da 041", async () => {
     await withIsolatedTransaction(async (client) => {
       const ddl = await client.query<{ definition: string }>(
         `select pg_get_functiondef(
-             'public.recalculate_batch_totals(uuid)'::regprocedure
+             'public.recalculate_batch_totals_many(uuid[])'::regprocedure
            ) as definition`
       );
       const definition = ddl.rows[0]!.definition.toLowerCase();

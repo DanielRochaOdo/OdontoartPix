@@ -1,4 +1,5 @@
 import type { PoolClient } from "pg";
+import { recalculateBatch } from "@/lib/batch-totals";
 import { clientQuery } from "@/lib/db/transaction";
 
 /**
@@ -58,7 +59,8 @@ export async function recordSuccessfulGeneralSyncTarget(
 
 /**
  * Financial values are already distributed by canonical triggers.
- * This function only marks the other operational links as served.
+ * Marks operational links as served and refreshes their batch summary in
+ * the caller's transaction, including when reuse leaves no job to enqueue.
  * Same-batch past successes are skipped without double counting.
  */
 export async function reuseSuccessfulGeneralSyncTargets(
@@ -86,8 +88,11 @@ export async function reuseSuccessfulGeneralSyncTargets(
 
   // Prevent legacy BEFORE triggers from interpreting an old lot snapshot
   // as a new financial result. Do not write any financial fields.
+  const previousSync = await clientQuery<{ value: string | null }>(
+    client, "select current_setting('odontoart.canonical_sync', true) as value"
+  );
   await clientQuery(client, "select set_config('odontoart.canonical_sync', 'on', true)");
-  await clientQuery(
+  const updated = await clientQuery(
     client,
     `update campaign_batch_members cbm
           set processing_status = 'completed',
@@ -113,7 +118,12 @@ export async function reuseSuccessfulGeneralSyncTargets(
           and cbm.processing_status <> 'processing'`,
     [input.runId, input.batchId]
   );
-  await clientQuery(client, "select set_config('odontoart.canonical_sync', 'off', true)");
+  await clientQuery(client, "select set_config('odontoart.canonical_sync', $1, true)",
+    [previousSync.rows[0]?.value ?? "off"]);
+
+  // Same-batch recovery has reused_count = 0 but can still change links.
+  // Recalculate once per affected batch, never once per reused installment.
+  if ((updated.rowCount ?? 0) > 0) await recalculateBatch(input.batchId, client);
 
   return Number(countResult.rows[0]?.reused_count ?? 0);
 }

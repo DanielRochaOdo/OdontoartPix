@@ -13,7 +13,20 @@
     "preflight:production": "tsx scripts/preflight-production.ts",
     "worker:once": "tsx scripts/process-local-worker.ts",
     "worker:drain": "tsx scripts/process-local-worker.ts --drain",
-    "worker:provision": "tsx scripts/provision-processing-service.ts"
+    "worker:provision": "tsx scripts/provision-processing-service.ts",
+    "lab:up": "node scripts/local-financial-lab.mjs up",
+    "lab:status": "node scripts/local-financial-lab.mjs status",
+    "lab:stop": "node scripts/local-financial-lab.mjs stop",
+    "lab:migrate": "node scripts/local-financial-lab.mjs migrate",
+    "lab:seed": "node scripts/local-financial-fixtures.mjs",
+    "lab:dev": "node scripts/local-financial-lab.mjs dev",
+    "lab:worker": "node scripts/local-financial-lab.mjs worker",
+    "lab:worker:watch": "node scripts/local-financial-lab.mjs worker --watch --delay-ms=0",
+    "lab:worker:stop": "node scripts/local-financial-lab.mjs worker-stop",
+    "lab:test": "node scripts/local-financial-lab.mjs test",
+    "lab:smoke": "node scripts/local-financial-smoke.mjs",
+    "lab:smoke:general": "node scripts/local-financial-general-sync-smoke.mjs",
+    "lab:benchmark": "node scripts/local-financial-benchmark.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.1.1",

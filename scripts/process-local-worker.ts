@@ -3,6 +3,7 @@ import { runLocalGeneralSyncCycle } from "../src/lib/general-sync-orchestrator";
 import { startDueLocalScheduledGeneralSync } from "../src/lib/general-sync-scheduled-start";
 import { finalizePendingLocalProcessingStops } from "../src/lib/local-processing-stop-checkpoint";
 import { runLocalWorkerOnce } from "../src/lib/local-processing-worker";
+import { shouldContinueLocalDrain } from "../src/lib/local-worker-drain";
 
 const ADVISORY_LOCK_NAMESPACE = 17483621;
 const ADVISORY_LOCK_WORKER = 20260821;
@@ -188,20 +189,27 @@ async function main() {
         return;
       }
 
-      if (!drain || result.jobStatus === "idle") return;
+      if (!drain) return;
 
       // Um job ainda pode permanecer queued/deferred quando so existem itens
       // inelegiveis ou retries agendados para o futuro. Sem este checkpoint o
       // --drain fica preso no mesmo job e impede que o oneshot termine; com o
       // timer sem novo ciclo, sincronizacoes gerais (inclusive cancelamentos)
-      // ficam famintas indefinidamente. Zero claims significa zero progresso:
-      // devolvemos o controle ao systemd e o proximo tick reavalia tudo.
-      if (result.claimed === 0) {
-        console.warn("[LOCAL_WORKER_NO_PROGRESS_BREAK]", {
-          jobId: result.jobId,
-          batchId: result.batchId,
-          jobStatus: result.jobStatus
-        });
+      // ficam famintas indefinidamente. Um lote vazio/reaproveitado tambem e
+      // progresso: continua para o seguinte e para a reconciliacao final.
+      // Sem claims nem avanco de lote, o proximo tick reavalia o trabalho.
+      if (!shouldContinueLocalDrain({
+        jobStatus: result.jobStatus,
+        claimed: result.claimed,
+        advanceAction: generalSyncResult.advance?.action
+      })) {
+        if (result.jobStatus !== "idle") {
+          console.warn("[LOCAL_WORKER_NO_PROGRESS_BREAK]", {
+            jobId: result.jobId,
+            batchId: result.batchId,
+            jobStatus: result.jobStatus
+          });
+        }
         return;
       }
 
