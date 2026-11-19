@@ -21,8 +21,11 @@
     "lab:seed": "node scripts/local-financial-fixtures.mjs",
     "lab:dev": "node scripts/local-financial-lab.mjs dev",
     "lab:worker": "node scripts/local-financial-lab.mjs worker",
+    "lab:worker:watch": "node scripts/local-financial-lab.mjs worker --watch --delay-ms=0",
+    "lab:worker:stop": "node scripts/local-financial-lab.mjs worker-stop",
     "lab:test": "node scripts/local-financial-lab.mjs test",
     "lab:smoke": "node scripts/local-financial-smoke.mjs",
+    "lab:smoke:general": "node scripts/local-financial-general-sync-smoke.mjs",
     "lab:benchmark": "node scripts/local-financial-benchmark.mjs"
   },
   "dependencies": {

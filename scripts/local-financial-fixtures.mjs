@@ -66,9 +66,11 @@ export async function verifyTotals(client, batchIds) {
   return rows;
 }
 
-export async function startMockErp(s) {
+export async function startMockErp(s, { port = 3101, failures = {}, delayMs = 0 } = {}) {
   const pool = new pg.Pool(connection(s, databases.dev));
   await assertServer(pool, s);
+  const requests = [];
+  const attempts = new Map();
   const server = createServer(async (request, response) => {
     try {
       const url = new URL(request.url, 'http://127.0.0.1:3101');
@@ -76,6 +78,16 @@ export async function startMockErp(s) {
         response.writeHead(404).end(); return;
       }
       const code = url.searchParams.get('CodigoAssociadoEmpresa') ?? '';
+      const attempt = (attempts.get(code) ?? 0) + 1;
+      attempts.set(code, attempt);
+      const status = failures[code]?.[attempt - 1] ?? 200;
+      requests.push({ code, attempt, status, at: new Date().toISOString() });
+      if (delayMs > 0) await new Promise(resolve => setTimeout(resolve, delayMs));
+      if (status !== 200) {
+        response.writeHead(status, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify({ message: 'Synthetic ERP transient failure' }));
+        return;
+      }
       const { rows } = await pool.query(`select t.external_installment_code as id from member_target_installments t
         join members m on m.id=t.member_id where m.external_user_code=$1`, [code]);
       const mode = Number(code.split(':').at(-1)) % 5;
@@ -89,8 +101,9 @@ export async function startMockErp(s) {
     } catch (error) { response.writeHead(500).end(JSON.stringify({ error: error.message })); }
   });
   server.on('close', () => { void pool.end(); });
-  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(3101, '127.0.0.1', resolve); });
-  console.log('Mock ERP: http://127.0.0.1:3101 (synthetic records only).');
+  server.labRequests = requests;
+  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
+  console.log(`Mock ERP: http://127.0.0.1:${port} (synthetic records only).`);
   return server;
 }
 

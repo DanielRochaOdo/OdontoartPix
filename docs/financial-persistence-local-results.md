@@ -74,6 +74,36 @@ Para iniciar o ambiente e repetir os testes, seguir [o guia do laboratório](fin
 
 Migration aplicada apenas no laboratório: **044**. Functions SQL: `recalculate_batch_totals_many(uuid[])` criada; `recalculate_batch_totals(uuid)` e `sync_target_installment_links_v1(uuid)` alteradas pela migration. Nenhuma Function SQL ou Edge Function criada fora de migration.
 
+## Correção do fluxo completo — 19/11/2026
+
+O teste manual pelo Dashboard encontrou dois problemas que o smoke anterior de lote individual não cobria:
+
+1. O reaproveitamento concluía os vínculos com a propagação automática suprimida e deixava o resumo operacional de três lotes desatualizado. Os valores financeiros estavam corretos. Um teste de regressão reproduziu a falha antes da correção.
+2. `--drain` encerrava ao encontrar um lote totalmente reaproveitado, mesmo havendo outros lotes a percorrer ou uma sincronização a finalizar.
+
+Correções aplicadas: recálculo do lote na mesma transação do reaproveitamento, condicionado às linhas afetadas; restauração da flag de propagação anterior; continuação de `drain` quando a orquestração conclui um lote sem criar job. Espera por retry futuro e ausência real de progresso continuam devolvendo o controle. O modo contínuo local agora é um comando versionado, `lab:worker:watch`, com parada após o ciclo atual e espera mínima entre ciclos.
+
+### Evidências após a correção
+
+| Cenário HTTP + worker real | Consultas concluídas | Vínculos reaproveitados | Resultado |
+|---|---:|---:|---|
+| Sincronização nova de 40 parcelas em 3 lotes, uma execução de drain | 40 | 80 | Concluída, zero divergências |
+| Repetição da mesma campanha | 8 | 16 | Concluída, valores preservados |
+| Falha HTTP 503 simulada seguida de retry real | 10 | 20 | 11 chamadas HTTP, zero erros finais e divergências |
+| Interrupção real após commit e recuperação do processo | 80 | 160 | Concluída, zero divergências |
+| Reexecução dos 6 lotes originais do usuário | 64 | 128 | Três resumos antigos corrigidos pelo próprio fluxo |
+| Novo run com serviço já ocioso, sem lançar worker manualmente | 16 | 32 | Serviço consumiu e concluiu os 3 lotes |
+
+- Suíte: **84 arquivos aprovados; 389 testes aprovados e 1 ignorado**, em 78,76 segundos.
+- `npm run typecheck` aprovado.
+- Conferência independente dos **15 lotes** presentes no banco local: zero divergências financeiras ou operacionais após a reexecução dos lotes originais.
+- Os testes de banco também cobrem rollback do vínculo e resumo juntos, flag anterior ativa, retomada no mesmo lote com contador de reaproveitamento zero, reaproveitamento parcial, vínculo em processamento e exclusão lógica.
+- O controle automatizado de interface continuou indisponível (`timeoutMs` na integração do navegador). Os fluxos HTTP, worker e banco foram verificados; cliques e apresentação visual não foram homologados nesta execução.
+
+Relatórios locais: `general-sync-smoke-report.json`, `original-fixtures-recheck.json`, `worker-watch-acceptance.json` e `test-suite-flow-fix.log`, todos em `.local/financial-lab/`. A evidência anterior foi preservada em `dashboard-sync-20261119-report.json`.
+
+Esta correção não cria migration nem Function SQL/Edge Function. Utiliza as funções já presentes na **044**. Os cenários confirmam correção funcional; não demonstram ganho de velocidade da concorrência 2.
+
 ## Observações do ambiente
 
 O Next emitiu avisos sobre a convenção `middleware` e vulnerabilidade na versão instalada. A instalação das dependências também informou alertas de auditoria. Este laboratório não é uma homologação de segurança ou autorização de publicação da aplicação.

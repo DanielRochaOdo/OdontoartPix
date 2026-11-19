@@ -73,7 +73,21 @@ Em outro terminal, depois de iniciar um processamento pela interface:
 npm run lab:worker -- --delay-ms=0
 ```
 
-O worker drena a fila e encerra. Para novos processamentos, executar novamente. A campanha `LAB interface ...` contém 240 parcelas sintéticas compartilhadas em três lotes.
+Esse comando drena a fila e encerra. Ele também percorre lotes inteiramente reaproveitados e reconcilia o término da sincronização geral antes de sair.
+
+Para testar várias vezes pela interface, manter o worker contínuo em outro terminal:
+
+```powershell
+npm run lab:worker:watch
+```
+
+Ele aguarda cinco segundos entre ciclos sem trabalho, consome novas solicitações do Dashboard e respeita as datas reais de retry. `--delay-ms=0` não elimina a espera entre ciclos ociosos. Para encerrar após o ciclo atual:
+
+```powershell
+npm run lab:worker:stop
+```
+
+O estado do serviço fica em `.local/financial-lab/worker-service.json`. Se estiver `failed`, consultar o terminal/log e corrigir a falha antes de reiniciar. O modo contínuo usa exclusivamente o banco e o ERP locais. A campanha `LAB interface ...` contém 240 parcelas sintéticas compartilhadas em três lotes.
 
 ### Validar
 
@@ -85,6 +99,19 @@ npm run lab:smoke
 ```
 
 O teste de fluxo autentica pela API, cria uma campanha sintética própria, enfileira 80 parcelas pela rota real e executa o worker. Confere sucesso do job, estados financeiros, saldos parciais, totais dos três lotes e resposta HTML autenticada. Mantém a campanha para inspeção na interface. Relatório em `.local/financial-lab/smoke-report.json`; detalhes do worker em `worker-smoke.log`.
+
+Para validar especificamente a sincronização geral do Dashboard:
+
+```powershell
+# Aguardar o serviço registrar stopped antes do teste, para não haver dois executores.
+npm run lab:worker:stop
+npm run lab:smoke:general
+npm run lab:worker:watch
+```
+
+Esse teste usa as rotas HTTP reais de login, início e acompanhamento; cria campanhas sintéticas próprias e um ERP temporário em `127.0.0.1:3102`. Confere uma execução única de `drain`, repetição, HTTP 503 seguido de retry pela política existente e interrupção real do processo após um commit, seguida de recuperação. Não altera datas de retry para acelerar o resultado. O teste exige a ausência de sincronização ativa e de worker contínuo concorrente. As campanhas e os logs são preservados para inspeção.
+
+O relatório `.local/financial-lab/general-sync-smoke-report.json` registra chamadas reais ao ERP simulado, reaproveitamentos, valores, jobs e totais. `complete: true` indica que todos os cenários passaram. A conferência é feita antes de qualquer reparação externa. Os resumos dos lotes reaproveitados agora são recalculados na própria transação que conclui seus vínculos, uma vez por lote.
 
 Os testes de banco também usam conexões distintas e `pg_blocking_pids` para comprovar sobreposição real. Conferem totais **antes** de qualquer reparação final, em cenários de commit, rollback e resposta antiga para uma parcela compartilhada.
 
@@ -107,7 +134,7 @@ As massas recebem `ANALYZE` antes dos cálculos. Isso evita que estatísticas de
 
 ### Encerrar
 
-Encerrar `lab:dev` e qualquer worker em seus terminais; depois:
+Executar `lab:worker:stop`, aguardar `stopped` em `worker-service.json` e encerrar `lab:dev`; depois:
 
 ```powershell
 npm run lab:stop

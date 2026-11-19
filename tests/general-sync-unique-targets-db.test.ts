@@ -357,6 +357,21 @@ describeDatabase("general-sync unique targets (PostgreSQL rollback)", () => {
           });
         }
 
+        // Inspect the stored summary immediately after reuse, before any
+        // worker finalization or independent repair can hide stale totals.
+        const summaries = await client.query(
+          `select total_records, processed_records, paid_records, unpaid_records,
+                  error_records, total_amount_cents::text as amount,
+                  total_pending_amount_cents::text as pending, status
+             from campaign_batches where id = any($1::uuid[])`,
+          [scenario.batchIds]
+        );
+        expect(summaries.rows).toEqual(Array.from({ length: 4 }, () => ({
+          total_records: 1, processed_records: 1, paid_records: status === "paid" ? 1 : 0,
+          unpaid_records: status === "unpaid" ? 1 : 0, error_records: 0,
+          amount: "5000", pending: status === "unpaid" ? "5000" : "0", status: "concluido"
+        })));
+
         // A new general sync must be free to perform a new check.
         expect(await reuseSuccessfulGeneralSyncTargets(client, {
           runId: randomUUID(),
@@ -398,6 +413,7 @@ describeDatabase("general-sync unique targets (PostgreSQL rollback)", () => {
         "update campaign_batch_members set processing_status = 'pending' where id = $1::uuid",
         [s.links[0]]
       );
+      await client.query("select recalculate_batch_totals($1)", [s.batchIds[0]]);
       expect(await reuseSuccessfulGeneralSyncTargets(client, {
         runId: s.runId, batchId: s.batchIds[0]!
       })).toBe(0);
@@ -406,6 +422,11 @@ describeDatabase("general-sync unique targets (PostgreSQL rollback)", () => {
         [s.links[0]]
       );
       expect(state.rows[0]!.processing_status).toBe("completed");
+      const summary = await client.query(
+        "select processed_records, status from campaign_batches where id = $1::uuid",
+        [s.batchIds[0]]
+      );
+      expect(summary.rows[0]).toEqual({ processed_records: 1, status: "concluido" });
     });
   });
 
@@ -456,6 +477,52 @@ describeDatabase("general-sync unique targets (PostgreSQL rollback)", () => {
         [otherLink.rows[0]!.id]
       );
       expect(result.rows[0]!.processing_status).toBe("pending");
+      const summary = (await client.query(
+        "select total_records, processed_records, status from campaign_batches where id=$1", [s.batchIds[1]]
+      )).rows[0];
+      expect(summary).toEqual({ total_records: 2, processed_records: 1, status: "aguardando" });
+    });
+  });
+
+  it("mantem guard anterior e desfaz vinculo e resumo juntos no rollback", async () => {
+    await rollbackScenario(async client => {
+      const s = await setup(client, 2);
+      await persistSimulatedErpSuccess(client, s.links[0]!, "unpaid");
+      await recordSuccessfulGeneralSyncTarget(client, {
+        runId: s.runId, jobId: s.jobId, batchId: s.batchIds[0]!, memberLinkId: s.links[0]!
+      });
+      const before = (await client.query(
+        "select processed_records, status from campaign_batches where id=$1", [s.batchIds[1]]
+      )).rows[0];
+      expect(before).toEqual({ processed_records: 0, status: "aguardando" });
+      await client.query("savepoint before_reuse");
+      await client.query("select set_config('odontoart.canonical_sync','on',true)");
+      expect(await reuseSuccessfulGeneralSyncTargets(client, { runId: s.runId, batchId: s.batchIds[1]! })).toBe(1);
+      expect((await client.query("select current_setting('odontoart.canonical_sync') as value")).rows[0].value).toBe("on");
+      expect((await client.query("select processed_records, status from campaign_batches where id=$1", [s.batchIds[1]])).rows[0])
+        .toEqual({ processed_records: 1, status: "concluido" });
+      await client.query("rollback to savepoint before_reuse");
+      expect((await client.query("select processed_records, status from campaign_batches where id=$1", [s.batchIds[1]])).rows[0]).toEqual(before);
+      expect((await client.query("select processing_status from campaign_batch_members where id=$1", [s.links[1]])).rows[0].processing_status).toBe("pending");
+    });
+  });
+
+  it.each(["processing", "deleted"])("nao reutiliza vinculo %s", async mode => {
+    await rollbackScenario(async client => {
+      const s = await setup(client, 2);
+      await persistSimulatedErpSuccess(client, s.links[0]!, "unpaid");
+      await recordSuccessfulGeneralSyncTarget(client, {
+        runId: s.runId, jobId: s.jobId, batchId: s.batchIds[0]!, memberLinkId: s.links[0]!
+      });
+      await client.query(mode === "processing"
+        ? "update campaign_batch_members set processing_status='processing', processing_owner=gen_random_uuid() where id=$1"
+        : "update campaign_batch_members set deleted_at=now() where id=$1", [s.links[1]]);
+      await client.query("select recalculate_batch_totals($1)", [s.batchIds[1]]);
+      const before = (await client.query("select to_jsonb(cbm) as value from campaign_batch_members cbm where id=$1", [s.links[1]])).rows;
+      expect(await reuseSuccessfulGeneralSyncTargets(client, { runId: s.runId, batchId: s.batchIds[1]! })).toBe(0);
+      expect((await client.query("select to_jsonb(cbm) as value from campaign_batch_members cbm where id=$1", [s.links[1]])).rows).toEqual(before);
+      expect((await client.query("select status from campaign_batches where id=$1", [s.batchIds[1]])).rows[0].status)
+        .toBe(mode === "processing" ? "processando" : "aguardando");
     });
   });
 });

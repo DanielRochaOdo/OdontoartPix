@@ -122,6 +122,49 @@ async function child(script, args, env) {
   });
 }
 
+export function workerOptions(args) {
+  const pollArg = args.find(arg => arg.startsWith('--poll-ms='));
+  const pollMs = pollArg ? Number(pollArg.slice('--poll-ms='.length)) : 5000;
+  if (!Number.isSafeInteger(pollMs) || pollMs < 1000) throw new Error('--poll-ms must be an integer >= 1000.');
+  return { watch: args.includes('--watch'), pollMs,
+    args: ['--drain', ...args.filter(arg => arg !== '--watch' && arg !== '--drain' && !arg.startsWith('--poll-ms='))] };
+}
+
+async function worker(s, args) {
+  const options = workerOptions(args);
+  const execute = () => child(path.join(repo, 'node_modules/tsx/dist/cli.mjs'),
+    ['scripts/process-local-worker.ts', ...options.args], environment(s, databases.dev));
+  if (!options.watch) return execute();
+
+  const check = new pg.Client(connection(s, databases.dev));
+  await check.connect();
+  try { await assertServer(check, s); } finally { await check.end(); }
+  const stopFile = path.join(base, 'worker-service.stop');
+  const statusFile = path.join(base, 'worker-service.json');
+  await fs.rm(stopFile, { force: true });
+  let stopping = false;
+  const stop = () => { stopping = true; };
+  process.on('SIGINT', stop);
+  process.on('SIGTERM', stop);
+  const report = status => fs.writeFile(statusFile, JSON.stringify({
+    pid: process.pid, status, database: databases.dev, updatedAt: new Date().toISOString(), pollMs: options.pollMs
+  }, null, 2));
+  try {
+    while (!stopping && !await exists(stopFile)) {
+      await report('running_cycle');
+      await execute();
+      await report('waiting');
+      // Idle/future retries still wait even with --delay-ms=0.
+      const deadline = Date.now() + options.pollMs;
+      while (!stopping && Date.now() < deadline && !await exists(stopFile)) {
+        await new Promise(resolve => setTimeout(resolve, Math.min(250, deadline - Date.now())));
+      }
+    }
+    await report('stopped');
+  } catch (error) { await report('failed'); throw error; }
+  finally { process.off('SIGINT', stop); process.off('SIGTERM', stop); }
+}
+
 async function main() {
   const command = process.argv[2] ?? 'status';
   if (command === 'up') return up();
@@ -140,8 +183,11 @@ async function main() {
     try { await child(path.join(repo, 'node_modules/next/dist/bin/next'), ['dev', '--hostname', '127.0.0.1', '--port', '3100'], environment(s, databases.dev)); }
     finally { server.close(); }
   } else if (command === 'worker') {
-    await child(path.join(repo, 'node_modules/tsx/dist/cli.mjs'), ['scripts/process-local-worker.ts', '--drain', ...process.argv.slice(3)], environment(s, databases.dev));
-  } else throw new Error('Usage: local-financial-lab.mjs up|status|stop|migrate|test|dev|worker');
+    await worker(s, process.argv.slice(3));
+  } else if (command === 'worker-stop') {
+    await fs.writeFile(path.join(base, 'worker-service.stop'), 'stop after current cycle');
+    console.log('Local worker will stop after its current cycle.');
+  } else throw new Error('Usage: local-financial-lab.mjs up|status|stop|migrate|test|dev|worker [--watch]|worker-stop');
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
