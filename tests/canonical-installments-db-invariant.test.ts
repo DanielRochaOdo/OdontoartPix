@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { Pool, type PoolClient } from "pg";
+import { queueMemberReprocess } from "@/lib/member-reprocess-queue";
 import { describe, expect, it } from "vitest";
 
 const describeDatabase = process.env.CI === "true" ? describe.sequential : describe.skip;
@@ -791,6 +792,18 @@ describeDatabase("canonical installment database invariant", () => {
           [inserted.rows[0]!.target_installment_ref_id]
         );
         expect(canonical.rows[0]?.payment_status).toBe(paymentStatus);
+
+        await expect(queueMemberReprocess(
+          client,
+          {
+            id: linkId,
+            campaign_id: campaignId,
+            batch_id: batchIds[0]!,
+            target_installment_id: `TERMINAL-045-${paymentStatus}`,
+            payment_status: paymentStatus
+          },
+          randomUUID()
+        )).rejects.toThrow("MEMBER_REPROCESS_TERMINAL");
       });
     }
   );
