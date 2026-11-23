@@ -34,23 +34,22 @@ describe("agreed financial state", () => {
     expect(migration).toContain("new.next_check_at is null");
   });
 
-  it("permite reconciliacao manual isolada sem reabrir sincronizacoes gerais", () => {
+  it("bloqueia reprocessamento individual de estados terminais e mantem retry de abertos", () => {
     const route = source("src/app/api/associados/[id]/reprocessar/route.ts");
     const queue = source("src/lib/member-reprocess-queue.ts");
     const worker = source("src/lib/local-processing-worker.ts");
-    const migration = source("db/migrations/031_excluded_financial_truth.sql");
+    const migration = source("db/migrations/045_block_terminal_manual_reprocessing.sql");
 
-    expect(route).not.toContain('if (member.payment_status === "paid")');
-    expect(route).not.toContain('member.payment_status === "agreed"');
-    expect(route).not.toContain('member.payment_status === "excluded"');
-    expect(queue).not.toContain('if (member.payment_status === "paid")');
-    expect(queue).not.toContain('member.payment_status === "agreed"');
-    expect(queue).not.toContain('member.payment_status === "excluded"');
+    expect(route).toContain("MEMBER_REPROCESS_TERMINAL");
+    expect(queue).toContain("MEMBER_REPROCESS_TERMINAL");
+    expect(queue).toContain("canonical.payment_status in ('paid', 'agreed', 'excluded')");
     expect(queue).toContain("next_check_at = now()");
-    expect(worker).toContain("$4::uuid is not null");
     expect(worker).toContain("payment_status not in ('paid', 'agreed', 'excluded')");
-    expect(worker).toContain("where ($3::uuid is not null or payment_status is null or payment_status not in ('paid','agreed','excluded'))");
-    expect(migration).toContain("new.next_check_at is null");
+    expect(worker).toContain("canonical.payment_status in ('paid', 'agreed', 'excluded')");
+    expect(worker).not.toContain("or payment_status is null\n            or payment_status not in");
+    expect(migration).toContain("old.payment_status in ('paid', 'agreed', 'excluded')");
+    expect(migration).toContain("new.next_check_at := null");
+    expect(migration).toContain("new.processing_status := 'completed'");
   });
 
   it("separa agreed de pago e pendente, mas permite a categoria ACORDADO no detalhamento de recebimentos", () => {
