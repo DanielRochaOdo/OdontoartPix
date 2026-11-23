@@ -1,6 +1,7 @@
 import { dbQuery } from "@/lib/db/pool";
 import type { AnalyticsPerfTrace } from "@/lib/analytics-performance";
 import { ASSOCIADOS_CARD_BASE_SQL, type AssociadoCardListItem } from "@/lib/associados-card-read";
+import { getAnalyticsGlobalFilterOptions } from "@/lib/analytics-global-filter-options";
 
 export type AssociadosFilters = {
   query?: string;
@@ -147,31 +148,54 @@ export async function getAssociadosCardPage(
 ): Promise<AssociadosPage> {
   const safePage = Number.isSafeInteger(page) ? Math.min(Math.max(1, page), 100_000) : 1;
   const values = filterValues(filters);
-  const [count, total, paged] = await Promise.all([
+  // A mesma instantânea de parcelas filtradas abastece a soma financeira e
+  // os 50 cartões. Evita duas consolidações e mantém cards e totais coerentes
+  // mesmo quando outras transações atualizam parcelas durante o carregamento.
+  const expression = SORT_SQL[sort] ?? SORT_SQL.name;
+  const direction = ascending ? "asc" : "desc";
+  const [pageResult, total] = await Promise.all([
     dbQuery<{
       filtered_count: number;
       total_amount_cents: number;
       paid_amount_cents: number;
       pending_amount_cents: number;
+      cards: CardRow[];
     }>(
-      FILTERED_SQL + ` select count(*)::int as filtered_count,
-        coalesce(sum(installment_amount_cents), 0)::float8 as total_amount_cents,
-        coalesce(sum(payment_amount_cents) filter (where payment_status = 'paid'), 0)::float8 as paid_amount_cents,
-        coalesce(sum(total_pending_amount_cents) filter (where payment_status = 'unpaid'), 0)::float8 as pending_amount_cents
-        from filtered`, values
+      FILTERED_SQL + `,
+      filtered_once as materialized (select * from filtered),
+      summary as (
+        select count(*)::int as filtered_count,
+          coalesce(sum(installment_amount_cents), 0)::float8 as total_amount_cents,
+          coalesce(sum(payment_amount_cents) filter (where payment_status = 'paid'), 0)::float8 as paid_amount_cents,
+          coalesce(sum(total_pending_amount_cents) filter (where payment_status = 'unpaid'), 0)::float8 as pending_amount_cents
+        from filtered_once
+      ),
+      paged as (
+        select filtered_once.*, ${expression} as paging_sort
+        from filtered_once` + orderSql(sort, ascending) + `
+        limit $16 offset $17
+      )
+      select summary.*,
+        coalesce(
+          (select jsonb_agg(to_jsonb(paged) - 'paging_sort'
+                            order by paging_sort ${direction} nulls last, id asc)
+           from paged),
+          '[]'::jsonb
+        ) as cards
+      from summary`,
+      [...values, PAGE_SIZE, (safePage - 1) * PAGE_SIZE]
     ),
-    dbQuery<{ total_count: number }>(GLOBAL_COUNT_SQL),
-    dbQuery<CardRow>(FILTERED_SQL + " select * from filtered" + orderSql(sort, ascending) +
-      " limit $16 offset $17", [...values, PAGE_SIZE, (safePage - 1) * PAGE_SIZE])
+    dbQuery<{ total_count: number }>(GLOBAL_COUNT_SQL)
   ]);
+  const data = pageResult.rows[0];
   return {
-    rows: toCards(paged.rows),
+    rows: toCards(data?.cards ?? []),
     totalCount: Number(total.rows[0]?.total_count ?? 0),
-    filteredCount: Number(count.rows[0]?.filtered_count ?? 0),
+    filteredCount: Number(data?.filtered_count ?? 0),
     financialSummary: {
-      totalAmountCents: Number(count.rows[0]?.total_amount_cents ?? 0),
-      paidAmountCents: Number(count.rows[0]?.paid_amount_cents ?? 0),
-      pendingAmountCents: Number(count.rows[0]?.pending_amount_cents ?? 0)
+      totalAmountCents: Number(data?.total_amount_cents ?? 0),
+      paidAmountCents: Number(data?.paid_amount_cents ?? 0),
+      pendingAmountCents: Number(data?.pending_amount_cents ?? 0)
     }
   };
 }
@@ -201,9 +225,30 @@ export async function getAssociadosFilteredIds(filters: AssociadosFilters, max =
   return result.rows.map((row) => row.id);
 }
 
-// Cada faceta considera todos os demais filtros, mas ignora a própria seleção.
-// A identidade financeira continua sendo a parcela canônica, sem LIMIT de página.
+// A página sem filtros usa o catálogo leve já validado contra o SQL antigo.
+function hasNoActiveFilters(filters: AssociadosFilters) {
+  return !filters.query?.trim() && !filters.code?.trim() &&
+    !filters.installment?.trim() && !filters.dueDateFrom?.trim() &&
+    !filters.dueDateTo?.trim() && !filters.paymentDateFrom?.trim() &&
+    !filters.paymentDateTo?.trim() && !(filters.status?.length) &&
+    !(filters.payment?.length) && !(filters.receipt?.length) &&
+    !(filters.installmentType?.length) && !(filters.campaign?.length) &&
+    !(filters.batch?.length) && (!filters.paidPending || filters.paidPending === "all");
+}
+
 export async function getAssociadosCardFilterOptions(
+  filters: AssociadosFilters = {},
+  trace?: AnalyticsPerfTrace | null
+): Promise<AssociadosFilterOptions> {
+  if (hasNoActiveFilters(filters)) {
+    return getAnalyticsGlobalFilterOptions(trace);
+  }
+  return getAssociadosCardFilterOptionsLegacy(filters, trace);
+}
+
+// Leitor de referência, usado nos cenários filtrados e nos testes de paridade.
+// Cada faceta considera os demais filtros, mas ignora a própria seleção.
+export async function getAssociadosCardFilterOptionsLegacy(
   filters: AssociadosFilters = {},
   trace?: AnalyticsPerfTrace | null
 ): Promise<AssociadosFilterOptions> {
