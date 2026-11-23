@@ -1,3 +1,4 @@
+import { notifyWorkerWakeup } from "@/lib/worker-wakeup-channel";
 import { generalSyncUniqueTargetsEnabled, reuseSuccessfulGeneralSyncTargets } from "@/lib/general-sync-unique-targets";
 import type { PoolClient } from "pg";
 import { dbQuery } from "@/lib/db/pool";
@@ -488,6 +489,7 @@ export async function enqueueBatchJobWithReuse(input: {
       if (promoted.status === "paused") {
         const resumedJob = await resumePausedJob(client, promoted.id, processingOrigin);
         if (!resumedJob) throw new Error("Job pausado nao pode ser retomado.");
+        await notifyWorkerWakeup(client, "processing-job", resumedJob.id);
         return { job: mapJob(resumedJob, false, true), reusedCount };
       }
 
@@ -512,6 +514,9 @@ export async function enqueueBatchJobWithReuse(input: {
         return { job: null, reusedCount };
       }
 
+      if (promoted.status === "queued") {
+        await notifyWorkerWakeup(client, "processing-job", promoted.id);
+      }
       return { job: mapJob(promoted, false), reusedCount };
     }
 
@@ -583,6 +588,7 @@ export async function enqueueBatchJobWithReuse(input: {
 
     const job = inserted.rows[0];
     if (!job) throw new Error("Job nao criado.");
+    await notifyWorkerWakeup(client, "processing-job", job.id);
     return { job: mapJob(job, true), reusedCount };
   });
 }
