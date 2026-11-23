@@ -29,12 +29,14 @@ describe("canonical installment business contract", () => {
     expect(associados).toContain("string_agg(distinct batch_name");
   });
 
-  it("mantem paid, agreed e excluded terminais no automatico, sem bloquear o manual", () => {
+  it("bloqueia reconsulta de paid, agreed e excluded ate em jobs manuais", () => {
     const worker = source("src/lib/local-processing-worker.ts");
     const queue = source("src/lib/member-reprocess-queue.ts");
 
     expect(worker).toContain("payment_status not in ('paid', 'agreed', 'excluded')");
-    expect(worker).toContain("$4::uuid is not null");
+    expect(worker).toContain("canonical.payment_status in ('paid', 'agreed', 'excluded')");
+    expect(worker).not.toContain("$3::uuid is not null or payment_status");
+    expect(queue).toContain("MEMBER_REPROCESS_TERMINAL");
     expect(queue).toContain("next_check_at = now()");
   });
 });

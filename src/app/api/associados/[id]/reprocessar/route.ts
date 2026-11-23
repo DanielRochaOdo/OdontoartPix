@@ -112,6 +112,9 @@ export async function POST(
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : "Erro desconhecido";
+    if (message === "MEMBER_REPROCESS_TERMINAL") {
+      return fail("CONFLICT", "Parcela paga, acordada ou excluida nao pode ser reprocessada.", 409);
+    }
     console.error("[MEMBER_REPROCESS_QUEUE_FAILED]", {
       memberId: parsed.data.id,
       message

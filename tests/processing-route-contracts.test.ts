@@ -18,6 +18,8 @@ describe("processing route contracts", () => {
     expect(queue).toContain("target_member_link_id");
     expect(queue).toContain("total_items = 1");
     expect(queue).toContain("'manual', 'member'");
+    expect(queue).toContain("MEMBER_REPROCESS_TERMINAL");
+    expect(route).toContain("MEMBER_REPROCESS_TERMINAL");
   });
 
   it("lote mantem escopo e prioridade de lote", () => {

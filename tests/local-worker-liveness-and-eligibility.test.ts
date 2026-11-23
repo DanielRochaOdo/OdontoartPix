@@ -47,13 +47,11 @@ it("recuperacao de lease cancela job com parada solicitada", () => {
   );
 });
 
-it("jobs gerais ignoram quitados, acordados e excluidos mas o reprocessamento individual continua explicito", () => {
-  expect(localWorkerSource).toMatch(
-    /\$4::uuid is not null[\s\S]*payment_status not in \('paid', 'agreed', 'excluded'\)/
-  );
-  expect(localWorkerSource).toMatch(
-    /\$3::uuid is not null or payment_status is null or payment_status not in \('paid','agreed','excluded'\)/
-  );
+it("jobs individuais e gerais ignoram parcelas terminais inclusive no canonico", () => {
+  expect(localWorkerSource).not.toContain("$4::uuid is not null\n            or payment_status");
+  expect(localWorkerSource).not.toContain("$3::uuid is not null or payment_status");
+  expect(localWorkerSource).toContain("and (payment_status is null or payment_status not in ('paid', 'agreed', 'excluded'))");
+  expect(localWorkerSource).toContain("canonical.payment_status in ('paid', 'agreed', 'excluded')");
 });
 
 it("replay filtrado usa o snapshot da requisicao no claim e na finalizacao", () => {

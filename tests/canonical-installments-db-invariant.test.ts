@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { Pool, type PoolClient } from "pg";
+import { queueMemberReprocess } from "@/lib/member-reprocess-queue";
 import { describe, expect, it } from "vitest";
 
 const describeDatabase = process.env.CI === "true" ? describe.sequential : describe.skip;
@@ -672,7 +673,8 @@ describeDatabase("canonical installment database invariant", () => {
       await client.query("select sync_target_installment_links_v1($1::uuid)", [targetId]);
       expect((await snapshot()).rows).toEqual(paid);
 
-      // A terminal link with stale operational metadata is a REAL change.
+      // Tentativas de reabrir ou marcar retry em estado terminal sao
+      // neutralizadas no proprio UPDATE; o sync posterior e idempotente.
       await client.query(
         `update campaign_batch_members
             set processing_attempts = 3,
@@ -689,7 +691,7 @@ describeDatabase("canonical installment database invariant", () => {
       expect(cleaned.find((row) => row.id === links[0])?.tuple_id)
         .toBe(beforeClean.find((row) => row.id === links[0])?.tuple_id);
       expect(cleaned.find((row) => row.id === links[1])?.tuple_id)
-        .not.toBe(beforeClean.find((row) => row.id === links[1])?.tuple_id);
+        .toBe(beforeClean.find((row) => row.id === links[1])?.tuple_id);
 
       const operational = await client.query<{
         processing_attempts: number;
@@ -730,5 +732,82 @@ describeDatabase("canonical installment database invariant", () => {
       ]);
     });
   });
+
+  it.each(["paid", "agreed", "excluded"])(
+    "impede reabertura manual de parcela terminal %s, inclusive com next_check_at",
+    async (paymentStatus) => {
+      await withIsolatedTransaction(async (client) => {
+        const { campaignId, batchIds, memberId } = await createScenario(client);
+        const paymentSource = paymentStatus === "paid"
+          ? "erp_explicit"
+          : paymentStatus === "agreed" ? "erp_agreed" : "erp_excluded";
+        const paymentCents = paymentStatus === "paid" ? 3000 : 0;
+        const pendingCents = paymentStatus === "paid" ? 2000 : 0;
+        const inserted = await client.query<{ id: string; target_installment_ref_id: string }>(
+          `insert into campaign_batch_members(
+             campaign_id, batch_id, member_id, target_installment_id,
+             installment_amount_cents, processing_status, payment_status,
+             payment_status_source, payment_amount_cents, total_pending_amount_cents
+           ) values (
+             $1::uuid, $2::uuid, $3::uuid, $4,
+             5000, 'completed', $5, $6, $7, $8
+           ) returning id, target_installment_ref_id`,
+          [
+            campaignId, batchIds[0], memberId,
+            `TERMINAL-045-${paymentStatus}`,
+            paymentStatus, paymentSource, paymentCents, pendingCents
+          ]
+        );
+        const linkId = inserted.rows[0]!.id;
+
+        await client.query(
+          `update campaign_batch_members
+              set processing_status = 'pending',
+                  processing_attempts = 3,
+                  next_check_at = now(),
+                  next_retry_at = now()
+            where id = $1::uuid`,
+          [linkId]
+        );
+        const link = await client.query<{
+          processing_status: string;
+          payment_status: string;
+          next_check_at: Date | null;
+          next_retry_at: Date | null;
+          processing_attempts: number;
+        }>(
+          `select processing_status, payment_status,
+                  next_check_at, next_retry_at, processing_attempts
+             from campaign_batch_members where id = $1::uuid`,
+          [linkId]
+        );
+        expect(link.rows[0]).toEqual({
+          processing_status: "completed",
+          payment_status: paymentStatus,
+          next_check_at: null,
+          next_retry_at: null,
+          processing_attempts: 0
+        });
+        const canonical = await client.query<{ payment_status: string }>(
+          `select payment_status from member_target_installments where id = $1::uuid`,
+          [inserted.rows[0]!.target_installment_ref_id]
+        );
+        expect(canonical.rows[0]?.payment_status).toBe(paymentStatus);
+
+        await expect(queueMemberReprocess(
+          client,
+          {
+            id: linkId,
+            campaign_id: campaignId,
+            batch_id: batchIds[0]!,
+            target_installment_id: `TERMINAL-045-${paymentStatus}`,
+            payment_status: paymentStatus
+          },
+          randomUUID()
+        )).rejects.toThrow("MEMBER_REPROCESS_TERMINAL");
+      });
+    }
+  );
+
 
 });

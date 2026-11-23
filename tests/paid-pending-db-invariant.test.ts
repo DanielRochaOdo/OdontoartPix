@@ -144,7 +144,7 @@ describeDatabase("paid pending database invariant", () => {
     });
   });
 
-  it("permite reconciliacao explicita, mas impede paid de terminar em error", async () => {
+  it("bloqueia reabertura manual de paid com saldo residual e preserva o estado financeiro", async () => {
     await withIsolatedTransaction(async (client) => {
       const { campaignId, batchId, memberId } = await createScenario(
         client,
@@ -189,7 +189,7 @@ describeDatabase("paid pending database invariant", () => {
           returning processing_status`,
         [linkId]
       );
-      expect(pending.rows[0]!.processing_status).toBe("pending");
+      expect(pending.rows[0]!.processing_status).toBe("completed");
 
       const processing = await client.query<{ processing_status: string }>(
         `update campaign_batch_members
@@ -199,7 +199,7 @@ describeDatabase("paid pending database invariant", () => {
           returning processing_status`,
         [linkId]
       );
-      expect(processing.rows[0]!.processing_status).toBe("processing");
+      expect(processing.rows[0]!.processing_status).toBe("completed");
 
       const terminalFailure = await client.query<{
         processing_status: string;
