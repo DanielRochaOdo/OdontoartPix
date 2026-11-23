@@ -247,6 +247,8 @@ function MultiSelectFilter({
   values,
   options,
   onChange,
+  onOpen,
+  loadingOptions = false,
   searchable = false,
   className = ""
 }: {
@@ -254,6 +256,8 @@ function MultiSelectFilter({
   values: string[];
   options: MultiSelectOption[];
   onChange: (values: string[]) => void;
+  onOpen?: () => void;
+  loadingOptions?: boolean;
   searchable?: boolean;
   className?: string;
 }) {
@@ -293,6 +297,7 @@ function MultiSelectFilter({
       className={`group relative ${className}`}
       onToggle={(event) => {
         if (!event.currentTarget.open) setSearchQuery("");
+        else onOpen?.();
       }}
     >
       <summary className="flex min-h-[42px] cursor-pointer list-none items-center justify-between gap-2 rounded-lg border border-default bg-surface-secondary px-3 py-2.5 text-sm text-primary outline-none transition hover:bg-surface-hover focus:border-focus focus:ring-2 focus:ring-brand">
@@ -300,6 +305,7 @@ function MultiSelectFilter({
         <span className="shrink-0 text-muted transition group-open:rotate-180">▾</span>
       </summary>
       <div className="absolute left-0 top-full z-50 mt-2 w-full min-w-[230px] rounded-xl border border-default bg-surface-elevated p-2 shadow-xl">
+        {loadingOptions ? <p role="status" className="px-3 py-2 text-xs text-muted">Atualizando opções disponíveis...</p> : null}
         {searchable ? (
           <div className="mb-2 flex items-center gap-2">
             <div className="relative min-w-0 flex-1">
@@ -496,6 +502,8 @@ export function AssociadosCardList({
   const { automaticSyncEnabled } = useAutomaticSyncLock();
   const [pageData, setPageData] = useState(initialPage);
   const [availableOptions, setAvailableOptions] = useState(filterOptions);
+  const [loadingFacet, setLoadingFacet] = useState<keyof AssociadosFilterOptions | null>(null);
+  const facetControllers = useRef<Partial<Record<keyof AssociadosFilterOptions, AbortController>>>({});
   const members = pageData.rows;
   const lastInitialPage = useRef(initialPage);
   useEffect(() => {
@@ -614,14 +622,14 @@ export function AssociadosCardList({
   const filteredRows = rows;
   const pageCount = Math.max(1, Math.ceil(pageData.filteredCount / PAGE_SIZE));
   const currentPage = Math.min(page, pageCount);
-  const paginatedRows = pageError ? [] : filteredRows;
-  const allFilteredSelected = pageData.filteredCount > 0 && selectedIds.size === pageData.filteredCount;
+  const paginatedRows = pageError || loading ? [] : filteredRows;
+  const allFilteredSelected = !loading && pageData.filteredCount > 0 && selectedIds.size === pageData.filteredCount;
   const selectedCount = selectedIds.size;
   const canShowErrorReprocess =
     canReprocessErrors &&
     statusFilters.length === 1 &&
     statusFilters[0] === "error" &&
-    pageData.filteredCount > 0 && !pageError;
+    pageData.filteredCount > 0 && !pageError && !loading;
 
   const previousFilters = useRef(JSON.stringify(currentFilters));
   useEffect(() => {
@@ -649,9 +657,6 @@ export function AssociadosCardList({
         if (!response.ok || !payload?.success) throw new Error(payload?.error?.message ?? "Falha ao consultar a lista.");
         if (!controller.signal.aborted) {
           setPageData(payload.data as AssociadosPage);
-          if (payload.data?.filterOptions) {
-            setAvailableOptions(payload.data.filterOptions as AssociadosFilterOptions);
-          }
           setPageError(false);
         }
       } catch (error) {
@@ -753,6 +758,68 @@ export function AssociadosCardList({
     };
   }, [router, selectionWatchActive]);
 
+  // Opções completas já estão disponíveis no SSR. Ao abrir um filtro com
+  // outros critérios ativos, atualizamos somente a faceta solicitada.
+  // Isso impede que seis agregações pesadas atrasem a lista de associados.
+  function refreshFacetOptions(facet: keyof AssociadosFilterOptions) {
+    const active = Object.entries(currentFilters).some(([key, value]) =>
+      Array.isArray(value) ? value.length > 0 :
+        key === "paidPending" ? value !== "all" : Boolean(String(value ?? "").trim())
+    );
+    if (!active) {
+      setAvailableOptions(filterOptions);
+      return;
+    }
+    facetControllers.current[facet]?.abort();
+    const controller = new AbortController();
+    facetControllers.current[facet] = controller;
+    setLoadingFacet(facet);
+    void (async () => {
+      try {
+        const response = await fetch("/api/associados/opcoes", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ filters: currentFilters, facet }),
+          signal: controller.signal
+        });
+        const payload = await response.json();
+        if (!response.ok || !payload?.success) throw new Error("Falha ao atualizar opções.");
+        if (controller.signal.aborted) return;
+        const selected: Record<keyof AssociadosFilterOptions, string[]> = {
+          status: statusFilters, payment: paymentFilters, receipt: receiptFilters,
+          installmentType: installmentTypeFilters, campaign: campaignFilters, batch: batchFilters
+        };
+        const rows = payload.data?.options as MultiSelectOption[] | undefined;
+        if (!Array.isArray(rows)) throw new Error("Resposta de opções inválida.");
+        setAvailableOptions((previous) => {
+          const merged = [...rows];
+          for (const value of selected[facet]) {
+            if (merged.some((item) => item.value === value)) continue;
+            const known = previous[facet].find((item) => item.value === value) ??
+              filterOptions[facet].find((item) => item.value === value);
+            if (known) merged.push(known);
+          }
+          return { ...previous, [facet]: merged };
+        });
+      } catch {
+        // As opções já carregadas continuam utilizáveis; não invalidar a lista.
+      } finally {
+        if (facetControllers.current[facet] === controller) {
+          delete facetControllers.current[facet];
+          setLoadingFacet(null);
+        }
+      }
+    })();
+  }
+
+  // Cancelar leituras antigas quando outro critério passa a valer.
+  useEffect(() => {
+    return () => {
+      for (const controller of Object.values(facetControllers.current)) controller?.abort();
+      facetControllers.current = {};
+    };
+  }, [currentFilters]);
+
   function updateMultiFilter(
     setter: React.Dispatch<React.SetStateAction<string[]>>,
     values: string[]
@@ -778,6 +845,7 @@ export function AssociadosCardList({
     setInstallmentTypeFilters([]);
     setCampaignFilters([]);
     setBatchFilters([]);
+    setAvailableOptions(filterOptions);
     setSelectedIds(new Set());
     setSelectionNotice(null);
     setSelectionError(null);
@@ -983,7 +1051,7 @@ export function AssociadosCardList({
             <div key={card.label} className="min-w-0 rounded-xl border border-default bg-surface-primary p-4 shadow-sm">
               <p className="text-xs font-medium uppercase tracking-wide text-secondary">{card.label}</p>
               <p className={`mt-3 break-words text-xl font-bold tabular-nums ${card.color}`}>
-                {pageError ? "—" : formatMoney(card.value ?? 0)}
+                {pageError ? "—" : loading ? "Atualizando..." : formatMoney(card.value ?? 0)}
               </p>
               <p className="mt-2 text-[11px] text-muted">
                 {pageError ? "Não foi possível atualizar" : loading ? "Atualizando..." : "Conforme os filtros"}
@@ -1183,6 +1251,8 @@ export function AssociadosCardList({
 
           <MultiSelectFilter
             label="Status"
+            onOpen={() => refreshFacetOptions("status")}
+            loadingOptions={loadingFacet === "status"}
             values={statusFilters}
             onChange={(values) => updateMultiFilter(setStatusFilters, values.map(normalizeStatus))}
             options={options.status.map((value) => ({ value, label: statusLabel(value) }))}
@@ -1190,6 +1260,8 @@ export function AssociadosCardList({
           />
           <MultiSelectFilter
             label="Pagamento"
+            onOpen={() => refreshFacetOptions("payment")}
+            loadingOptions={loadingFacet === "payment"}
             values={paymentFilters}
             onChange={(values) => updateMultiFilter(setPaymentFilters, values.map(normalizePayment))}
             options={options.payment.map((value) => ({ value, label: paymentLabel(value) }))}
@@ -1197,6 +1269,8 @@ export function AssociadosCardList({
           />
           <MultiSelectFilter
             label="Tipo de Pagto"
+            onOpen={() => refreshFacetOptions("receipt")}
+            loadingOptions={loadingFacet === "receipt"}
             values={receiptFilters}
             onChange={(values) => updateMultiFilter(setReceiptFilters, values)}
             options={options.receipt.map((value) => ({ value, label: value }))}
@@ -1205,6 +1279,8 @@ export function AssociadosCardList({
           />
           <MultiSelectFilter
             label="Tipo Parcela"
+            onOpen={() => refreshFacetOptions("installmentType")}
+            loadingOptions={loadingFacet === "installmentType"}
             values={installmentTypeFilters}
             onChange={(values) => updateMultiFilter(setInstallmentTypeFilters, values)}
             options={options.installmentType.map((value) => ({ value, label: value }))}
@@ -1212,6 +1288,8 @@ export function AssociadosCardList({
           />
           <MultiSelectFilter
             label="Campanha"
+            onOpen={() => refreshFacetOptions("campaign")}
+            loadingOptions={loadingFacet === "campaign"}
             values={campaignFilters}
             onChange={(values) => updateMultiFilter(setCampaignFilters, values)}
             options={options.campaign.map(([value, label]) => ({ value, label }))}
@@ -1220,6 +1298,8 @@ export function AssociadosCardList({
           />
           <MultiSelectFilter
             label="Lote"
+            onOpen={() => refreshFacetOptions("batch")}
+            loadingOptions={loadingFacet === "batch"}
             values={batchFilters}
             onChange={(values) => updateMultiFilter(setBatchFilters, values)}
             options={options.batch.map(([value, label]) => ({ value, label }))}
@@ -1241,7 +1321,7 @@ export function AssociadosCardList({
 
       <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div className="text-sm text-secondary">
-          <div>{pageError ? "Não foi possível atualizar a contagem." : `Exibindo ${pageData.filteredCount.toLocaleString("pt-BR")} de ${pageData.totalCount.toLocaleString("pt-BR")} associados.`}</div>
+          <div>{pageError ? "Não foi possível atualizar a contagem." : loading ? "Aplicando filtros..." : `Exibindo ${pageData.filteredCount.toLocaleString("pt-BR")} de ${pageData.totalCount.toLocaleString("pt-BR")} associados.`}</div>
           <div className="mt-1 text-xs text-muted">{loading ? "Atualizando registros..." : `Pagina ${currentPage} de ${pageCount} · ${paginatedRows.length} registros nesta página (até ${PAGE_SIZE}).`}</div>
           {selectedCount > 0 ? <div className="mt-1 text-xs font-medium text-brand">{selectedCount} registro(s) selecionado(s).</div> : null}
         </div>
@@ -1287,6 +1367,7 @@ export function AssociadosCardList({
       ) : null}
 
       <div className="mt-3 space-y-2">
+        {loading ? <div role="status" className="rounded-xl border border-default bg-surface-secondary p-5 text-sm text-secondary">Aplicando os filtros aos associados e aos totais financeiros...</div> : null}
         {paginatedRows.map((row) => (
           <article key={row.id} className={`rounded-xl border bg-surface-primary shadow-sm transition ${selectedIds.has(row.id) ? "border-brand" : "border-default hover:border-strong"}`}>
             <div className="grid gap-4 p-4 lg:grid-cols-[minmax(230px,1.2fr)_minmax(0,4.8fr)_minmax(150px,0.85fr)] lg:items-stretch">
