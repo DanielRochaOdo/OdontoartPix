@@ -764,7 +764,13 @@ async function releaseAndFinalizeJob(
          )::int as immediate_count,
          count(*) filter (
            where processing_status = 'processing'
-             and ($3::uuid is not null or payment_status is null or payment_status not in ('paid','agreed','excluded'))
+             and (payment_status is null or payment_status not in ('paid','agreed','excluded'))
+             and not exists (
+               select 1
+                 from member_target_installments canonical
+                where canonical.id = campaign_batch_members.target_installment_ref_id
+                  and canonical.payment_status in ('paid', 'agreed', 'excluded')
+             )
              and (
                $4::uuid is null
                or exists (
@@ -778,7 +784,13 @@ async function releaseAndFinalizeJob(
          )::int as processing_count,
          min(next_retry_at) filter (
            where processing_status = 'retrying'
-             and ($3::uuid is not null or payment_status is null or payment_status not in ('paid','agreed','excluded'))
+             and (payment_status is null or payment_status not in ('paid','agreed','excluded'))
+             and not exists (
+               select 1
+                 from member_target_installments canonical
+                where canonical.id = campaign_batch_members.target_installment_ref_id
+                  and canonical.payment_status in ('paid', 'agreed', 'excluded')
+             )
              and (
                $4::uuid is null
                or exists (
