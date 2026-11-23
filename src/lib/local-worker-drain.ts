@@ -9,7 +9,12 @@ export function shouldContinueLocalDrain(input: {
   advanceAction?: string | null;
 }) {
   if (input.jobStatus === "failed") return false;
+  // A newly queued dashboard job is progress even if this cycle claimed no
+  // item yet. Continue without waiting for the 60s fallback timer.
   return input.claimed > 0 || (
-    input.jobStatus === "idle" && generalSyncAdvancedWithoutJob(input.advanceAction)
+    input.jobStatus === "idle" && (
+      generalSyncAdvancedWithoutJob(input.advanceAction) ||
+      input.advanceAction === "job_enqueued"
+    )
   );
 }
