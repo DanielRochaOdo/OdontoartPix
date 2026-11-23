@@ -279,10 +279,12 @@ async function claimMembers(
         where batch_id = $1
           and ($4::uuid is null or campaign_batch_members.id = $4::uuid)
           and deleted_at is null
-          and (
-            $4::uuid is not null
-            or payment_status is null
-            or payment_status not in ('paid', 'agreed', 'excluded')
+          and (payment_status is null or payment_status not in ('paid', 'agreed', 'excluded'))
+          and not exists (
+            select 1
+              from member_target_installments canonical
+             where canonical.id = campaign_batch_members.target_installment_ref_id
+               and canonical.payment_status in ('paid', 'agreed', 'excluded')
           )
           and (
             $5::uuid is null
@@ -736,7 +738,13 @@ async function releaseAndFinalizeJob(
       client,
       `select
          count(*) filter (
-           where ($3::uuid is not null or payment_status is null or payment_status not in ('paid','agreed','excluded'))
+           where (payment_status is null or payment_status not in ('paid','agreed','excluded'))
+             and not exists (
+               select 1
+                 from member_target_installments canonical
+                where canonical.id = campaign_batch_members.target_installment_ref_id
+                  and canonical.payment_status in ('paid', 'agreed', 'excluded')
+             )
              and (
                $4::uuid is null
                or exists (
