@@ -383,9 +383,10 @@ function CardActions({ row }: { row: Row }) {
   const { automaticSyncEnabled } = useAutomaticSyncLock();
   const [busyAction, setBusyAction] = useState<"reprocess" | "delete" | null>(null);
   const busy = busyAction !== null;
+  const terminal = ["paid", "agreed", "excluded"].includes(row.payment);
 
   async function reprocess() {
-    if (automaticSyncEnabled) return;
+    if (automaticSyncEnabled || terminal) return;
     setBusyAction("reprocess");
     try {
       const response = await fetch(`/api/associados/${row.id}/reprocessar`, { method: "POST" });
@@ -444,7 +445,7 @@ function CardActions({ row }: { row: Row }) {
         <EyeIcon />
         <span>Ver detalhes</span>
       </Link>
-      <button type="button" onClick={reprocess} disabled={busy || automaticSyncEnabled} title={automaticSyncEnabled ? AUTOMATIC_SYNC_LOCK_TOOLTIP : "Reprocessar"} className={actionClass}>
+      <button type="button" onClick={reprocess} disabled={busy || automaticSyncEnabled || terminal} title={terminal ? "Parcela terminal: nao ha nova consulta ao ERP" : automaticSyncEnabled ? AUTOMATIC_SYNC_LOCK_TOOLTIP : "Reprocessar"} className={actionClass}>
         <svg viewBox="0 0 24 24" className={`h-4 w-4 ${busyAction === "reprocess" ? "animate-spin" : ""}`} fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
           <path d="M20 11a8.1 8.1 0 0 0-14.8-4L3 10" />
           <path d="M3 4v6h6" />
