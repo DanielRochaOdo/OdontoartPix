@@ -762,12 +762,15 @@ export function AssociadosCardList({
   // outros critérios ativos, atualizamos somente a faceta solicitada.
   // Isso impede que seis agregações pesadas atrasem a lista de associados.
   function refreshFacetOptions(facet: keyof AssociadosFilterOptions) {
-    const active = Object.entries(currentFilters).some(([key, value]) =>
-      Array.isArray(value) ? value.length > 0 :
-        key === "paidPending" ? value !== "all" : Boolean(String(value ?? "").trim())
-    );
-    if (!active) {
-      setAvailableOptions(filterOptions);
+    const otherFilterActive = Object.entries(currentFilters).some(([key, value]) => {
+      if (key === facet) return false;
+      if (Array.isArray(value)) return value.length > 0;
+      return key === "paidPending" ? value !== "all" : Boolean(String(value ?? "").trim());
+    });
+    // A faceta ignora sua própria seleção: sem outros critérios, o catálogo
+    // inicial já contém todas as escolhas corretas e não precisa consultar SQL.
+    if (!otherFilterActive) {
+      setAvailableOptions((previous) => ({ ...previous, [facet]: filterOptions[facet] }));
       return;
     }
     facetControllers.current[facet]?.abort();
