@@ -26,7 +26,9 @@ export type AssociadoCardListItem = {
 };
 
 export const ASSOCIADOS_CARD_BASE_SQL = `with scoped_links as (
-         select cbm.*,
+         select cbm.id, cbm.campaign_id, cbm.batch_id,
+                cbm.target_installment_ref_id, cbm.processing_status,
+                cbm.last_error, cbm.created_at, cbm.updated_at,
                 b.name as batch_name,
                 c.name as campaign_name
            from campaign_batch_members cbm

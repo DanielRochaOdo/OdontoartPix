@@ -19,7 +19,8 @@ describe("Associados: resumo financeiro filtrado", () => {
           filtered_count: 1200,
           total_amount_cents: 12000000,
           paid_amount_cents: 9000000,
-          pending_amount_cents: 3000000
+          pending_amount_cents: 3000000,
+          cards: []
         }] } as never;
       return { rows: [] } as never;
     });
@@ -33,8 +34,10 @@ describe("Associados: resumo financeiro filtrado", () => {
     });
     const aggregateCall = mock.mock.calls.find(([sql]) => String(sql).includes("sum(installment_amount_cents)"));
     expect(aggregateCall).toBeDefined();
-    expect(String(aggregateCall?.[0])).toContain("from filtered");
-    expect(String(aggregateCall?.[0])).not.toContain("limit $16");
+    expect(String(aggregateCall?.[0])).toContain("from filtered_once");
+    expect(String(aggregateCall?.[0])).toContain("limit $16 offset $17");
+    expect(String(aggregateCall?.[0])).toContain("jsonb_agg");
+    expect(mock).toHaveBeenCalledTimes(2);
     expect(aggregateCall?.[1]?.[0]).toEqual(filters.campaign);
     expect(aggregateCall?.[1]?.[11]).toEqual(filters.payment);
   });
