@@ -673,7 +673,8 @@ describeDatabase("canonical installment database invariant", () => {
       await client.query("select sync_target_installment_links_v1($1::uuid)", [targetId]);
       expect((await snapshot()).rows).toEqual(paid);
 
-      // A terminal link with stale operational metadata is a REAL change.
+      // Tentativas de reabrir ou marcar retry em estado terminal sao
+      // neutralizadas no proprio UPDATE; o sync posterior e idempotente.
       await client.query(
         `update campaign_batch_members
             set processing_attempts = 3,
@@ -690,7 +691,7 @@ describeDatabase("canonical installment database invariant", () => {
       expect(cleaned.find((row) => row.id === links[0])?.tuple_id)
         .toBe(beforeClean.find((row) => row.id === links[0])?.tuple_id);
       expect(cleaned.find((row) => row.id === links[1])?.tuple_id)
-        .not.toBe(beforeClean.find((row) => row.id === links[1])?.tuple_id);
+        .toBe(beforeClean.find((row) => row.id === links[1])?.tuple_id);
 
       const operational = await client.query<{
         processing_attempts: number;
