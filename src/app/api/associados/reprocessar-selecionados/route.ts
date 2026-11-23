@@ -24,6 +24,7 @@ type ProcessingSnapshotTarget = MemberReprocessTarget & {
   payment_amount_cents: number | string | null;
   total_pending_amount_cents: number | string | null;
   payment_description: string | null;
+  canonical_payment_status: string | null;
   payment_date_text: string | null;
 };
 
@@ -51,12 +52,15 @@ export async function POST(request: Request) {
                 cbm.target_installment_id,
                 cbm.processing_status,
                 cbm.payment_status,
+                canonical.payment_status AS canonical_payment_status,
                 cbm.installment_amount_cents,
                 cbm.payment_amount_cents,
                 cbm.total_pending_amount_cents,
                 mi.payment_description,
                 mi.payment_date_text
            from campaign_batch_members cbm
+           left join member_target_installments canonical
+             on canonical.id = cbm.target_installment_ref_id
            left join member_installments mi
              on mi.campaign_batch_member_id = cbm.id
             and mi.cod_parcela = cbm.target_installment_id
@@ -69,10 +73,18 @@ export async function POST(request: Request) {
 
       const found = memberResult.rows;
       const missingTargetIds: string[] = [];
+      let skippedTerminalCount = 0;
       const queuedIds: string[] = [];
       const trackedItems: AssociadosProcessingTrackedItem[] = [];
 
       for (const member of found) {
+        if (
+          ["paid", "agreed", "excluded"].includes(String(member.payment_status ?? ""))
+          || ["paid", "agreed", "excluded"].includes(String(member.canonical_payment_status ?? ""))
+        ) {
+          skippedTerminalCount += 1;
+          continue;
+        }
         if (!String(member.target_installment_id ?? "").trim()) {
           missingTargetIds.push(member.id);
           continue;
@@ -106,6 +118,7 @@ export async function POST(request: Request) {
         queuedCount: queuedIds.length,
         missingCount: memberIds.length - found.length,
         missingTargetCount: missingTargetIds.length,
+        skippedTerminalCount,
         queuedIds,
         missingTargetIds
       };
@@ -114,7 +127,7 @@ export async function POST(request: Request) {
     if (result.queuedCount === 0 || !result.processingRequestId) {
       return fail(
         "CONFLICT",
-        "Nenhum dos associados selecionados possui uma parcela alvo válida para reprocessamento.",
+        "Nenhuma parcela selecionada esta elegivel para nova consulta ao ERP.",
         422
       );
     }
@@ -129,6 +142,9 @@ export async function POST(request: Request) {
       202
     );
   } catch (error) {
+    if (error instanceof Error && error.message === "MEMBER_REPROCESS_TERMINAL") {
+      return fail("CONFLICT", "Uma parcela foi marcada como paga, acordada ou excluida. Refaca a selecao.", 409);
+    }
     console.error("[SELECTED_MEMBER_REPROCESS_FAILED]", {
       requestedCount: memberIds.length,
       message: error instanceof Error ? error.message : "Erro desconhecido"
