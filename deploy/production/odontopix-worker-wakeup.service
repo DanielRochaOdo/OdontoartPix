@@ -1,0 +1,15 @@
+[Unit]
+Description=OdontoartPix - acionamento imediato do worker via PostgreSQL
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/docker exec -i odontopix-app-1 npm run worker:listen
+Restart=always
+RestartSec=5s
+TimeoutStopSec=30s
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

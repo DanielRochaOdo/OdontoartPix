@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { notifyWorkerWakeup } from "@/lib/worker-wakeup-channel";
 import type { PoolClient } from "pg";
 import { clientQuery, withTransaction } from "@/lib/db/transaction";
 import { DataAccessError } from "@/lib/errors/data-access-error";
@@ -218,6 +219,9 @@ export async function createLocalGeneralSyncRun(
           input.requestedBy
         ]
       );
+
+      // Publicado somente apos commit; o timer permanece como fallback.
+      await notifyWorkerWakeup(client, "general-sync", runId);
 
       return {
         created: true as const,
