@@ -26,7 +26,8 @@
     "lab:test": "node scripts/local-financial-lab.mjs test",
     "lab:smoke": "node scripts/local-financial-smoke.mjs",
     "lab:smoke:general": "node scripts/local-financial-general-sync-smoke.mjs",
-    "lab:benchmark": "node scripts/local-financial-benchmark.mjs"
+    "lab:benchmark": "node scripts/local-financial-benchmark.mjs",
+    "worker:listen": "tsx scripts/listen-local-worker-wakeup.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.1.1",
