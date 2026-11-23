@@ -156,9 +156,12 @@ describeDatabase("Visao Analitica: paridade de facetas no PostgreSQL (rollback)"
         { value: "Clínico", label: "Clínico" },
         { value: "Orto", label: "Orto" }
       ]));
-      // One optimized SQL versus six legacy SQL queries.
-      expect(queryInTransaction).toHaveBeenCalledTimes(7);
-      expect(String(queryInTransaction.mock.calls[6]?.[0])).toContain("values_by_facet");
+      // The Associados reader now shares the four unselected status facets in
+      // one SQL, plus one query each for campaign and batch. The analytics
+      // catalog still uses a single SQL: 3 + 1 = 4 queries in total.
+      expect(queryInTransaction).toHaveBeenCalledTimes(4);
+      expect(String(queryInTransaction.mock.calls[0]?.[0])).toContain("cross join lateral (values");
+      expect(String(queryInTransaction.mock.calls[3]?.[0])).toContain("values_by_facet");
     });
   });
 
