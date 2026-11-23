@@ -29,7 +29,9 @@ describe("Associados: total geral, total filtrado e lista visível independentes
         return { rows: [{ total_count: 28143 }] } as never;
       }
       if (query.includes("count(*)::int as filtered_count")) {
-        return { rows: [{ filtered_count: 3000 }] } as never;
+        return { rows: [{ filtered_count: 3000,
+          total_amount_cents: 30000000, paid_amount_cents: 0, pending_amount_cents: 30000000,
+          cards: Array.from({ length: 50 }, (_, i) => item(i + 1)) }] } as never;
       }
       if (query.includes("select id from filtered")) {
         return { rows: Array.from({ length: 3000 }, (_, i) => ({ id: "link-" + i })) } as never;
@@ -45,6 +47,8 @@ describe("Associados: total geral, total filtrado e lista visível independentes
     expect(page.rows).toHaveLength(50);
     expect(page.filteredCount).toBe(3000);
     expect(page.totalCount).toBe(28143);
+    expect(page.financialSummary.pendingAmountCents).toBe(30000000);
+    expect(mockQuery).toHaveBeenCalledTimes(2);
     const query = mockQuery.mock.calls.find(([sql]) => String(sql).includes("limit $16 offset $17"));
     expect(query).toBeTruthy();
     expect(query?.[1]?.slice(-2)).toEqual([50, 50]);
