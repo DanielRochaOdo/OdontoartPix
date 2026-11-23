@@ -4,6 +4,7 @@ import { startDueLocalScheduledGeneralSync } from "../src/lib/general-sync-sched
 import { finalizePendingLocalProcessingStops } from "../src/lib/local-processing-stop-checkpoint";
 import { runLocalWorkerOnce } from "../src/lib/local-processing-worker";
 import { shouldContinueLocalDrain } from "../src/lib/local-worker-drain";
+import { requestWorkerDrainContinuation } from "../src/lib/worker-wakeup-channel";
 
 const ADVISORY_LOCK_NAMESPACE = 17483621;
 const ADVISORY_LOCK_WORKER = 20260821;
@@ -134,6 +135,7 @@ async function main() {
   const pool = getDbPool();
   const lockClient = await pool.connect();
   let lockAcquired = false;
+  let drainLimitReached = false;
 
   try {
     const lockResult = await lockClient.query<{ acquired: boolean }>(
@@ -219,19 +221,38 @@ async function main() {
           productiveCycles,
           maxDrainCycles
         });
+        drainLimitReached = true;
         return;
       }
 
       if (delayMs > 0) await sleep(delayMs);
     }
   } finally {
-    if (lockAcquired) {
-      await lockClient.query(
-        `select pg_advisory_unlock($1::integer, $2::integer)`,
-        [ADVISORY_LOCK_NAMESPACE, ADVISORY_LOCK_WORKER]
-      );
+    try {
+      if (lockAcquired) {
+        // Release the global lock BEFORE notifying LISTEN, otherwise the
+        // immediately started worker could lose the race and exit as busy.
+        await lockClient.query(
+          `select pg_advisory_unlock($1::integer, $2::integer)`,
+          [ADVISORY_LOCK_NAMESPACE, ADVISORY_LOCK_WORKER]
+        );
+
+        if (drainLimitReached) {
+          try {
+            const notified = await requestWorkerDrainContinuation(lockClient);
+            console.info("[LOCAL_WORKER_DRAIN_CONTINUATION]", { notified });
+          } catch (error) {
+            // A lost wakeup must not mark successful financial work as failed.
+            // The 60-second systemd timer remains the recovery path.
+            console.warn("[LOCAL_WORKER_DRAIN_CONTINUATION_FAILED]", {
+              message: error instanceof Error ? error.message : String(error)
+            });
+          }
+        }
+      }
+    } finally {
+      lockClient.release();
     }
-    lockClient.release();
   }
 }
 
