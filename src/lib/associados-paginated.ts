@@ -208,7 +208,42 @@ export async function getAssociadosCardFilterOptions(
   trace?: AnalyticsPerfTrace | null
 ): Promise<AssociadosFilterOptions> {
   const facets = ["status", "payment", "receipt", "installmentType", "campaign", "batch"] as const;
+  // Quando as quatro facetas de status não têm seleção própria, todas usam
+  // exatamente o mesmo conjunto filtrado. Calculá-las juntas evita quatro
+  // consolidações completas de parcelas canônicas por carregamento da página.
+  // Com qualquer seleção própria, preservamos a semântica independente original.
+  const sharedStatusFacets = !filters.status?.length && !filters.payment?.length &&
+    !filters.receipt?.length && !filters.installmentType?.length;
+  const sharedOptionsPromise = sharedStatusFacets
+    ? (async () => {
+        const load = async () => {
+          const result = await dbQuery<{ facet: string; value: string; label: string }>(
+            FILTERED_SQL + ` select distinct facet, value, value as label
+              from filtered
+              cross join lateral (values
+                ('status', status_key),
+                ('payment', payment_key),
+                ('receipt', receipt_key),
+                ('installmentType', installment_type_label)
+              ) as options(facet, value)
+              order by facet, label`,
+            filterValues(filters)
+          );
+          const grouped: Record<string, AssociadosFilterOption[]> = {
+            status: [], payment: [], receipt: [], installmentType: []
+          };
+          for (const { facet, value, label } of result.rows) {
+            grouped[facet]?.push({ value, label });
+          }
+          return grouped;
+        };
+        return trace ? trace.measure("facet_shared_status", load) : load();
+      })()
+    : null;
   const results = await Promise.all(facets.map(async (facet) => {
+    if (sharedOptionsPromise && facet !== "campaign" && facet !== "batch") {
+      return (await sharedOptionsPromise)[facet];
+    }
     const loadFacet = async () => {
       const values = filterValues(filters);
       if (facet === "campaign") values[0] = [];
