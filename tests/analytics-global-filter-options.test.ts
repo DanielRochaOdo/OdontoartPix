@@ -5,7 +5,7 @@ import {
   ANALYTICS_GLOBAL_CATALOG_SQL,
   getAnalyticsGlobalFilterOptions
 } from "@/lib/analytics-global-filter-options";
-import { getAssociadosCardFilterOptions } from "@/lib/associados-paginated";
+import { getAssociadosCardFilterOptions, getAssociadosCardFilterOptionsLegacy } from "@/lib/associados-paginated";
 
 // Both readers run on the SAME PostgreSQL transaction: the fixture is visible
 // to both, and the rollback leaves no rows or changes behind in the CI database.
@@ -137,8 +137,10 @@ describeDatabase("Visao Analitica: paridade de facetas no PostgreSQL (rollback)"
       await insertLink(client, c1, oldBatch, member1, code);
       await client.query("update campaign_batches set deleted_at = now() where id = $1::uuid", [oldBatch]);
 
-      const legacy = await getAssociadosCardFilterOptions({});
+      const legacy = await getAssociadosCardFilterOptionsLegacy({});
+      const fast = await getAssociadosCardFilterOptions({});
       const optimized = await getAnalyticsGlobalFilterOptions();
+      expect(fast).toEqual(legacy);
       expect(optimized).toEqual(legacy);
       expect(optimized.campaign).toEqual(expect.arrayContaining([
         expect.objectContaining({ value: c1 }),
@@ -156,19 +158,22 @@ describeDatabase("Visao Analitica: paridade de facetas no PostgreSQL (rollback)"
         { value: "Clínico", label: "Clínico" },
         { value: "Orto", label: "Orto" }
       ]));
-      // The Associados reader now shares the four unselected status facets in
-      // one SQL, plus one query each for campaign and batch. The analytics
-      // catalog still uses a single SQL: 3 + 1 = 4 queries in total.
-      expect(queryInTransaction).toHaveBeenCalledTimes(4);
+      // SQL original = 3 leituras; catálogo leve da página = 1; leitor
+      // independente da Visão Analítica = 1. Paridade completa no PostgreSQL.
+      expect(queryInTransaction).toHaveBeenCalledTimes(5);
       expect(String(queryInTransaction.mock.calls[0]?.[0])).toContain("cross join lateral (values");
       expect(String(queryInTransaction.mock.calls[3]?.[0])).toContain("values_by_facet");
+      expect(String(queryInTransaction.mock.calls[4]?.[0])).toContain("values_by_facet");
     });
   });
 
   it("compara o catalogo completo sem filtros mesmo que nao haja registros", async () => {
     await rollback(async () => {
       expect(await getAnalyticsGlobalFilterOptions()).toEqual(
-        await getAssociadosCardFilterOptions({})
+        await getAssociadosCardFilterOptionsLegacy({})
+      );
+      expect(await getAssociadosCardFilterOptions({})).toEqual(
+        await getAssociadosCardFilterOptionsLegacy({})
       );
     });
   });
