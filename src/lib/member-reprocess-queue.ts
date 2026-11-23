@@ -27,6 +27,25 @@ export async function queueMemberReprocess(
     throw new Error("MEMBER_REPROCESS_TARGET_MISSING");
   }
 
+  // Nao reabrir parcelas com pagamento ou encerramento confirmado pelo ERP,
+  // mesmo quando a confirmacao veio de outro lote.
+  const terminal = await clientQuery<{ id: string }>(
+    client,
+    `select cbm.id
+       from campaign_batch_members cbm
+       left join member_target_installments canonical
+         on canonical.id = cbm.target_installment_ref_id
+      where cbm.id = $1::uuid
+        and cbm.deleted_at is null
+        and (
+          cbm.payment_status in ('paid', 'agreed', 'excluded')
+          or canonical.payment_status in ('paid', 'agreed', 'excluded')
+        )
+      limit 1`,
+    [member.id]
+  );
+  if (terminal.rows.length > 0) throw new Error("MEMBER_REPROCESS_TERMINAL");
+
   const existing = await clientQuery<MemberReprocessJob>(
     client,
     `select id, status, processing_priority
