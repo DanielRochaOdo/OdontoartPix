@@ -18,10 +18,7 @@ begin
   -- Nenhuma parcela terminal pode voltar a fila por reprocessamento manual,
   -- mesmo com next_check_at definido explicitamente.
   if old.payment_status in ('paid', 'agreed', 'excluded')
-     and new.payment_status = old.payment_status
-     and old.processing_status = 'completed'
-     and new.processing_status in ('pending', 'queued', 'aguardando', 'retrying')
-     then
+     and new.payment_status = old.payment_status then
     new.processing_status := 'completed';
     new.processing_attempts := 0;
     new.stale_reclaim_count := 0;
