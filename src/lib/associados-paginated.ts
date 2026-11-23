@@ -248,48 +248,12 @@ export async function getAssociadosCardFilterOptions(
 
 // Leitor de referência, usado nos cenários filtrados e nos testes de paridade.
 // Cada faceta considera os demais filtros, mas ignora a própria seleção.
-export async function getAssociadosCardFilterOptionsLegacy(
-  filters: AssociadosFilters = {},
-  trace?: AnalyticsPerfTrace | null
-): Promise<AssociadosFilterOptions> {
-  const facets = ["status", "payment", "receipt", "installmentType", "campaign", "batch"] as const;
-  // Quando as quatro facetas de status não têm seleção própria, todas usam
-  // exatamente o mesmo conjunto filtrado. Calculá-las juntas evita quatro
-  // consolidações completas de parcelas canônicas por carregamento da página.
-  // Com qualquer seleção própria, preservamos a semântica independente original.
-  const sharedStatusFacets = !filters.status?.length && !filters.payment?.length &&
-    !filters.receipt?.length && !filters.installmentType?.length;
-  const sharedOptionsPromise = sharedStatusFacets
-    ? (async () => {
-        const load = async () => {
-          const result = await dbQuery<{ facet: string; value: string; label: string }>(
-            FILTERED_SQL + ` select distinct facet, value, value as label
-              from filtered
-              cross join lateral (values
-                ('status', status_key),
-                ('payment', payment_key),
-                ('receipt', receipt_key),
-                ('installmentType', installment_type_label)
-              ) as options(facet, value)
-              order by facet, label`,
-            filterValues(filters)
-          );
-          const grouped: Record<string, AssociadosFilterOption[]> = {
-            status: [], payment: [], receipt: [], installmentType: []
-          };
-          for (const { facet, value, label } of result.rows) {
-            grouped[facet]?.push({ value, label });
-          }
-          return grouped;
-        };
-        return trace ? trace.measure("facet_shared_status", load) : load();
-      })()
-    : null;
-  const results = await Promise.all(facets.map(async (facet) => {
-    if (sharedOptionsPromise && facet !== "campaign" && facet !== "batch") {
-      return (await sharedOptionsPromise)[facet];
-    }
-    const loadFacet = async () => {
+// A seleção de uma faceta não deve iniciar as outras cinco consultas pesadas.
+// A opção consultada mantém a regra de ignorar apenas o próprio filtro.
+export async function getAssociadosCardFilterOptionFacet(
+  filters: AssociadosFilters,
+  facet: keyof AssociadosFilterOptions
+): Promise<AssociadosFilterOption[]> {
       const values = filterValues(filters);
       if (facet === "campaign") values[0] = [];
       if (facet === "batch") values[1] = [];
@@ -337,7 +301,51 @@ export async function getAssociadosCardFilterOptionsLegacy(
                  from filtered order by label`, values
       );
       return result.rows;
-    };
+}
+
+// A leitura completa permanece como referência de paridade e para consumidores legados.
+export async function getAssociadosCardFilterOptionsLegacy(
+  filters: AssociadosFilters = {},
+  trace?: AnalyticsPerfTrace | null
+): Promise<AssociadosFilterOptions> {
+  const facets = ["status", "payment", "receipt", "installmentType", "campaign", "batch"] as const;
+  // Quando as quatro facetas de status não têm seleção própria, todas usam
+  // exatamente o mesmo conjunto filtrado. Calculá-las juntas evita quatro
+  // consolidações completas de parcelas canônicas por carregamento da página.
+  // Com qualquer seleção própria, preservamos a semântica independente original.
+  const sharedStatusFacets = !filters.status?.length && !filters.payment?.length &&
+    !filters.receipt?.length && !filters.installmentType?.length;
+  const sharedOptionsPromise = sharedStatusFacets
+    ? (async () => {
+        const load = async () => {
+          const result = await dbQuery<{ facet: string; value: string; label: string }>(
+            FILTERED_SQL + ` select distinct facet, value, value as label
+              from filtered
+              cross join lateral (values
+                ('status', status_key),
+                ('payment', payment_key),
+                ('receipt', receipt_key),
+                ('installmentType', installment_type_label)
+              ) as options(facet, value)
+              order by facet, label`,
+            filterValues(filters)
+          );
+          const grouped: Record<string, AssociadosFilterOption[]> = {
+            status: [], payment: [], receipt: [], installmentType: []
+          };
+          for (const { facet, value, label } of result.rows) {
+            grouped[facet]?.push({ value, label });
+          }
+          return grouped;
+        };
+        return trace ? trace.measure("facet_shared_status", load) : load();
+      })()
+    : null;
+  const results = await Promise.all(facets.map(async (facet) => {
+    if (sharedOptionsPromise && facet !== "campaign" && facet !== "batch") {
+      return (await sharedOptionsPromise)[facet];
+    }
+    const loadFacet = () => getAssociadosCardFilterOptionFacet(filters, facet);
     return trace ? trace.measure("facet_" + facet, loadFacet) : loadFacet();
   }));
   const options = Object.fromEntries(

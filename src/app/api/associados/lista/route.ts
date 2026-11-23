@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { requireApiUser } from "@/lib/auth/require-api-user";
-import { getAssociadosCardPage, getAssociadosCardFilterOptions } from "@/lib/associados-paginated";
+import { getAssociadosCardPage } from "@/lib/associados-paginated";
 import { AssociadosFiltersSchema, AssociadosSortSchema } from "@/lib/associados-filter-schema";
 import { fail, ok } from "@/lib/http/api-response";
 
@@ -20,11 +20,12 @@ export async function POST(request: Request) {
   if (!body.success) return fail("VALIDATION_ERROR", "Filtros ou página inválidos.", 400);
 
   try {
-    const [page, filterOptions] = await Promise.all([
-      getAssociadosCardPage(body.data.filters, body.data.page, body.data.sort, body.data.ascending),
-      getAssociadosCardFilterOptions(body.data.filters)
-    ]);
-    return ok({ ...page, filterOptions });
+    // Não bloquear os cards pelos catálogos de opções, que podem exigir
+    // várias agregações completas em conjuntos grandes.
+    const page = await getAssociadosCardPage(
+      body.data.filters, body.data.page, body.data.sort, body.data.ascending
+    );
+    return ok(page);
   } catch (error) {
     console.error("[ASSOCIADOS_PAGE_FAILED]", { message: error instanceof Error ? error.message : "Erro desconhecido" });
     return fail("DATABASE_ERROR", "Não foi possível consultar a página de associados.", 500);
