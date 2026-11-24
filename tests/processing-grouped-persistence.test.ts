@@ -1,7 +1,28 @@
 import { describe, expect, it, vi } from "vitest";
-import { createGroupedPersistence } from "@/lib/processing-grouped-persistence";
+import { canUseGroupedPersistence, createGroupedPersistence } from "@/lib/processing-grouped-persistence";
 
 describe("grouped persistence", () => {
+  it("uses the actual dashboard job scope and excludes pilots and replay", () => {
+    const job = {
+      processing_origin: "dashboard", processing_scope: "dashboard",
+      general_sync_run_id: "77a0aabb-5c08-4ab0-9a8e-29c62fc9868d",
+      target_member_link_id: null, filtered_error_request_id: null
+    };
+    const input = { enabled: true, slidingWindowV2Enabled: true, pilot: false, groupSize: 20, job };
+    expect(canUseGroupedPersistence(input)).toBe(true);
+    expect(canUseGroupedPersistence({ ...input, enabled: false })).toBe(false);
+    expect(canUseGroupedPersistence({ ...input, slidingWindowV2Enabled: false })).toBe(false);
+    expect(canUseGroupedPersistence({ ...input, pilot: true })).toBe(false);
+    expect(canUseGroupedPersistence({ ...input, groupSize: 1 })).toBe(false);
+    for (const patch of [
+      { processing_scope: "batch" }, { processing_origin: "manual" },
+      { general_sync_run_id: null }, { target_member_link_id: "link" },
+      { filtered_error_request_id: "replay" }
+    ]) {
+      expect(canUseGroupedPersistence({ ...input, job: { ...job, ...patch } })).toBe(false);
+    }
+  });
+
   it("bounds group size and flushes the tail with one writer", async () => {
     const groups: number[][] = [];
     let active = 0;
