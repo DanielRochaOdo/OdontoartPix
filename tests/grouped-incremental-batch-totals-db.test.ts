@@ -182,6 +182,7 @@ describeDb("048 grouped incremental projection pilot", () => {
       await c.query("create role "+role+" nologin");
       created=true;
       await c.query("grant usage on schema public to "+role);
+      await c.query("grant select on public.grouped_batch_totals_pending to "+role);
       await c.query("grant execute on function public.try_grouped_incremental_totals_v1(),public.flush_grouped_batch_totals_v2() to "+role);
       await c.query("begin");
       await c.query("set local role "+role);
@@ -201,6 +202,7 @@ describeDb("048 grouped incremental projection pilot", () => {
       await c.query("rollback").catch(()=>undefined);
       if(created){
         await c.query("revoke execute on function public.try_grouped_incremental_totals_v1(),public.flush_grouped_batch_totals_v2() from "+role);
+        await c.query("revoke select on public.grouped_batch_totals_pending from "+role);
         await c.query("revoke usage on schema public from "+role);
         await c.query("drop role "+role);
       }
