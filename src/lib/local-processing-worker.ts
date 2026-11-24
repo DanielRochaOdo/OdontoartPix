@@ -1088,7 +1088,7 @@ export async function runLocalWorkerOnce(options?: {
             }
             // Mandatory before commit. The database also rejects a commit with
             // pending totals, so a future missing flush cannot silently drift.
-            await clientQuery(client, "select public.flush_grouped_batch_totals_v1()");
+            await clientQuery(client, "select public.flush_grouped_batch_totals_v2()");
             return persisted;
           });
           try {
