@@ -1,0 +1,76 @@
+name: Benchmark 048 isolado
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'scripts/benchmark-grouped-incremental-048.mjs'
+      - '.github/workflows/benchmark-048.yml'
+      - 'db/migrations/**'
+      - 'src/lib/local-processing-worker.ts'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: benchmark-048-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  benchmark:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'perf/incremental-batch-totals-official-048'
+    runs-on: ubuntu-latest
+    timeout-minutes: 170
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: odontoart_pix_bench048
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d odontoart_pix_bench048"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_HOST: 127.0.0.1
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: odontoart_pix_bench048
+      DATABASE_USER: postgres
+      DATABASE_PASSWORD: postgres
+      DATABASE_SSL: "false"
+      BENCH048_ISOLATED: "yes"
+      BENCH_PG_CONTAINER: ${{ job.services.postgres.id }}
+      PROCESSING_ALLOW_SCHEDULED_SYNC: "false"
+    steps:
+      - name: Checkout PR revision
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Apply migrations to isolated database
+        run: npm run db:migrate
+      - name: Verify benchmark harness with small synthetic mass
+        timeout-minutes: 10
+        run: node scripts/benchmark-grouped-incremental-048.mjs --smoke
+      - name: Run two production-scale comparison rounds
+        timeout-minutes: 150
+        run: node scripts/benchmark-grouped-incremental-048.mjs --full
+      - name: Publish benchmark evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-048-evidence
+          path: benchmark-048/*.json
+          if-no-files-found: warn
+          retention-days: 14
