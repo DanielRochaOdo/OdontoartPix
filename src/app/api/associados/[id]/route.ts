@@ -1,3 +1,4 @@
+import { recalculateBatch } from "@/lib/batch-totals";
 import { z } from "zod";
 import { requireApiUser } from "@/lib/auth/require-api-user";
 import { clientQuery, withTransaction } from "@/lib/db/transaction";
@@ -112,44 +113,7 @@ export async function DELETE(
         }
       }
 
-      await clientQuery(
-        client,
-        `with totals as (
-           select
-             count(*)::int as total_records,
-             count(*) filter (where processing_status = 'completed')::int as processed_records,
-             count(*) filter (where payment_status = 'paid')::int as paid_records,
-             count(*) filter (where payment_status = 'unpaid')::int as unpaid_records,
-             count(*) filter (where processing_status = 'error')::int as error_records,
-             coalesce(sum(total_pending_amount_cents), 0)::bigint as total_pending_amount_cents,
-             coalesce(sum(installment_amount_cents), 0)::bigint as total_amount_cents,
-             count(*) filter (where processing_status = 'processing')::int as processing_records,
-             count(*) filter (
-               where processing_status in ('pending','queued','retrying','aguardando')
-             )::int as waiting_records
-           from campaign_batch_members
-          where batch_id = $1::uuid
-            and deleted_at is null
-         )
-         update campaign_batches b
-            set total_records = t.total_records,
-                processed_records = t.processed_records,
-                paid_records = t.paid_records,
-                unpaid_records = t.unpaid_records,
-                error_records = t.error_records,
-                total_pending_amount_cents = t.total_pending_amount_cents,
-                total_amount_cents = t.total_amount_cents,
-                status = case
-                           when t.processing_records > 0 then 'processando'
-                           when t.waiting_records > 0 then 'aguardando'
-                           when t.error_records > 0 then 'concluido_com_erros'
-                           else 'concluido'
-                         end,
-                updated_at = now()
-           from totals t
-          where b.id = $1::uuid`,
-        [member.batch_id]
-      );
+      await recalculateBatch(member.batch_id, client);
 
       return {
         kind: "deleted" as const,
