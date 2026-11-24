@@ -56,13 +56,15 @@ Em janela sem escritores, com sessões antigas encerradas:
 select public.set_batch_totals_shadow_v1(true);
 select * from public.batch_totals_shadow_audit_v1
 where shadow_differs or orphan_batch or official_differs;
+select * from public.batch_totals_shadow_link_audit_v1
+where differs or orphan_contribution or missing_contribution;
 select count(*) from public.batch_totals_shadow_dirty;
 select count(*) from public.batch_totals_shadow_transactions;
 -- Desativação/rebuild só em manutenção, após exportar evidências:
 select public.set_batch_totals_shadow_v1(false);
 ```
-Comparar contribuição por vínculo (FULL JOIN, incluindo ausentes/órfãos)
-com cálculo independente, antes/depois de cada caso. Nenhuma divergência
+A view batch_totals_shadow_link_audit_v1 usa FULL JOIN e cálculo independente
+por vínculo (incluindo ausentes/órfãos). Consultar antes/depois de cada caso. Nenhuma divergência
 shadow, nenhum órfão, nenhuma pendência visível após commit. Para comparar
 oficial, usar estado ocioso e verificar antes de qualquer reparo.
 
