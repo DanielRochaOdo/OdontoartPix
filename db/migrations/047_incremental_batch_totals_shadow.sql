@@ -1,5 +1,15 @@
 -- 047: experimental shadow only. Never writes campaign_batches or financial truth.
 -- Default disabled; administrator must rebuild under a controlled idle window.
+-- The runtime app must not own SECURITY DEFINER functions or private state.
+do $
+begin
+  if current_user = 'odontoart_pix_app' then
+    raise exception 'Migration 047 must be applied by the database administrator, not the app role'
+      using errcode = '42501';
+  end if;
+end;
+$;
+
 create table public.batch_totals_shadow_state (
   singleton boolean primary key default true check (singleton),
   enabled boolean not null default false
@@ -378,6 +388,19 @@ begin
       public.batch_totals_shadow_capture_link_v1(), public.batch_totals_shadow_capture_target_v1(),
       public.batch_totals_shadow_flush_v1(), public.batch_totals_shadow_guard_truncate_v1(),
       public.set_batch_totals_shadow_v1(boolean) from odontoart_pix_app;
+    -- Catch inherited write/activation privileges, not only direct grants.
+    if exists (
+      select 1 from unnest(array[
+        'public.batch_totals_shadow_state', 'public.batch_totals_shadow_contributions',
+        'public.batch_totals_shadow_totals', 'public.batch_totals_shadow_dirty',
+        'public.batch_totals_shadow_transactions'
+      ]) as objects(name)
+      where has_table_privilege('odontoart_pix_app', objects.name, 'INSERT,UPDATE,DELETE,TRUNCATE')
+    ) or has_function_privilege('odontoart_pix_app','public.set_batch_totals_shadow_v1(boolean)','EXECUTE')
+      or has_function_privilege('odontoart_pix_app','public.batch_totals_shadow_mark_v1(text,uuid)','EXECUTE') then
+      raise exception 'App inherits shadow administrative privileges; review role memberships'
+        using errcode = '42501';
+    end if;
   end if;
 end;
 $;
