@@ -1,14 +1,14 @@
 -- 047: experimental shadow only. Never writes campaign_batches or financial truth.
 -- Default disabled; administrator must rebuild under a controlled idle window.
 -- The runtime app must not own SECURITY DEFINER functions or private state.
-do $
+do $admin$
 begin
   if current_user = 'odontoart_pix_app' then
     raise exception 'Migration 047 must be applied by the database administrator, not the app role'
       using errcode = '42501';
   end if;
 end;
-$;
+$admin$;
 
 create table public.batch_totals_shadow_state (
   singleton boolean primary key default true check (singleton),
@@ -377,7 +377,7 @@ revoke all on public.batch_totals_shadow_state, public.batch_totals_shadow_contr
   public.batch_totals_shadow_audit_v1, public.batch_totals_shadow_link_audit_v1 from public;
 
 -- Production may grant privileges to the app via ALTER DEFAULT PRIVILEGES.
-do $
+do $admin$
 begin
   if exists (select 1 from pg_roles where rolname = 'odontoart_pix_app') then
     revoke all on public.batch_totals_shadow_state, public.batch_totals_shadow_contributions,
@@ -403,7 +403,7 @@ begin
     end if;
   end if;
 end;
-$;
+$admin$;
 
 insert into public.schema_migrations(version,name)
 values (47,'incremental_batch_totals_shadow') on conflict(version) do nothing;
