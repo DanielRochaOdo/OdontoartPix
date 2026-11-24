@@ -153,7 +153,7 @@ async function snapshot(c) {
   await c.query("select pg_stat_force_next_flush()");
   await c.query("select pg_stat_clear_snapshot()");
   const table = (await c.query("select relname,seq_scan::float8,seq_tup_read::float8,idx_scan::float8,n_tup_upd::float8 from pg_stat_user_tables where relname in ('member_target_installments','campaign_batch_members','campaign_batches','batch_totals_shadow_contributions','batch_totals_shadow_totals') order by relname")).rows;
-  const funcs = (await c.query("select funcname,calls::float8,total_time,self_time from pg_stat_user_functions where schemaname='public' and (funcname like '%batch%total%' or funcname like '%shadow%' or funcname='sync_target_installment_links_v1') order by funcname")).rows;
+  const funcs = (await c.query("select funcname,calls::float8,total_time,self_time from pg_stat_user_functions where schemaname='public' and (funcname like '%batch%total%' or funcname like '%shadow%' or funcname like '%grouped_incremental_totals%' or funcname='sync_target_installment_links_v1') order by funcname")).rows;
   const wal = (await c.query("select wal_bytes::float8,wal_records::float8,wal_fpi::float8,wal_buffers_full::float8,stats_reset::text from pg_stat_wal")).rows[0];
   const database = (await c.query("select deadlocks::float8,blks_read::float8,blks_hit::float8,temp_bytes::float8,stats_reset::text from pg_stat_database where datname=current_database()")).rows[0];
   return { table, funcs, wal, database };
@@ -265,13 +265,13 @@ async function scenario(c, observer, mode, round, expectedSizes, list) {
     audit:null };
   report.results.push(result);
   await save(); // Preserve metrics even if financial verification fails.
-  assert.equal(confirmed,config.writes);
-  assert.equal(database.deadlocks,0);
-  assert.equal(fullCalls,mode==="pilot"?0:timings.length);
-  assert.equal(pilotCalls,mode==="pilot"?timings.length:0);
   await verifySource(c,list);
   result.audit=await audit(c,mode!=="legacy",expectedSizes);
-  await save();
+  await save(); // Preserve financial audit evidence even if instrumentation assertions fail.
+  assert.equal(confirmed,config.writes,"Confirmed writes");
+  assert.equal(database.deadlocks,0,"Database deadlocks");
+  assert.equal(fullCalls,mode==="pilot"?0:timings.length,"Full recalculation calls");
+  assert.equal(pilotCalls,mode==="pilot"?timings.length:0,"Incremental projection calls");
   console.log("[048_BENCH_RESULT]",JSON.stringify(result));
 }
 async function main(){
