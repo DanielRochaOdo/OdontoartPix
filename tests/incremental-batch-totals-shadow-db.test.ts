@@ -38,6 +38,7 @@ describeDb("047 incremental shadow totals", () => {
     expect(result.rows.length).toBeGreaterThan(0);
     expect(result.rows.every(r => r.enabled && !r.shadow_differs && !r.orphan_batch)).toBe(true);
     if (checkOfficial) expect(result.rows.every(r => !r.official_differs)).toBe(true);
+    expect((await pool.query("select * from public.batch_totals_shadow_link_audit_v1 where differs or orphan_contribution or missing_contribution")).rowCount).toBe(0);
     expect((await pool.query("select * from public.batch_totals_shadow_dirty")).rowCount).toBe(0);
     expect((await pool.query("select * from public.batch_totals_shadow_transactions")).rowCount).toBe(0);
   }
@@ -95,6 +96,44 @@ describeDb("047 incremental shadow totals", () => {
     expect(before.some(r => r.processing_records === "1")).toBe(true);
     await pool.query("select public.sync_target_installment_links_v1($1)", [target]);
     expect(await read()).toEqual(before);
+    await audit(true);
+  });
+
+  it("tracks a real 046 grouped transaction, error transitions and terminal states", async () => {
+    const c = await pool.connect();
+    const added: string[] = [];
+    try {
+      await c.query("begin");
+      for (const status of ["paid", "agreed", "excluded"]) {
+        const ids: string[] = [];
+        for (const batch of batches.slice(0,2)) {
+          const { rows } = await c.query(
+            `insert into campaign_batch_members(campaign_id,batch_id,member_id,target_installment_id,
+               installment_amount_cents,payment_status,payment_status_source,total_pending_amount_cents,processing_status)
+             values($1,$2,$3,$4,5000,'unpaid','erp_open_invoice',5000,'pending') returning id`,
+            [campaign,batch,member,code+"-"+status]);
+          ids.push(rows[0].id); added.push(rows[0].id);
+        }
+        await c.query("update campaign_batch_members set processing_status='error' where id=$1", [ids[0]]);
+        await c.query("select set_config('odontoart.grouped_batch_totals','on',true)");
+        await c.query(`update campaign_batch_members set processing_status='completed',
+           payment_status=$2,payment_status_source=$3,payment_amount_cents=$4::bigint,
+           total_pending_amount_cents=$5::bigint,last_erp_status_at=clock_timestamp() where id=$1`,
+          [ids[0],status,status==="paid"?"erp_explicit":"erp_"+status,status==="paid"?2000:0,status==="paid"?3000:0]);
+        await c.query("select public.flush_grouped_batch_totals_v1()");
+      }
+      await c.query("commit");
+      await audit(true);
+      const totals = (await c.query("select * from public.batch_totals_shadow_contributions where member_link_id=any($1::uuid[])", [added])).rows;
+      expect(totals).toHaveLength(6);
+      expect(totals.filter(r => r.paid_records==="1" && r.total_pending_amount_cents==="3000")).toHaveLength(2);
+      expect(totals.filter(r => r.paid_records==="0" && r.total_pending_amount_cents==="0" && r.total_amount_cents==="5000")).toHaveLength(4);
+    } finally {
+      await c.query("rollback").catch(() => undefined);
+      if (added.length) await c.query("delete from campaign_batch_members where id=any($1::uuid[])", [added]);
+      c.release();
+    }
+    await recalc();
     await audit(true);
   });
 
