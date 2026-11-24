@@ -174,6 +174,40 @@ describeDb("048 grouped incremental projection pilot", () => {
     expect((await totals()).filter(r=>r.id!==batches[2]).every(r=>r.total_pending_amount_cents==="4321")).toBe(true);
   },20000);
 
+  it("allows the limited runtime entry point but denies administrative state writes", async () => {
+    const c=await pool.connect();
+    const role="test_048_"+randomUUID().replaceAll("-","");
+    let created=false;
+    try {
+      await c.query("create role "+role+" nologin");
+      created=true;
+      await c.query("grant usage on schema public to "+role);
+      await c.query("grant execute on function public.try_grouped_incremental_totals_v1(),public.flush_grouped_batch_totals_v2() to "+role);
+      await c.query("begin");
+      await c.query("set local role "+role);
+      await expect(c.query("select public.set_grouped_incremental_totals_v1(false)")).rejects.toMatchObject({code:"42501"});
+      await c.query("rollback");
+      await c.query("begin");
+      await c.query("set local role "+role);
+      await expect(c.query("update public.grouped_incremental_totals_state set enabled=false")).rejects.toMatchObject({code:"42501"});
+      await c.query("rollback");
+      await c.query("begin");
+      await collect(c);
+      await c.query("set local role "+role);
+      await c.query("select public.flush_grouped_batch_totals_v2()");
+      await c.query("commit");
+      await audit();
+    } finally {
+      await c.query("rollback").catch(()=>undefined);
+      if(created){
+        await c.query("revoke execute on function public.try_grouped_incremental_totals_v1(),public.flush_grouped_batch_totals_v2() from "+role);
+        await c.query("revoke usage on schema public from "+role);
+        await c.query("drop role "+role);
+      }
+      c.release();
+    }
+  });
+
   it("disables, rebuilds and repairs official totals; legacy remains available", async () => {
     await pool.query("update campaign_batches set total_records=0 where id=$1",[batches[0]]);
     await pool.query("select public.set_grouped_incremental_totals_v1(false)");
