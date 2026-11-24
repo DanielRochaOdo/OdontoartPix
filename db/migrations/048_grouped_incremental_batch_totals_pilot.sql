@@ -116,6 +116,13 @@ begin
   perform set_config('odontoart.grouped_batch_totals','off',true);
   if coalesce(cardinality(v_ids),0)=0 then return true; end if;
 
+  if exists(select 1 from pg_catalog.pg_locks where pid=pg_backend_pid()
+    and locktype='advisory' and granted
+    and database=(select oid from pg_catalog.pg_database where datname=current_database())
+    and classid::bigint=(20261124047::bigint >> 32)
+    and objid::bigint=(20261124047::bigint & 4294967295::bigint) and objsubid=1) then
+    raise exception 'Shadow lock was acquired before batch locks; reject early flush' using errcode='23514';
+  end if;
   -- Same sorted locks as 044, BEFORE the deferred 047 serialization lock.
   -- No waiting for a batch row while holding the advisory lock.
   perform b.id from public.campaign_batches b where b.id=any(v_ids)
@@ -131,8 +138,7 @@ end;
 $$;
 
 create function public.flush_grouped_batch_totals_v2()
-returns void language plpgsql volatile
-set search_path=pg_catalog,pg_temp as $$
+returns void language plpgsql volatile as $
 begin
   if not public.try_grouped_incremental_totals_v1() then
     perform public.flush_grouped_batch_totals_v1();
