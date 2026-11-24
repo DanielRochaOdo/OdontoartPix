@@ -326,6 +326,35 @@ left join public.campaign_batches b on b.id=ids.batch_id
 left join full_calc f on f.batch_id=ids.batch_id
 left join public.batch_totals_shadow_totals s on s.batch_id=ids.batch_id;
 
+-- Per-link parity prevents offsetting errors from hiding in batch sums.
+create view public.batch_totals_shadow_link_audit_v1 as
+with expected as (
+  select cbm.id as member_link_id, cbm.batch_id,
+    1::bigint as total_records,
+    count(*) filter (where cbm.processing_status='completed') as processed_records,
+    count(*) filter (where t.payment_status='paid') as paid_records,
+    count(*) filter (where t.payment_status='unpaid') as unpaid_records,
+    count(*) filter (where cbm.processing_status='error' and
+      (t.payment_status is null or t.payment_status not in ('paid','agreed','excluded'))) as error_records,
+    count(*) filter (where cbm.processing_status='processing') as processing_records,
+    count(*) filter (where cbm.processing_status in ('pending','queued','retrying','aguardando') and
+      (t.payment_status is null or t.payment_status not in ('paid','agreed','excluded'))) as waiting_records,
+    coalesce(sum(t.amount_cents),0)::bigint as total_amount_cents,
+    coalesce(sum(t.pending_amount_cents),0)::bigint as total_pending_amount_cents
+  from public.campaign_batch_members cbm left join public.member_target_installments t
+    on t.id=cbm.target_installment_ref_id where cbm.deleted_at is null group by cbm.id,cbm.batch_id
+)
+select coalesce(e.member_link_id,s.member_link_id) as member_link_id,
+  coalesce(e.batch_id,s.batch_id) as batch_id, state.enabled,
+  (e.member_link_id is null) as orphan_contribution,
+  (s.member_link_id is null) as missing_contribution,
+  row(e.batch_id,e.total_records,e.processed_records,e.paid_records,e.unpaid_records,
+      e.error_records,e.processing_records,e.waiting_records,e.total_amount_cents,e.total_pending_amount_cents)
+    is distinct from row(s.batch_id,s.total_records,s.processed_records,s.paid_records,s.unpaid_records,
+      s.error_records,s.processing_records,s.waiting_records,s.total_amount_cents,s.total_pending_amount_cents) as differs
+from expected e full join public.batch_totals_shadow_contributions s using (member_link_id)
+cross join public.batch_totals_shadow_state state;
+
 -- No public access to implementation or admin activation. Trigger functions
 -- run with the migration owner's permissions, using only qualified objects.
 revoke all on function public.batch_totals_shadow_mark_v1(text,uuid),
@@ -335,7 +364,23 @@ revoke all on function public.batch_totals_shadow_mark_v1(text,uuid),
 revoke all on public.batch_totals_shadow_state, public.batch_totals_shadow_contributions,
   public.batch_totals_shadow_totals, public.batch_totals_shadow_dirty,
   public.batch_totals_shadow_transactions, public.batch_totals_shadow_current_v1,
-  public.batch_totals_shadow_audit_v1 from public;
+  public.batch_totals_shadow_audit_v1, public.batch_totals_shadow_link_audit_v1 from public;
+
+-- Production may grant privileges to the app via ALTER DEFAULT PRIVILEGES.
+do $
+begin
+  if exists (select 1 from pg_roles where rolname = 'odontoart_pix_app') then
+    revoke all on public.batch_totals_shadow_state, public.batch_totals_shadow_contributions,
+      public.batch_totals_shadow_totals, public.batch_totals_shadow_dirty,
+      public.batch_totals_shadow_transactions, public.batch_totals_shadow_current_v1,
+      public.batch_totals_shadow_audit_v1, public.batch_totals_shadow_link_audit_v1 from odontoart_pix_app;
+    revoke all on function public.batch_totals_shadow_mark_v1(text,uuid),
+      public.batch_totals_shadow_capture_link_v1(), public.batch_totals_shadow_capture_target_v1(),
+      public.batch_totals_shadow_flush_v1(), public.batch_totals_shadow_guard_truncate_v1(),
+      public.set_batch_totals_shadow_v1(boolean) from odontoart_pix_app;
+  end if;
+end;
+$;
 
 insert into public.schema_migrations(version,name)
 values (47,'incremental_batch_totals_shadow') on conflict(version) do nothing;
