@@ -1057,7 +1057,11 @@ export async function runLocalWorkerOnce(options?: {
         | { ok: true; analysis: MonthlyAnalysis }
         | { ok: false; error: unknown; erpConsultStarted: boolean; fatal?: boolean };
 
-      const persistenceLimiter = createAsyncLimiter(groupedPersistenceEnabled ? 1 : persistenceMode.concurrency);
+      // Grouped mode has a single shared writer; all existing pilots and the
+      // default individual path retain their original concurrency limiter.
+      const persistenceLimiter = groupedPersistenceEnabled
+        ? createAsyncLimiter(1)
+        : createAsyncLimiter(persistenceMode.concurrency);
       const groupedWriter = groupedPersistenceEnabled ? createGroupedPersistence<{
         item: ClaimedMember; analysis: MonthlyAnalysis;
       }, boolean>({
