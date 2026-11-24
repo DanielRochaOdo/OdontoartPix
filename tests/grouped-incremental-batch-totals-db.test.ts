@@ -181,4 +181,79 @@ describeDb("048 grouped incremental projection pilot", () => {
     expect((await pool.query("select enabled from public.batch_totals_shadow_state")).rows[0].enabled).toBe(true);
     await audit();
   });
+
+  it("compares equivalent grouped writes in legacy, shadow and pilot modes on synthetic mass", async () => {
+    // Small CI benchmark. No timing threshold on shared runners.
+    const c=await pool.connect();
+    const benchCampaign=randomUUID(), tag="BENCH048-"+randomUUID();
+    const benchBatches=Array.from({length:3},()=>randomUUID());
+    const results: Array<Record<string,unknown>>=[];
+    try {
+      await c.query("select public.set_batch_totals_shadow_v1(false)");
+      await c.query("insert into campaigns(id,name,status) values($1,$2,'rascunho')",[benchCampaign,tag]);
+      for (const [i,b] of benchBatches.entries()) await c.query("insert into campaign_batches(id,campaign_id,name) values($1,$2,$3)",[b,benchCampaign,tag+i]);
+      await c.query(`insert into members(cpf,cpf_hash,name,external_user_code)
+        select '00000000000',$1||':'||n,'Synthetic '||n,$1||':'||n from generate_series(1,400) n`,[tag]);
+      await c.query(`insert into campaign_batch_members(campaign_id,batch_id,member_id,target_installment_id,
+        installment_amount_cents,payment_status,payment_status_source,total_pending_amount_cents,processing_status)
+        select $1::uuid,b,m.id,'BENCH048',10000,'unpaid','erp_open_invoice',10000,'completed'
+        from members m cross join unnest($2::uuid[]) b where m.cpf_hash like $3`,[benchCampaign,benchBatches,tag+":%"]);
+      await c.query("select public.recalculate_batch_totals_many(array(select id from campaign_batches))");
+      await c.query("analyze campaign_batch_members");
+      await c.query("analyze member_target_installments");
+      const targets=(await c.query(`select distinct target_installment_ref_id as id from campaign_batch_members
+        where batch_id=$1 order by id limit 40`,[benchBatches[0]])).rows.map(r=>r.id);
+      expect(targets).toHaveLength(40);
+      await c.query("set track_functions='pl'");
+      const snapshot=async()=>{
+        await c.query("select pg_stat_force_next_flush()");
+        await c.query("select pg_stat_clear_snapshot()");
+        const r=await c.query(`select
+          coalesce((select calls from pg_stat_user_functions where schemaname='public' and funcname='recalculate_batch_totals_many'),0)::float8 as full_calls,
+          coalesce((select calls from pg_stat_user_functions where schemaname='public' and funcname='project_grouped_incremental_totals_v1'),0)::float8 as pilot_calls,
+          seq_scan::float8 as scans,seq_tup_read::float8 as reads
+          from pg_stat_user_tables where relid='public.member_target_installments'::regclass`);
+        return r.rows[0];
+      };
+      for (const mode of ["legacy","shadow","pilot"]) {
+        if(mode==="shadow") await c.query("select public.set_batch_totals_shadow_v1(true)");
+        if(mode==="pilot") await c.query("select public.set_grouped_incremental_totals_v1(true)");
+        const before=await snapshot();
+        const start=performance.now();
+        for(const amount of [9000,10000]){
+          for(let i=0;i<targets.length;i+=10){
+            await c.query("begin");
+            await c.query("select set_config('odontoart.grouped_batch_totals','on',true)");
+            for(const id of targets.slice(i,i+10)){
+              await c.query("update member_target_installments set pending_amount_cents=$2 where id=$1",[id,amount]);
+              await c.query("select public.sync_target_installment_links_v1($1)",[id]);
+            }
+            await c.query("select public.flush_grouped_batch_totals_v2()");
+            await c.query("commit");
+          }
+        }
+        const elapsedMs=performance.now()-start, after=await snapshot();
+        const result={mode,canonicalWrites:80,transactions:8,elapsedMs,
+          fullCalls:after.full_calls-before.full_calls,pilotCalls:after.pilot_calls-before.pilot_calls,
+          scans:after.scans-before.scans,reads:after.reads-before.reads};
+        results.push(result);
+        // Verify before maintenance, never repair to hide a mismatch.
+        expect((await c.query("select * from public.batch_totals_shadow_audit_v1 where official_differs or orphan_batch")).rowCount).toBe(0);
+        if(mode!=="legacy")await audit();
+        if(mode==="pilot"){
+          expect(result.fullCalls).toBe(0);
+          expect(result.pilotCalls).toBe(8);
+        }else expect(result.fullCalls).toBe(8);
+      }
+      console.info("[048_SYNTHETIC_BENCHMARK]", JSON.stringify(results));
+    } finally {
+      await c.query("rollback").catch(()=>undefined);
+      await c.query("reset track_functions");
+      await c.query("select public.set_grouped_incremental_totals_v1(false)");
+      await c.query("select public.set_batch_totals_shadow_v1(false)");
+      await c.query("delete from campaigns where id=$1",[benchCampaign]);
+      await c.query("delete from members where cpf_hash like $1",[tag+":%"]);
+      c.release();
+    }
+  }, 120000);
 });
