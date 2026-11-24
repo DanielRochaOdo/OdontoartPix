@@ -1,4 +1,6 @@
 import { recalculateBatch } from "@/lib/batch-totals";
+import type { PoolClient } from "pg";
+import { createGroupedPersistence } from "@/lib/processing-grouped-persistence";
 import { randomUUID } from "node:crypto";
 import type { MonthlyAnalysis } from "@/lib/analysis";
 import { dbQuery } from "@/lib/db/pool";
@@ -379,6 +381,7 @@ async function persistSuccess(input: {
   workerId: string;
   analysis: MonthlyAnalysis;
   profiler?: PersistenceProfiler;
+  client?: PoolClient;
 }) {
   const { job, claimed, workerId, analysis } = input;
   const financial = targetFinancialState(claimed, analysis);
@@ -386,7 +389,7 @@ async function persistSuccess(input: {
   const timedQuery = <T>(stage: PersistenceProfileStage, action: () => Promise<T>): Promise<T> =>
     profiler ? profiler.measure(stage, action) : action();
 
-  return timedQuery("transaction", () => withTransaction(async (client) => {
+  const persist = async (client: PoolClient) => {
     const owned = await timedQuery("lock", () => clientQuery<{ id: string }>(
       client,
       `select id
@@ -568,7 +571,9 @@ async function persistSuccess(input: {
     }
 
     return true;
-  }));
+  };
+  return input.client ? persist(input.client) :
+    timedQuery("transaction", () => withTransaction(persist));
 }
 
 function isTransientPostgresPersistenceError(error: unknown) {
@@ -1035,6 +1040,14 @@ export async function runLocalWorkerOnce(options?: {
       ? `general-sync-two-wave-${twoWavePilotStage}`
       : (generalSyncPilotActive ? "general-sync-first-wave" :
         (manualPersistenceMode.pilot ? "manual-small-batch" : "none"));
+    // Opt-in exclusively for ordinary general-sync jobs on Sliding Window V2.
+    // One group writer prevents lock inversion on processing_jobs between groups
+    // and claims. ERP concurrency and stored persistence settings are unchanged.
+    const groupedSize = Math.min(20, config.persistenceBatchSize, effectiveConcurrency);
+    const groupedPersistenceEnabled = process.env.PROCESSING_GROUPED_PERSISTENCE_ENABLED === "true" &&
+      slidingWindowV2Enabled && Boolean(job.general_sync_run_id) &&
+      job.processing_scope === "batch" && !persistenceMode.pilot && groupedSize >= 2;
+    const groupMetrics = { transactions: 0, items: 0, fallbackGroups: 0 };
     const claimed = slidingWindowEnabled ? [] as ClaimedMember[] :
       await claimMembers(job, workerId, effectiveClaimLimit);
     let claimedCount = claimed.length;
@@ -1044,7 +1057,46 @@ export async function runLocalWorkerOnce(options?: {
         | { ok: true; analysis: MonthlyAnalysis }
         | { ok: false; error: unknown; erpConsultStarted: boolean; fatal?: boolean };
 
-      const persistenceLimiter = createAsyncLimiter(persistenceMode.concurrency);
+      const persistenceLimiter = createAsyncLimiter(groupedPersistenceEnabled ? 1 : persistenceMode.concurrency);
+      const groupedWriter = groupedPersistenceEnabled ? createGroupedPersistence<{
+        item: ClaimedMember; analysis: MonthlyAnalysis;
+      }, boolean>({
+        maxSize: groupedSize,
+        maxWaitMs: 150,
+        write: (items) => persistenceLimiter(async () => {
+          const transaction = () => withTransaction(async (client) => {
+            // Match the claim lock order: job first, then member links.
+            // Already-claimed work may finish after a stop request, as before.
+            const ownedJob = await clientQuery<{ id: string }>(client,
+              "select id from processing_jobs where id = $1 and locked_by = $2 and status = 'running' for update",
+              [job.id, workerId]);
+            if (!ownedJob.rows[0]) return items.map(() => false);
+            await clientQuery(client, "select set_config('odontoart.grouped_batch_totals', 'on', true)");
+            const persisted: boolean[] = [];
+            for (const { item, analysis } of items) {
+              persisted.push(await persistSuccess({
+                job, claimed: item, workerId, analysis, profiler: persistenceProfiler, client
+              }));
+            }
+            // Mandatory before commit. The database also rejects a commit with
+            // pending totals, so a future missing flush cannot silently drift.
+            await clientQuery(client, "select public.flush_grouped_batch_totals_v1()");
+            return persisted;
+          });
+          try {
+            const result = persistenceProfiler
+              ? await persistenceProfiler.measure("transaction", transaction)
+              : await transaction();
+            groupMetrics.transactions++;
+            groupMetrics.items += result.filter(Boolean).length;
+            return result;
+          } catch (error) {
+            groupMetrics.fallbackGroups++;
+            console.warn("[LOCAL_WORKER_GROUPED_PERSISTENCE_FALLBACK]", { jobId: job.id, size: items.length });
+            throw error;
+          }
+        })
+      }) : undefined;
       const processClaimedBatch = async (batchItems: ClaimedMember[]) => {
         await runSplitProcessingPipeline<ClaimedMember, PreparedConsultation>({
         items: batchItems,
@@ -1084,10 +1136,22 @@ export async function runLocalWorkerOnce(options?: {
           }
         },
         persist: async (item, outcome) => {
-          const writeResult = async () => {
           const prepared: PreparedConsultation = outcome.kind === "success"
             ? outcome.value
             : { ok: false, error: outcome.error, erpConsultStarted: false };
+          if (groupedWriter && prepared.ok) {
+            try {
+              const persisted = await timed("persistence", () => groupedWriter.submit({ item, analysis: prepared.analysis }));
+              if (persisted) succeeded += 1;
+              return;
+            } catch {
+              // The entire group was rolled back (or commit outcome is unknown).
+              // Replay via the original ownership-checked path: a committed
+              // claim has already been cleared and cannot be applied twice.
+              // Do not turn a group failure into ERP errors for every item.
+            }
+          }
+          const writeResult = async () => {
           if (!prepared.ok) {
             if (prepared.fatal) throw prepared.error;
             const failure = await timed("persistence", () => persistFailure({
@@ -1224,7 +1288,12 @@ export async function runLocalWorkerOnce(options?: {
         (slidingWindowEnabled ? "sliding" : (splitPipelineEnabled ? "split" : "legacy")),
       claimed: claimedCount,
       persistenceConfiguredConcurrency: config.persistenceConcurrency,
-      persistenceConcurrency: persistenceMode.concurrency,
+      persistenceConcurrency: groupedPersistenceEnabled ? 1 : persistenceMode.concurrency,
+      persistenceGrouped: groupedPersistenceEnabled,
+      persistenceGroupSize: groupedPersistenceEnabled ? groupedSize : 1,
+      persistenceGroupedTransactions: groupMetrics.transactions,
+      persistenceGroupedItems: groupMetrics.items,
+      persistenceGroupedFallbacks: groupMetrics.fallbackGroups,
       persistencePilot: persistenceMode.pilot,
       persistencePilotScope,
       elapsedMs: Math.round(performance.now() - cycleStartedAt),
