@@ -73,6 +73,127 @@ async function createScenario(client: PoolClient) {
 }
 
 describeDatabase("canonical installment database invariant", () => {
+  it("agrupa parcelas compartilhadas e impede commit de totais nao recalculados (046)", async () => {
+    await withIsolatedTransaction(async (client) => {
+      const { campaignId, batchIds, memberId } = await createScenario(client);
+      const sources: string[] = [];
+      const targetIds: string[] = [];
+      for (const code of ["GROUP-046-A", "GROUP-046-B"]) {
+        for (const [index, batchId] of batchIds.entries()) {
+          const inserted = await client.query<{ id: string; target_installment_ref_id: string }>(
+            `insert into campaign_batch_members(
+                campaign_id, batch_id, member_id, target_installment_id,
+                installment_amount_cents, payment_status, payment_status_source,
+                total_pending_amount_cents, processing_status
+              ) values ($1, $2, $3, $4, 5000, 'unpaid', 'erp_explicit', 5000, 'pending')
+              returning id, target_installment_ref_id`,
+            [campaignId, batchId, memberId, code]
+          );
+          if (index === 0) {
+            sources.push(inserted.rows[0]!.id);
+            targetIds.push(inserted.rows[0]!.target_installment_ref_id);
+          }
+        }
+      }
+      await client.query("select public.recalculate_batch_totals_many($1::uuid[])", [batchIds]);
+      const snapshot = async () => (await client.query(
+        `select id, total_records, processed_records, paid_records, unpaid_records,
+                error_records, total_pending_amount_cents::text, total_amount_cents::text, status
+           from campaign_batches where id = any($1::uuid[]) order by id`, [batchIds]
+      )).rows;
+      const before = await snapshot();
+
+      await client.query("savepoint before_group");
+      await client.query("select set_config('odontoart.grouped_batch_totals', 'on', true)");
+      for (const [index, linkId] of sources.entries()) {
+        const paid = index === 0 ? 5000 : 2000;
+        await client.query(
+          `insert into member_installments(campaign_batch_member_id, cod_parcela, payment_description,
+                 paid_amount_cents, base_amount_cents, final_amount_cents)
+             values ($1, $2, 'PIX', $3, 5000, 5000)`,
+          [linkId, index === 0 ? "GROUP-046-A" : "GROUP-046-B", paid]
+        );
+        await client.query(
+          `update campaign_batch_members
+              set processing_status = 'completed', payment_status = 'paid',
+                  payment_status_source = 'erp_explicit', installment_amount_cents = 5000,
+                  payment_amount_cents = $2, total_pending_amount_cents = 5000 - $2::bigint,
+                  last_erp_status_at = now(), updated_at = now()
+            where id = $1`, [linkId, paid]
+        );
+      }
+      expect(await snapshot()).toEqual(before);
+      const pending = await client.query<{ count: number }>(
+        "select count(*)::int as count from public.grouped_batch_totals_pending where transaction_id = txid_current()"
+      );
+      expect(pending.rows[0]!.count).toBe(3); // two targets, three distinct batches
+
+      // Force the deferred commit check, without committing shared test fixtures.
+      await client.query("savepoint guard_check");
+      await expect(client.query("set constraints grouped_batch_totals_must_flush immediate"))
+        .rejects.toMatchObject({ code: "23514" });
+      await client.query("rollback to savepoint guard_check");
+
+      await client.query("select public.flush_grouped_batch_totals_v1()");
+      await client.query("set constraints grouped_batch_totals_must_flush immediate");
+      const grouped = await snapshot();
+      expect(grouped).toHaveLength(3);
+      for (const row of grouped) {
+        expect(row).toMatchObject({
+          total_records: 2, processed_records: 2, paid_records: 2, unpaid_records: 0,
+          error_records: 0, total_pending_amount_cents: "3000", total_amount_cents: "10000",
+          status: "concluido"
+        });
+      }
+      const canonical = await client.query(
+        `select payment_status, paid_amount_cents::text, pending_amount_cents::text
+           from member_target_installments where id = any($1::uuid[]) order by paid_amount_cents`,
+        [targetIds]
+      );
+      expect(canonical.rows).toEqual([
+        { payment_status: "paid", paid_amount_cents: "2000", pending_amount_cents: "3000" },
+        { payment_status: "paid", paid_amount_cents: "5000", pending_amount_cents: "0" }
+      ]);
+      const linked = await client.query<{ count: number }>(
+        `select count(*)::int as count from campaign_batch_members
+            where target_installment_ref_id = any($1::uuid[]) and deleted_at is null
+              and processing_status = 'completed' and payment_status = 'paid'`, [targetIds]
+      );
+      expect(linked.rows[0]!.count).toBe(6);
+      await client.query("select public.recalculate_batch_totals_many($1::uuid[])", [batchIds]);
+      expect(await snapshot()).toEqual(grouped);
+      expect((await client.query("select * from public.grouped_batch_totals_pending")).rows).toHaveLength(0);
+
+      // A failed group rolls back financial data, links, snapshots and totals.
+      await client.query("rollback to savepoint before_group");
+      expect(await snapshot()).toEqual(before);
+      const rolledBack = await client.query<{ count: number }>(
+        "select count(*)::int as count from member_target_installments where id = any($1::uuid[]) and payment_status = 'unpaid'",
+        [targetIds]
+      );
+      expect(rolledBack.rows[0]!.count).toBe(2);
+      expect((await client.query("select * from public.grouped_batch_totals_pending")).rows).toHaveLength(0);
+    });
+  });
+
+  it("repara totais defasados tambem no agrupamento sem mudanca financeira", async () => {
+    await withIsolatedTransaction(async (client) => {
+      const { campaignId, batchIds, memberId } = await createScenario(client);
+      const inserted = await client.query<{ target_installment_ref_id: string }>(
+        `insert into campaign_batch_members(campaign_id, batch_id, member_id, target_installment_id,
+           installment_amount_cents, processing_status) values ($1, $2, $3, 'GROUP-046-REPAIR', 5000, 'pending')
+         returning target_installment_ref_id`, [campaignId, batchIds[0], memberId]
+      );
+      await client.query("select sync_target_installment_links_v1($1::uuid)", [inserted.rows[0]!.target_installment_ref_id]);
+      await client.query("update campaign_batches set total_records = 99 where id = $1", [batchIds[0]]);
+      await client.query("select set_config('odontoart.grouped_batch_totals', 'on', true)");
+      await client.query("select sync_target_installment_links_v1($1::uuid)", [inserted.rows[0]!.target_installment_ref_id]);
+      await client.query("select public.flush_grouped_batch_totals_v1()");
+      expect((await client.query("select total_records from campaign_batches where id = $1", [batchIds[0]])).rows[0])
+        .toEqual({ total_records: 1 });
+    });
+  });
+
   it("compartilha uma parcela entre lotes sem multiplicar a identidade financeira", async () => {
     await withIsolatedTransaction(async (client) => {
       const { campaignId, batchIds, memberId } = await createScenario(client);
