@@ -1,3 +1,25 @@
+/** Keep the grouped path exclusive to ordinary general-sync dashboard jobs. */
+export function canUseGroupedPersistence(input: {
+  enabled: boolean;
+  slidingWindowV2Enabled: boolean;
+  pilot: boolean;
+  groupSize: number;
+  job: {
+    processing_origin: string;
+    processing_scope: string;
+    general_sync_run_id: string | null;
+    target_member_link_id: string | null;
+    filtered_error_request_id: string | null;
+  };
+}): boolean {
+  const { job } = input;
+  return input.enabled && input.slidingWindowV2Enabled && !input.pilot &&
+    Number.isSafeInteger(input.groupSize) && input.groupSize >= 2 &&
+    job.processing_origin === "dashboard" && job.processing_scope === "dashboard" &&
+    Boolean(job.general_sync_run_id) &&
+    job.target_member_link_id == null && job.filtered_error_request_id == null;
+}
+
 /** Bounded, single-writer micro-batches. Each submit resolves only after
  * the callback has completed the entire transaction (including commit).
  * The caller owns recovery of a rejected group. No timer survives a drain.
