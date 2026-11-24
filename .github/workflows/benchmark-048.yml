@@ -44,7 +44,6 @@ jobs:
       DATABASE_PASSWORD: postgres
       DATABASE_SSL: "false"
       BENCH048_ISOLATED: "yes"
-      BENCH_PG_CONTAINER: ${{ job.services.postgres.id }}
       PROCESSING_ALLOW_SCHEDULED_SYNC: "false"
     steps:
       - name: Checkout PR revision
@@ -62,9 +61,13 @@ jobs:
         run: npm run db:migrate
       - name: Verify benchmark harness with small synthetic mass
         timeout-minutes: 10
+        env:
+          BENCH_PG_CONTAINER: ${{ job.services.postgres.id }}
         run: node scripts/benchmark-grouped-incremental-048.mjs --smoke
       - name: Run two production-scale comparison rounds
         timeout-minutes: 150
+        env:
+          BENCH_PG_CONTAINER: ${{ job.services.postgres.id }}
         run: node scripts/benchmark-grouped-incremental-048.mjs --full
       - name: Publish benchmark evidence
         if: always()
