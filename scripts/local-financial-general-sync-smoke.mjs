@@ -9,13 +9,14 @@ import { seedFixture, verifyTotals, startMockErp } from './local-financial-fixtu
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const origin = 'http://127.0.0.1:3100';
-const reportFile = path.join(base, 'general-sync-smoke-report.json');
+const grouped = process.argv.includes('--grouped');
+const reportFile = path.join(base, grouped ? 'general-sync-grouped-smoke-report.json' : 'general-sync-smoke-report.json');
 
 async function main() {
   const s = await state(), client = new pg.Client(connection(s, databases.dev));
   await client.connect();
   let server;
-  const report = { generatedAt: new Date().toISOString(), complete: false, scenarios: [] };
+  const report = { generatedAt: new Date().toISOString(), grouped, complete: false, scenarios: [] };
   try {
     await assertServer(client, s);
     assert.equal((await client.query("select count(*)::int as n from general_sync_runs where status in ('queued','running','paused','cancelling')")).rows[0].n, 0, 'Finish the current local sync before this test.');
@@ -61,7 +62,8 @@ async function main() {
       const log = await fs.open(logFile, 'w');
       // --import keeps the worker in this PID, so killing it really closes its DB sessions.
       const child = spawn(process.execPath, ['--import', 'tsx', 'scripts/process-local-worker.ts', '--drain', '--delay-ms=0'], {
-        cwd: repo, env: { ...environment(s, databases.dev), MENSALIDADES_API_BASE_URL: 'http://127.0.0.1:3102' },
+        cwd: repo, env: { ...environment(s, databases.dev), MENSALIDADES_API_BASE_URL: 'http://127.0.0.1:3102',
+          PROCESSING_GROUPED_PERSISTENCE_ENABLED: String(grouped) },
         windowsHide: true, stdio: ['ignore', log.fd, log.fd]
       });
       let exited = false, killed = false;
@@ -126,7 +128,16 @@ async function main() {
     }
 
     const first = await start(standard);
-    const initialWorker = await worker('normal');
+    const initialWorker = await worker(grouped ? 'grouped-normal' : 'normal');
+    if (grouped) {
+      const metrics = await fs.readFile(initialWorker.logFile, 'utf8');
+      assert.match(metrics, /persistenceGrouped: true/);
+      assert.doesNotMatch(metrics, /LOCAL_WORKER_GROUPED_PERSISTENCE_FALLBACK/);
+      const groups = [...metrics.matchAll(/persistenceGroupedTransactions: (\d+),\s*persistenceGroupedItems: (\d+)/g)];
+      assert.ok(groups.some(([, tx, items]) => Number(tx) > 0 && Number(items) > Number(tx)),
+        'At least one worker cycle must actually commit multiple results per transaction.');
+      assert.equal((await client.query('select count(*)::int as n from grouped_batch_totals_pending')).rows[0].n, 0);
+    }
     await record('single drain including fully reused batches', { ...await verify(standard, first, 40), ...initialWorker });
     assert.equal(server.labRequests.filter(r => r.code.startsWith(standard.tag)).length, 40);
     assert.ok(standard.links.every(link => server.labRequests.filter(r => r.code === link.code).length === 1));
