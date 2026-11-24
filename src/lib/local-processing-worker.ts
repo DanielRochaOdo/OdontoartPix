@@ -1,6 +1,6 @@
 import { recalculateBatch } from "@/lib/batch-totals";
 import type { PoolClient } from "pg";
-import { createGroupedPersistence } from "@/lib/processing-grouped-persistence";
+import { canUseGroupedPersistence, createGroupedPersistence } from "@/lib/processing-grouped-persistence";
 import { randomUUID } from "node:crypto";
 import type { MonthlyAnalysis } from "@/lib/analysis";
 import { dbQuery } from "@/lib/db/pool";
@@ -1044,9 +1044,13 @@ export async function runLocalWorkerOnce(options?: {
     // One group writer prevents lock inversion on processing_jobs between groups
     // and claims. ERP concurrency and stored persistence settings are unchanged.
     const groupedSize = Math.min(20, config.persistenceBatchSize, effectiveConcurrency);
-    const groupedPersistenceEnabled = process.env.PROCESSING_GROUPED_PERSISTENCE_ENABLED === "true" &&
-      slidingWindowV2Enabled && Boolean(job.general_sync_run_id) &&
-      job.processing_scope === "batch" && !persistenceMode.pilot && groupedSize >= 2;
+    const groupedPersistenceEnabled = canUseGroupedPersistence({
+      enabled: process.env.PROCESSING_GROUPED_PERSISTENCE_ENABLED === "true",
+      slidingWindowV2Enabled,
+      pilot: persistenceMode.pilot,
+      groupSize: groupedSize,
+      job
+    });
     const groupMetrics = { transactions: 0, items: 0, fallbackGroups: 0 };
     const claimed = slidingWindowEnabled ? [] as ClaimedMember[] :
       await claimMembers(job, workerId, effectiveClaimLimit);
