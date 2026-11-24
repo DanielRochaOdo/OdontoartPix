@@ -138,7 +138,7 @@ end;
 $$;
 
 create function public.flush_grouped_batch_totals_v2()
-returns void language plpgsql volatile as $
+returns void language plpgsql volatile as $$
 begin
   if not public.try_grouped_incremental_totals_v1() then
     perform public.flush_grouped_batch_totals_v1();
