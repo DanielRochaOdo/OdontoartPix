@@ -5,6 +5,17 @@ set -euo pipefail
 [[ "$CI_PG_CONTAINER" =~ ^[a-f0-9]{12,64}$ ]]
 mkdir -p operational-048
 exec > >(tee operational-048/deployment.log) 2>&1
+bash -n deploy/production/docker-safe-deploy.sh
+bash -n scripts/048-maintenance-sql.sh
+guard=deploy/production/guard-048-deploy.sh
+[[ "$(bash "$guard" 47 0)" == ordinary ]]
+[[ "$(bash "$guard" 48 1)" == verify-running-image ]]
+if bash "$guard" 47 1 > operational-048/generic-transition.log 2>&1; then exit 1; fi
+grep -F '[048_TRANSITION_REFUSED]' operational-048/generic-transition.log
+if bash "$guard" 48 0 > operational-048/generic-downgrade.log 2>&1; then exit 1; fi
+grep -F '[048_DOWNGRADE_REFUSED]' operational-048/generic-downgrade.log
+if bash "$guard" invalid 1; then exit 1; fi
+echo '[048_GENERIC_DEPLOY_GUARD_VERIFIED]'
 admin(){ docker exec -i "$CI_PG_CONTAINER" psql -X -v ON_ERROR_STOP=1 -U postgres -d odontoart_pix_ops048 "$@"; }
 runtime(){ docker exec -i -e PGPASSWORD=ci-ops048-app "$CI_PG_CONTAINER" psql -X -v ON_ERROR_STOP=1 -h 127.0.0.1 -U odontoart_pix_app -d odontoart_pix_ops048 "$@"; }
 check(){ local actual; actual="$(admin -Atc "$1")"; [[ "$actual" == "$2" ]] || { echo "Expected [$2], got [$actual] for $1"; exit 1; }; }
