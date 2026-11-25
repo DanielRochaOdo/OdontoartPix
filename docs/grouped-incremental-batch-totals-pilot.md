@@ -59,3 +59,32 @@ Nenhum merge, deploy, ativação ou manutenção de produção sem autorização
 - Só depois decidir ampliar o incremental a outros fluxos em PR separado.
   Meta global >=90% de redução por resultado sobre referência controlada
   pré-046 ainda não comprovada.
+
+## Registro de homologação — 25/11/2026
+
+PR #174, commit 37e6411: CI #831 e benchmark ampliado #3 aprovados.
+- Execução: https://github.com/DanielRochaOdo/OdontoartPix/actions/runs/45481147566
+- Duas rodadas, 38.000 escritas por modo/rodada, 78.050 canônicas,
+  65.188 com vínculo ativo, 206.524 vínculos, 40 lotes e 5 campanhas.
+- 046 e 047: 494.368.700 linhas sequenciais por cenário; 048: zero em ambos.
+  048: 6.334 projeções por cenário, zero recálculos integrais no caminho.
+- Médias 047/048: 406,52/88,14 s de duração, 401,00/75,54 s de CPU
+  do container PostgreSQL e 565,38/466,34 MiB WAL. Zero divergências
+  oficiais e de propagação; shadow validado quando ativo; zero deadlocks.
+  Não são tempos de sincronização real do ERP.
+
+### Homologação operacional adicionada (resultados pendentes)
+Workflow .github/workflows/operational-048.yml, PostgreSQL 16 descartável,
+role odontoart_pix_app sem superuser/ownership, permissões de fonte
+sintéticas (não equivalência demonstrada com os grants reais de produção).
+Usa API Next e worker reais, ERP HTTP simulado, fixtures pequenas,
+reutilização, segunda sincronização, 503/retry, SIGKILL do worker após
+commit, recuperação, DELETE HTTP concorrente com a projeção (gate de teste),
+terminação de backend antes do commit, repetição idempotente e reversão.
+Artefatos: relatórios, logs, inventário textual de candidatos a escrita e
+definições de triggers/routines e grants no catálogo PostgreSQL. A busca
+textual requer classificação manual; não prova cobertura exaustiva de SQL
+dinâmico. Cancelamento/importação e demais escritores precisam ser revisados.
+O benchmark ampliado agora também exige reversão auditada em cada cenário
+048, fora da janela medida. As novas execuções não estão aprovadas ainda.
+Nenhuma instalação, merge ou ativação autorizada em produção.
