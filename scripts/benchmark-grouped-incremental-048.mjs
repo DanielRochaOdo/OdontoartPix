@@ -272,6 +272,22 @@ async function scenario(c, observer, mode, round, expectedSizes, list) {
   assert.equal(database.deadlocks,0,"Database deadlocks");
   assert.equal(fullCalls,mode==="pilot"?0:timings.length,"Full recalculation calls");
   assert.equal(pilotCalls,mode==="pilot"?timings.length:0,"Incremental projection calls");
+  // Reversion runs after the measured interval and the independent audit.
+  // Compare all stored financial/operational totals before and after repair.
+  if(mode==="pilot"){
+    const readOfficial=async()=> (await c.query("select id,total_records,processed_records,paid_records,unpaid_records,error_records,total_amount_cents,total_pending_amount_cents,status from campaign_batches order by id")).rows;
+    const original=await readOfficial();
+    const start=performance.now();
+    await c.query("select public.set_grouped_incremental_totals_v1(false)");
+    const rollbackMs=performance.now()-start;
+    assert.equal((await c.query("select enabled from public.grouped_incremental_totals_state")).rows[0].enabled,false);
+    assert.equal((await c.query("select enabled from public.batch_totals_shadow_state")).rows[0].enabled,true);
+    assert.deepEqual(await readOfficial(),original,"Reversion modified official totals");
+    await verifySource(c,list);
+    result.reversion={ elapsedMs:rollbackMs, unchangedOfficial:true, audit:await audit(c,true,expectedSizes) };
+    await save();
+    console.log("[048_FULL_REVERSION]",JSON.stringify({round,...result.reversion}));
+  }
   console.log("[048_BENCH_RESULT]",JSON.stringify(result));
 }
 async function main(){
