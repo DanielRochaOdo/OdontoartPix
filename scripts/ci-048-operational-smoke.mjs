@@ -1,7 +1,7 @@
 // CI-only real HTTP routes + real worker, isolated PostgreSQL service. No production access.
 import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
-import { spawn, execFileSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import bcrypt from 'bcryptjs';
@@ -84,9 +84,20 @@ async function main() {
     assert.equal((await client.query("select max(version)::int v from schema_migrations")).rows[0].v,48);
     // Grant application access to ordinary source tables only, never to private
     // shadow/projection tables or audit views. Migrations grant runtime functions.
+    await client.query("grant usage on schema public to odontoart_pix_app");
     const relations=(await client.query("select format('%I.%I',schemaname,tablename) as name from pg_tables where schemaname='public' and tablename not like 'batch_totals_shadow_%' and tablename not like 'grouped_incremental_totals_%'")).rows;
     for(const r of relations) await client.query("grant select,insert,update,delete on "+r.name+" to odontoart_pix_app");
+    const views=(await client.query("select format('%I.%I',schemaname,viewname) name from pg_views where schemaname='public' and viewname not like 'batch_totals_shadow_%' and viewname not like 'grouped_incremental_totals_%'")).rows;
+    for(const r of views)await client.query("grant select on "+r.name+" to odontoart_pix_app");
     await client.query("grant usage,select on all sequences in schema public to odontoart_pix_app");
+    // Live catalog of trigger entry points and stored routines, excluding
+    // test-only gates. Save definitions, not only function names.
+    const inventory={
+      triggers:(await client.query("select c.relname relation,t.tgname trigger,t.tgenabled enabled,pg_get_triggerdef(t.oid) definition,p.proname function from pg_trigger t join pg_class c on c.oid=t.tgrelid join pg_namespace n on n.oid=c.relnamespace join pg_proc p on p.oid=t.tgfoid where n.nspname='public' and not t.tgisinternal order by c.relname,t.tgname")).rows,
+      routines:(await client.query("select p.oid::regprocedure::text signature,p.prosecdef security_definer,pg_get_functiondef(p.oid) definition from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.prokind in ('f','p') and (p.prosrc ~* 'campaign_batches|campaign_batch_members|member_target_installments|batch_totals|processing_jobs') order by signature")).rows,
+      grants:(await client.query("select table_name,privilege_type from information_schema.role_table_grants where grantee='odontoart_pix_app' and table_schema='public' order by table_name,privilege_type")).rows
+    };
+    await fs.writeFile(path.join(base,'database-writer-inventory.json'),JSON.stringify(inventory,null,2));
     await client.query("alter role odontoart_pix_app in database odontoart_pix_ops048 set track_functions='pl'");
     await client.query("update processing_scheduler_state set scheduler_enabled=false");
     await client.query("update processing_settings set config=config || $1::jsonb where settings_key='default'",[JSON.stringify({
@@ -171,7 +182,7 @@ async function main() {
         child.once('error', reject);
         child.once('exit', (code, signal) => { exited = true; resolve({ code, signal }); });
       });
-      const timeout = setTimeout(() => { child.kill(); }, 120000);
+      const timeout = setTimeout(() => { child.kill('SIGKILL'); }, 120000);
       try {
         if (crashRunId) {
           const deadline = Date.now() + 60000;
@@ -238,7 +249,10 @@ async function main() {
         'At least one worker cycle must actually commit multiple results per transaction.');
       assert.equal((await client.query('select count(*)::int as n from grouped_batch_totals_pending')).rows[0].n, 0);
     }
-    await record('single drain including fully reused batches', { ...await verify(standard, first, 40), ...initialWorker });
+    await client.query("select pg_stat_clear_snapshot()");
+    const firstProjections=await projectionCount()-projectionBefore;
+    assert(firstProjections>0,'Real worker must execute 048 before any simulated backend test');
+    await record('single drain including fully reused batches', { ...await verify(standard, first, 40), ...initialWorker, incrementalProjections:firstProjections });
     assert.equal(server.labRequests.filter(r => r.code.startsWith(standard.tag)).length, 40);
     assert.ok(standard.links.every(link => server.labRequests.filter(r => r.code === link.code).length === 1));
 
