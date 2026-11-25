@@ -88,3 +88,41 @@ dinâmico. Cancelamento/importação e demais escritores precisam ser revisados.
 O benchmark ampliado agora também exige reversão auditada em cada cenário
 048, fora da janela medida. As novas execuções não estão aprovadas ainda.
 Nenhuma instalação, merge ou ativação autorizada em produção.
+
+### Revisão complementar — evidência de 25/11/2026
+
+Commit 2e58efe, CI #842, operacional #8 e benchmark #14 aprovados.
+Revisão complementar #2: importação concorrente, exclusão após lock e
+instalação administrativa aprovadas. Exclusão de lote antes do lock:
+um deadlock real e HTTP 500 tanto com 047 quanto com 048, API revertida,
+sincronização concluída, 40 canônicas preservadas e auditoria de totais
+sem divergências. Risco preexistente, não regressão demonstrada da 048.
+Cancelamento: a instrumentação reteve o gate enquanto esperava a API
+(90 s); após liberar, logs registraram 40 sucessos e cancelamento.
+Não houve auditoria conclusiva desse cenário.
+
+Correção autorizada: as duas rotas DELETE de lote e a rota DELETE de
+campanha usam worker-safe-deletion.ts. A transação tenta o mesmo advisory
+lock de dois inteiros do worker (17483621,20260821) ANTES de qualquer
+alteração, mantém até commit/rollback e retorna 409 PROCESSING_CONFLICT
+se ocupado. Não espera o drain, não interrompe worker nem muda permissões
+HTTP ou a semântica da exclusão quando livre. A chave é compartilhada
+com scripts/process-local-worker.ts; a exclusão impede a entrada de outro
+worker enquanto durar a transação. Decisão conservadora: bloqueia
+exclusões de qualquer lote/campanha enquanto o worker local está ativo,
+inclusive lotes fora do escopo da sincronização. A tentativa deve ser
+repetida após a conclusão/interrupção segura do processamento. Não protege
+SQL administrativo direto nem prova ausência de conflitos com todos os
+outros escritores de API. Sem mudança na migração 048 ou nas fórmulas.
+
+Testes complementares: matriz de nove jobs isolados; comprovar rejeição
+409 sem efeitos antes/depois dos locks, retry 200 após saída do worker,
+404 ao repetir exclusão concluída, zero deadlocks, zero divergências,
+zero resíduos do lote excluído e canônicas preservadas. Testar também a
+direção inversa (worker real não inicia durante exclusão com chave
+adquirida). Cancelamento: enviar requisição concorrente, observar espera
+ou resposta antecipada, liberar gate ANTES de aguardar resposta, exigir
+cancelamento 202 e rejeição de retomada, auditar antes de novo ciclo,
+preservar terminais e conferir totais finais. Importação e instalação
+administrativa continuam na matriz. Resultados novos pendentes.
+Nenhum merge, deploy ou mudança em produção autorizado.
