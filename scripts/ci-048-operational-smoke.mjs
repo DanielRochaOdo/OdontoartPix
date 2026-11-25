@@ -117,7 +117,7 @@ async function main() {
     }finally{await runtime.end();}
     report.permissions={role:'odontoart_pix_app',adminAndPrivateWritesDenied:true,productionGrantsIdentical:false};
     appLog=await fs.open(path.join(base,'next.log'),'w');
-    app=spawn(process.execPath,['node_modules/next/dist/bin/next','dev','--hostname','127.0.0.1','--port','3100'],{cwd:repo,env,stdio:['ignore',appLog.fd,appLog.fd]});
+    app=spawn(process.execPath,['node_modules/next/dist/bin/next','dev','--hostname','127.0.0.1','--port','3100'],{cwd:repo,env:{...env,PGAPPNAME:'ci048-api'},stdio:['ignore',appLog.fd,appLog.fd]});
     appDone=new Promise((resolve,reject)=>{app.once('error',reject);app.once('exit',(code,signal)=>resolve({code,signal}));});
     const deadline=Date.now()+120000;
     let login;
@@ -178,7 +178,7 @@ async function main() {
       const log = await fs.open(logFile, 'w');
       // --import keeps the worker in this PID, so killing it really closes its DB sessions.
       const child = spawn(process.execPath, ['--import', 'tsx', 'scripts/process-local-worker.ts', '--drain', '--delay-ms=0'], {
-        cwd: repo, env,
+        cwd: repo, env:{...env,PGAPPNAME:'ci048-worker'},
         windowsHide: true, stdio: ['ignore', log.fd, log.fd]
       });
       let exited = false, killed = false;
@@ -286,15 +286,21 @@ async function main() {
     const recoveryLog = await fs.readFile(path.join(base, 'general-sync-recovered.log'), 'utf8');
     assert.match(recoveryLog, /LOCAL_WORKER_RECOVERY/);
     await record('real worker interruption and recovery', { ...await verify(interrupted, crashId, 80), crash, beforeRecovery });
-    // Actual DELETE route overlaps a real grouped worker transaction. The
-    // extra missing-installment link is added AFTER the run snapshot, so
-    // its removal does not alter the planned financial workload.
-    const concurrentId=await start(concurrent);
+    // Place the DELETE target in a separate campaign that is never in the
+    // run scope. Every worker target also has a link in this external lot,
+    // so the grouped flush must lock it, without claiming the extra link.
+    const externalCampaign=randomUUID(), externalBatch=randomUUID();
+    await client.query("insert into campaigns(id,name,status) values($1,'CI048 external concurrent campaign','rascunho')",[externalCampaign]);
+    await client.query("insert into campaign_batches(id,campaign_id,name) values($1,$2,'CI048 external lot')",[externalBatch,externalCampaign]);
+    await client.query("insert into campaign_batch_members(campaign_id,batch_id,member_id,target_installment_id,installment_amount_cents,payment_status,payment_status_source,total_pending_amount_cents,processing_status) select $1,$2,member_id,target_installment_id,installment_amount_cents,payment_status,payment_status_source,total_pending_amount_cents,'completed' from campaign_batch_members where batch_id=$3 and deleted_at is null",[externalCampaign,externalBatch,concurrent.batches[0]]);
     const extra=randomUUID(), extraCode='OPS048-'+extra;
     await client.query("insert into members(id,cpf,cpf_hash,name,external_user_code) values($1,'00000000000',$2,'Synthetic deletion',$2)",[extra,extraCode]);
-    const extraLink=(await client.query("insert into campaign_batch_members(campaign_id,batch_id,member_id,target_installment_id,installment_amount_cents,payment_status,payment_status_source,total_pending_amount_cents,processing_status,last_error) values($1,$2,$3,$4,10000,'unpaid','erp_open_invoice',10000,'error','Parcela alvo nao foi localizada') returning id",[concurrent.campaign,concurrent.batches[0],extra,extraCode])).rows[0].id;
-    assert.equal((await client.query("select count(*)::int n from general_sync_run_eligible_links where run_id=$1 and member_link_id=$2",[concurrentId,extraLink])).rows[0].n,0);
-    await client.query("select public.recalculate_batch_totals_many($1::uuid[])",[concurrent.batches]);
+    const extraLink=(await client.query("insert into campaign_batch_members(campaign_id,batch_id,member_id,target_installment_id,installment_amount_cents,payment_status,payment_status_source,total_pending_amount_cents,processing_status,last_error) values($1,$2,$3,$4,10000,'unpaid','erp_open_invoice',10000,'error','Parcela alvo nao foi localizada') returning id",[externalCampaign,externalBatch,extra,extraCode])).rows[0].id;
+    const beforeDelete=(await client.query("select processing_status,last_error from campaign_batch_members where id=$1",[extraLink])).rows[0];
+    assert.deepEqual(beforeDelete,{processing_status:'error',last_error:'Parcela alvo nao foi localizada'});
+    await client.query("select public.recalculate_batch_totals_many($1::uuid[])",[[...concurrent.batches,externalBatch]]);
+    const concurrentId=await start(concurrent);
+    assert.equal((await client.query("select count(*)::int n from general_sync_run_batches where run_id=$1 and batch_id=$2",[concurrentId,externalBatch])).rows[0].n,0);
     // Test-only immediate trigger pauses the grouped transaction after it
     // has acquired lot locks, but before the deferred shadow advisory lock.
     const gate='202611250481';
@@ -316,10 +322,12 @@ async function main() {
       assert.ok(blockedWorker,'Worker must be gated inside actual v2 flush');
       removal=fetch(origin+'/api/associados/'+extraLink,{method:'DELETE',headers:{cookie},signal:AbortSignal.timeout(60000)}).then(async res=>({status:res.status,body:await res.json()}),error=>({error}));
       const deadline=Date.now()+30000;
-      let blockedApi=false;
+      let blockedApi=false, earlyResponse;
+      void removal.then(response=>{earlyResponse=response;});
       while(Date.now()<deadline){
-        blockedApi=(await client.query("select exists(select 1 from pg_stat_activity where datname=current_database() and usename='odontoart_pix_app' and query like '%recalculate_batch_totals_many%' and $1::int=any(pg_blocking_pids(pid))) blocked",[blockedWorker])).rows[0].blocked;
+        blockedApi=(await client.query("select exists(select 1 from pg_stat_activity where datname=current_database() and usename='odontoart_pix_app' and application_name='ci048-api' and $1::int=any(pg_blocking_pids(pid))) blocked",[blockedWorker])).rows[0].blocked;
         if(blockedApi)break;
+        if(earlyResponse)throw Error('API returned before lock wait: '+JSON.stringify(earlyResponse));
         await sleep(50);
       }
       assert.equal(blockedApi,true,'API must demonstrably wait on the grouped worker lot lock');
@@ -329,6 +337,8 @@ async function main() {
       const outcome=await runningWorker;if(outcome.error)throw outcome.error;
       await record('real HTTP DELETE overlaps grouped worker lock',{...await verify(concurrent,concurrentId,40),blockedApi:true,worker:outcome.value});
       assert.equal((await client.query("select deleted_at is not null as deleted from campaign_batch_members where id=$1",[extraLink])).rows[0].deleted,true);
+      assert.equal((await client.query("select total_records from campaign_batches where id=$1",[externalBatch])).rows[0].total_records,40);
+      assert.equal(server.labRequests.filter(r=>r.code===extraCode).length,0);
     }finally{
       await locker.end();if(removal)await removal;if(runningWorker)await runningWorker;
       await client.query("drop trigger ci048_gate on public.grouped_incremental_totals_pending");
