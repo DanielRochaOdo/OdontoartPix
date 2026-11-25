@@ -19,7 +19,7 @@ jobs:
       fail-fast: false
       max-parallel: 6
       matrix:
-        scenario: [delete-after-lock, delete-before-lock-047, delete-before-lock-048, import, cancel, deployment]
+        scenario: [delete-after-lock, delete-before-lock-047, delete-before-lock-048, delete-campaign-before-lock-047, delete-campaign-before-lock-048, delete-legacy-before-lock-048, import, cancel, deployment]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
