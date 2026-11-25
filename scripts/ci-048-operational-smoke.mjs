@@ -89,6 +89,10 @@ async function main() {
     for(const r of relations) await client.query("grant select,insert,update,delete on "+r.name+" to odontoart_pix_app");
     const views=(await client.query("select format('%I.%I',schemaname,viewname) name from pg_views where schemaname='public' and viewname not like 'batch_totals_shadow_%' and viewname not like 'grouped_incremental_totals_%'")).rows;
     for(const r of views)await client.query("grant select on "+r.name+" to odontoart_pix_app");
+    // Migration 012 retains two INSERT-compatible views with INSTEAD OF
+    // triggers that discard legacy log writes. Grant only INSERT, not
+    // UPDATE/DELETE, to mirror the existing runtime call sites.
+    await client.query("grant insert on public.event_logs,public.consultation_logs to odontoart_pix_app");
     await client.query("grant usage,select on all sequences in schema public to odontoart_pix_app");
     // Live catalog of trigger entry points and stored routines, excluding
     // test-only gates. Save definitions, not only function names.
@@ -379,6 +383,12 @@ async function main() {
   } catch (error) {
     report.error = error.message;
     await fs.writeFile(reportFile, JSON.stringify(report, null, 2));
+    // CI fixtures only. Expose the end of the application/worker logs on
+    // failures so the nested SQL error is visible without downloading ZIPs.
+    for(const name of (await fs.readdir(base)).filter(n=>n.endsWith('.log'))){
+      const log=await fs.readFile(path.join(base,name),'utf8');
+      console.error('[048_FAILURE_LOG]',name,log.slice(-16000));
+    }
     throw error;
   } finally {
     if (server) await new Promise(resolve => server.close(resolve));
