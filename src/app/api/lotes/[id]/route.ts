@@ -2,6 +2,7 @@ import { z } from "zod";
 import { requireApiUser } from "@/lib/auth/require-api-user";
 import { dbQuery } from "@/lib/db/pool";
 import { fail, ok } from "@/lib/http/api-response";
+import { deleteBatchSafely, DELETION_BUSY_MESSAGE } from "@/lib/worker-safe-deletion";
 
 const ParamsSchema = z.object({ id: z.string().uuid() });
 const RenameSchema = z.object({ name: z.string().trim().min(1).max(120) });
@@ -44,15 +45,10 @@ export async function DELETE(_: Request, { params }: { params: Promise<{ id: str
   if (!parsed.success) return fail("VALIDATION_ERROR", "Lote inválido.", 400);
 
   try {
-    const result = await dbQuery<{ id: string; campaign_id: string }>(
-      `delete from campaign_batches
-        where id = $1::uuid
-      returning id, campaign_id`,
-      [parsed.data.id]
-    );
-    const row = result.rows[0];
-    if (!row) return fail("NOT_FOUND", "Lote não encontrado.", 404);
-    return ok(row, "Lote e seus registros foram excluídos permanentemente.");
+    const result = await deleteBatchSafely(parsed.data.id);
+    if (result.status === "busy") return fail("PROCESSING_CONFLICT", DELETION_BUSY_MESSAGE, 409);
+    if (result.status === "not_found") return fail("NOT_FOUND", "Lote não encontrado.", 404);
+    return ok(result.row, "Lote e seus registros foram excluídos permanentemente.");
   } catch (error) {
     console.error("[DELETE_BATCH_FAILED]", {
       batchId: parsed.data.id,
