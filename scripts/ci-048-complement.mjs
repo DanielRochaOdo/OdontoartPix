@@ -101,8 +101,45 @@ export async function runComplement(ctx) {
     assert.ok(!e.worker?.error,JSON.stringify(e.worker));
     // Retry only after the real worker exits, with the same target and route.
     await audit('before idle deletion retry');
-    const response=await request(route,'DELETE');
+    // Reverse direction: with deletion already in its transaction, a real
+    // worker process must not enter recovery/processing. Pause before cascade
+    // to inspect the actual lock, then release and require normal deletion.
+    const deleteGate='202611250483';
+    const lockClient=new pg.Client(dbConfig);await lockClient.connect();
+    let pendingDelete, response;
+    await client.query("create function public.ci048_deletion_gate() returns trigger language plpgsql as $$ begin perform pg_advisory_xact_lock(202611250483::bigint); return old; end; $$");
+    const relation=scenario.includes('campaign')?'campaigns':'campaign_batches';
+    await client.query("create trigger ci048_deletion_gate before delete on public."+relation+" for each row execute function public.ci048_deletion_gate()");
+    try{
+      await lockClient.query("select pg_advisory_lock($1::bigint)",[deleteGate]);
+      const holder=(await lockClient.query("select pg_backend_pid() pid")).rows[0].pid;
+      pendingDelete=request(route,'DELETE').then(value=>({value}),error=>({error:String(error)}));
+      let apiPid;
+      for(let i=0;i<600;i++){
+        apiPid=(await client.query("select pid from pg_stat_activity where datname=current_database() and application_name='ci048-api' and $1::int=any(pg_blocking_pids(pid))",[holder])).rows[0]?.pid;
+        if(apiPid)break;
+        await sleep(50);
+      }
+      assert.ok(apiPid,'Idle deletion must reach its test gate');
+      const holds=(await client.query("select exists(select 1 from pg_locks where pid=$1 and locktype='advisory' and classid=17483621::oid and objid=20260821::oid and objsubid=2 and granted and mode='ExclusiveLock') held",[apiPid])).rows[0].held;
+      assert.equal(holds,true,'Deletion must hold worker key before cascade');
+      const competing=await worker('deletion-owns-key-'+scenario);
+      const workerLog=await (await import('node:fs/promises')).readFile(competing.logFile,'utf8');
+      assert.match(workerLog,/LOCAL_WORKER_ALREADY_RUNNING/);
+      assert.doesNotMatch(workerLog,/LOCAL_WORKER_RUN_COMPLETED|LOCAL_WORKER_RECOVERY/);
+      e.workerExcludedByDeletion=true;
+      await lockClient.query("select pg_advisory_unlock($1::bigint)",[deleteGate]);
+      const outcome=await pendingDelete;
+      assert.ok(!outcome.error,JSON.stringify(outcome));
+      response=outcome.value;
+    }finally{
+      await lockClient.end();
+      if(pendingDelete)await pendingDelete;
+      await client.query("drop trigger ci048_deletion_gate on public."+relation);
+      await client.query("drop function public.ci048_deletion_gate()");
+    }
     e.response=response;
+    e.deadlocks=(await deadlocks())-beforeDeadlocks;
     // Save audit details before assertions, without repairing official totals.
     const after=await readTargets();
     const run=await request(baseRoute+id,'GET');
