@@ -1,0 +1,83 @@
+name: Homologacao operacional 048
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'scripts/ci-048-operational-smoke.mjs'
+      - '.github/workflows/operational-048.yml'
+      - 'db/migrations/**'
+      - 'src/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: operational-048-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  operational:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'perf/incremental-batch-totals-official-048'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: odontoart_pix_ops048
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d odontoart_pix_ops048"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_HOST: 127.0.0.1
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: odontoart_pix_ops048
+      DATABASE_USER: postgres
+      DATABASE_PASSWORD: postgres
+      DATABASE_SSL: "false"
+      OPERATIONAL048_ISOLATED: "yes"
+      PROCESSING_ALLOW_SCHEDULED_SYNC: "false"
+    steps:
+      - name: Checkout PR revision
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Create restricted app role before migrations
+        env:
+          CI_PG_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          docker exec "$CI_PG_CONTAINER" psql -X -v ON_ERROR_STOP=1 -U postgres -d odontoart_pix_ops048 -c "create role odontoart_pix_app login password 'ci-ops048-app' nosuperuser nocreatedb nocreaterole noinherit noreplication"
+      - name: Apply migrations to isolated database as admin
+        run: npm run db:migrate
+      - name: Inventory source call sites
+        shell: bash
+        run: |
+          mkdir -p operational-048
+          git grep -n -i -E 'campaign_batches|campaign_batch_members|member_target_installments|processing_jobs|recalculateBatch|recalculate_batch_totals|flush_grouped_batch_totals|collect_or_recalculate_batch_totals' -- src scripts db/migrations > operational-048/source-writer-candidates.txt
+      - name: Validate harness syntax
+        run: node --check scripts/ci-048-operational-smoke.mjs
+      - name: Real API and worker with mock ERP, concurrent DELETE, crash, retry and reversion
+        run: node scripts/ci-048-operational-smoke.mjs
+      - name: Publish operational evidence and writer inventory
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: operational-048-evidence
+          path: operational-048/
+          if-no-files-found: warn
+          retention-days: 14
