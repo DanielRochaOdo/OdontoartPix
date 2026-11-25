@@ -104,7 +104,7 @@ admin -c 'select public.recalculate_batch_totals_many(array(select id from campa
 [[ "$(admin -Atc "$snapshot_sql")" == "$snapshot" ]]
 # Fail after all DDL and assertions but before the enclosing commit.
 cp "$tmp/install.sql" "$tmp/injected-failure.sql"
-printf '\\nselect 1/0;\\n' >> "$tmp/injected-failure.sql"
+printf '%s\n' 'select 1/0;' >> "$tmp/injected-failure.sql"
 expect_failure "$tmp/injected-failure.sql" 'division by zero' transactional-rollback
 check 'select max(version) from schema_migrations' 47
 check "select to_regclass('public.grouped_incremental_totals_state') is null and to_regprocedure('public.flush_grouped_batch_totals_v2()') is null" t
