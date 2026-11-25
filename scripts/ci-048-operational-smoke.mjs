@@ -242,6 +242,15 @@ async function main() {
       console.log(JSON.stringify({ name, status: result.status, queries: result.queries, reused: result.reused, divergences: result.divergences }));
     }
 
+    if(process.env.CI048_COMPLEMENT){
+      const {runComplement}=await import('./ci-048-complement.mjs');
+      report.complement=process.env.CI048_COMPLEMENT;
+      await runComplement({client,dbConfig,origin,cookie,scenario:report.complement,f:concurrent,start,worker,verify,audit,record,sleep,server});
+      report.complete=true;
+      await fs.writeFile(reportFile,JSON.stringify(report,null,2));
+      console.log('[048_COMPLEMENT_COMPLETE]',report.complement);
+      return;
+    }
     const first = await start(standard);
     const initialWorker = await worker(grouped ? 'grouped-normal' : 'normal');
     if (grouped) {
