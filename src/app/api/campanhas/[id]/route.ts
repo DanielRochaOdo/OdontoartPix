@@ -2,6 +2,7 @@ import { z } from "zod";
 import { requireApiUser } from "@/lib/auth/require-api-user";
 import { dbQuery } from "@/lib/db/pool";
 import { fail, ok } from "@/lib/http/api-response";
+import { deleteCampaignSafely, DELETION_BUSY_MESSAGE } from "@/lib/worker-safe-deletion";
 
 const ParamsSchema = z.object({ id: z.string().uuid() });
 const RenameSchema = z.object({ name: z.string().trim().min(1).max(120) });
@@ -44,14 +45,10 @@ export async function DELETE(_: Request, { params }: { params: Promise<{ id: str
   if (!parsed.success) return fail("VALIDATION_ERROR", "Campanha inválida.", 400);
 
   try {
-    const result = await dbQuery<{ id: string }>(
-      `delete from campaigns
-        where id = $1::uuid
-      returning id`,
-      [parsed.data.id]
-    );
-    if (!result.rows[0]) return fail("NOT_FOUND", "Campanha não encontrada.", 404);
-    return ok({ id: result.rows[0].id }, "Campanha e todos os seus registros foram excluídos permanentemente.");
+    const result = await deleteCampaignSafely(parsed.data.id);
+    if (result.status === "busy") return fail("PROCESSING_CONFLICT", DELETION_BUSY_MESSAGE, 409);
+    if (result.status === "not_found") return fail("NOT_FOUND", "Campanha não encontrada.", 404);
+    return ok({ id: result.row.id }, "Campanha e todos os seus registros foram excluídos permanentemente.");
   } catch (error) {
     console.error("[DELETE_CAMPAIGN_FAILED]", {
       campaignId: parsed.data.id,
