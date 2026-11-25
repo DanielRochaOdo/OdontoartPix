@@ -6,8 +6,7 @@ import { runLocalWorkerOnce } from "../src/lib/local-processing-worker";
 import { shouldContinueLocalDrain } from "../src/lib/local-worker-drain";
 import { requestWorkerDrainContinuation } from "../src/lib/worker-wakeup-channel";
 
-const ADVISORY_LOCK_NAMESPACE = 17483621;
-const ADVISORY_LOCK_WORKER = 20260821;
+import { WORKER_LOCK_NAMESPACE, WORKER_LOCK_ID } from "../src/lib/worker-safe-deletion";
 const DEFAULT_DRAIN_DELAY_MS = 5000;
 const DEFAULT_MAX_DRAIN_CYCLES = 1000;
 
@@ -140,7 +139,7 @@ async function main() {
   try {
     const lockResult = await lockClient.query<{ acquired: boolean }>(
       `select pg_try_advisory_lock($1::integer, $2::integer) as acquired`,
-      [ADVISORY_LOCK_NAMESPACE, ADVISORY_LOCK_WORKER]
+      [WORKER_LOCK_NAMESPACE, WORKER_LOCK_ID]
     );
 
     lockAcquired = lockResult.rows[0]?.acquired === true;
@@ -234,7 +233,7 @@ async function main() {
         // immediately started worker could lose the race and exit as busy.
         await lockClient.query(
           `select pg_advisory_unlock($1::integer, $2::integer)`,
-          [ADVISORY_LOCK_NAMESPACE, ADVISORY_LOCK_WORKER]
+          [WORKER_LOCK_NAMESPACE, WORKER_LOCK_ID]
         );
 
         if (drainLimitReached) {
