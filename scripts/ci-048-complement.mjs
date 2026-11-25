@@ -6,7 +6,7 @@ import pg from 'pg';
 
 export async function runComplement(ctx) {
   const {client,dbConfig,origin,cookie,scenario,f,start,worker,verify,audit,record,sleep,server}=ctx;
-  const cases=['delete-after-lock','delete-before-lock-047','delete-before-lock-048','import','cancel'];
+  const cases=['delete-after-lock','delete-before-lock-047','delete-before-lock-048','delete-campaign-before-lock-047','delete-campaign-before-lock-048','delete-legacy-before-lock-048','import','cancel'];
   assert(cases.includes(scenario));
   assert.equal(process.env.GITHUB_ACTIONS,'true');
   assert.equal(dbConfig.database,'odontoart_pix_ops048');
@@ -50,13 +50,13 @@ export async function runComplement(ctx) {
       }
       assert.ok(workerPid,'Real worker must be blocked at test gate');
       evidence.workerPid=workerPid;
-      async function overlap(promise) {
+      async function overlap(promise, allowEarly=false) {
         let early;
         other=promise.then(value=>{early=value;return value;},error=>{early={error:String(error)};return early;});
         for(let i=0;i<600;i++){
           const rows=(await client.query("select pid,query,wait_event_type,wait_event,pg_blocking_pids(pid) blockers from pg_stat_activity where datname=current_database() and application_name='ci048-api' and $1::int=any(pg_blocking_pids(pid))",[workerPid])).rows;
           if(rows.length){evidence.apiWait=rows;return;}
-          if(early)throw Error('API returned before required lock wait: '+JSON.stringify(early));
+          if(early){if(allowEarly&&!early.error){evidence.apiCompletedWhileGated=true;return;}throw Error('API returned before required lock wait: '+JSON.stringify(early));}
           await sleep(50);
         }
         throw Error('API did not wait on real worker');
@@ -83,21 +83,38 @@ export async function runComplement(ctx) {
     // Compare the existing 047 lock order to 048 under the SAME controlled race.
     if(scenario.endsWith('047'))await client.query("select public.set_grouped_incremental_totals_v1(false)");
     const id=await start(f);
-    const e=await gated(reverse?'grouped_batch_totals_pending':'grouped_incremental_totals_pending',async({overlap})=>{
-      await overlap(request('/api/lotes/'+ext.batch,'DELETE'));
+    const route=scenario.includes('campaign')?'/api/campanhas/'+ext.campaign:
+      scenario.includes('legacy')?'/api/lotes/'+ext.batch+'/excluir':'/api/lotes/'+ext.batch;
+    const inspect=async()=> (await client.query("select (select count(*)::int from campaigns where id=$2) campaigns,(select count(*)::int from campaign_batches where id=$1) batches,(select count(*)::int from campaign_batch_members where batch_id=$1) links,(select count(*)::int from batch_totals_shadow_contributions where batch_id=$1) contributions,(select count(*)::int from batch_totals_shadow_totals where batch_id=$1) totals",[ext.batch,ext.campaign])).rows[0];
+    const initial=await inspect();
+    const e=await gated(reverse?'grouped_batch_totals_pending':'grouped_incremental_totals_pending',async({evidence})=>{
+      // The worker is genuinely gated inside a transaction. The new guard
+      // must reject before any parent/child row locks, not wait for the gate.
+      const blocked=await request(route,'DELETE');
+      evidence.busyResponse=blocked;
+      assert.equal(blocked.status,409,JSON.stringify(blocked));
+      assert.equal(blocked.body.success,false);
+      assert.equal(blocked.body.error.code,'PROCESSING_CONFLICT');
+      assert.deepEqual(await inspect(),initial,'Busy deletion must not change any row or contribution');
     });
-    // No expected-failure waiver: any deadlock, API error or worker failure is a blocker.
+    assert.equal(e.deadlocks,0,'Busy request must not deadlock');
+    assert.ok(!e.worker?.error,JSON.stringify(e.worker));
+    // Retry only after the real worker exits, with the same target and route.
+    await audit('before idle deletion retry');
+    const response=await request(route,'DELETE');
+    e.response=response;
     // Save audit details before assertions, without repairing official totals.
     const after=await readTargets();
     const run=await request(baseRoute+id,'GET');
-    const residue=(await client.query("select (select count(*)::int from campaign_batches where id=$1) batches,(select count(*)::int from campaign_batch_members where batch_id=$1) links,(select count(*)::int from batch_totals_shadow_contributions where batch_id=$1) contributions,(select count(*)::int from batch_totals_shadow_totals where batch_id=$1) totals",[ext.batch])).rows[0];
+    const residue=await inspect();
     const diffs=(await client.query("select * from public.batch_totals_shadow_audit_v1 where official_differs or shadow_differs or orphan_batch")).rows;
     console.log('[048_COMPLEMENT_DELETE]',JSON.stringify({scenario,e,residue,run:run.body?.data?.status,diffs,canonicalBefore:before.length,canonicalAfter:after.length}));
     assert.equal(e.deadlocks,0,'Concurrent deletion caused a deadlock');
     assert.equal(e.response?.status,200,JSON.stringify(e.response));
     assert.equal(e.response.body.success,true);
     assert.ok(!e.worker?.error,JSON.stringify(e.worker));
-    assert.deepEqual(residue,{batches:0,links:0,contributions:0,totals:0});
+    assert.deepEqual(residue,{campaigns:scenario.includes('campaign')?0:1,batches:0,links:0,contributions:0,totals:0});
+    assert.equal((await request(route,'DELETE')).status,404,'Idle retry on deleted ID must report not found');
     assert.deepEqual(after.map(r=>r.id),before.map(r=>r.id),'Canonical IDs must survive cascade');
     await record(scenario,{...await verify(f,id,f.size),lockEvidence:e,residue});
   }else if(scenario==='import'){
@@ -139,18 +156,20 @@ export async function runComplement(ctx) {
     await record('concurrent HTTP import of shared canonical',{...await verify(f,id,f.size),lockEvidence:e,imported});
   }else{
     const id=await start(f);
-    const e=await gated('grouped_incremental_totals_pending',async({evidence})=>{
+    const e=await gated('grouped_incremental_totals_pending',async({overlap,evidence})=>{
       const pause=await request(baseRoute+id+'/pause');
       assert.equal(pause.status,410,'Current contract forbids new pauses');
-      const cancel=await request(baseRoute+id+'/cancel','POST',{reason:'CI048 cancel while grouped commit pending'});
-      assert.equal(cancel.status,202,JSON.stringify(cancel));
-      assert.equal(cancel.body.data.status,'cancelling');
-      const resume=await request(baseRoute+id+'/resume');
-      assert.equal(resume.status,409,'Cancellation is definitive');
-      evidence.pause=pause.status;evidence.cancel=cancel.status;evidence.resume=resume.status;
+      evidence.pause=pause.status;
+      // Launch cancellation, observe its wait (or valid early response),
+      // then release the worker gate BEFORE awaiting the HTTP response.
+      await overlap(request(baseRoute+id+'/cancel','POST',{reason:'CI048 cancel while grouped commit pending'}),true);
     });
     assert.equal(e.deadlocks,0);
     assert.ok(!e.worker?.error,JSON.stringify(e.worker));
+    assert.equal(e.response?.status,202,JSON.stringify(e.response));
+    assert.equal(e.response.body.success,true);
+    assert.ok(['cancelling','cancelled'].includes(e.response.body.data.status),JSON.stringify(e.response));
+    assert.equal((await request(baseRoute+id+'/resume')).status,409,'Cancellation is definitive');
     let result;
     for(let i=0;i<5;i++){
       result=(await request(baseRoute+id,'GET')).body.data;
