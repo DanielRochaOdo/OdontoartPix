@@ -81,20 +81,15 @@ git -C "${APP}" pull --ff-only origin main
 # ordinary runtime migration/cutover path to cross that schema boundary.
 SCHEMA_VERSION="$(docker exec odontopix-db-1 sh -lc \
   'exec psql -X -v ON_ERROR_STOP=1 -A -t -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-postgres}" -c "select max(version) from public.schema_migrations"' | tr -d '[:space:]')"
-[[ "${SCHEMA_VERSION}" =~ ^[0-9]+$ ]] || { echo "Nao foi possivel validar schema" >&2; exit 1; }
-if [ -f "${APP}/db/migrations/048_grouped_incremental_batch_totals_pilot.sql" ]; then
-  if [ "${SCHEMA_VERSION}" -lt 48 ]; then
-    echo "[048_TRANSITION_REFUSED] Use o procedimento administrativo 047 -> 048; nao execute db:migrate como app." >&2
-    exit 1
-  fi
+HAS_048=0
+[ ! -f "${APP}/db/migrations/048_grouped_incremental_batch_totals_pilot.sql" ] || HAS_048=1
+SCHEMA_DECISION="$(bash "${APP}/deploy/production/guard-048-deploy.sh" "${SCHEMA_VERSION}" "${HAS_048}")"
+if [ "${SCHEMA_DECISION}" = verify-running-image ]; then
   # In particular, never enter cleanup with a schema-incompatible old image.
   docker exec odontopix-app-1 npm run preflight:production || {
     echo "[048_INCOMPATIBLE_RUNNING_IMAGE] Recupere a imagem compativel sem reiniciar o worker." >&2
     exit 1
   }
-elif [ "${SCHEMA_VERSION}" -ge 48 ]; then
-  echo "[048_DOWNGRADE_REFUSED] Checkout anterior a 048." >&2
-  exit 1
 fi
 REV="$(git -C "${APP}" rev-parse --short=12 HEAD)"
 NEW_IMAGE="odontopix-app:${REV}"
