@@ -59,12 +59,23 @@ async function beginGrouped(c) {
 async function flush(c, pilot = false) {
   await c.query(pilot ? "select public.flush_grouped_batch_totals_v2()" : "select public.flush_grouped_batch_totals_v1()");
 }
+// Status-only synthetic updates bypass the real ERP financial update's
+// canonical propagation/collection hook. Explicitly queue the affected lot
+// before the real v2 flush, not a repair after audit.
+async function collectStressBatch(db) {
+  await db.query("select public.collect_or_recalculate_batch_totals_v1(array[$1::uuid])",[batch]);
+}
 async function sizes(c) {
   return (await c.query("select (select count(*)::int from member_target_installments) canonical, (select count(distinct target_installment_ref_id)::int from campaign_batch_members where deleted_at is null) active, (select count(*)::int from campaign_batch_members where deleted_at is null) links, (select count(*)::int from campaign_batches) batches, (select count(*)::int from campaigns) campaigns")).rows[0];
 }
 async function audit(c, shadow, expectedSizes) {
   assert.deepEqual(await sizes(c), expectedSizes);
   const result = (await c.query("select count(*) filter(where official_differs)::int official, count(*) filter(where shadow_differs)::int shadow, count(*) filter(where orphan_batch)::int orphan from public.batch_totals_shadow_audit_v1")).rows[0];
+  if (result.official || result.shadow || result.orphan) {
+    const differences=(await c.query("select a.*,b.status as official_status,b.total_records,b.processed_records,b.paid_records,b.unpaid_records,b.error_records,b.total_amount_cents,b.total_pending_amount_cents from public.batch_totals_shadow_audit_v1 a left join public.campaign_batches b on b.id=a.batch_id where a.official_differs or a.shadow_differs or a.orphan_batch")).rows;
+    console.error("[050_AUDIT_DIFFERENCES]",JSON.stringify(differences));
+    report.auditDifferences=differences;
+  }
   assert.equal(result.official, 0, JSON.stringify(result));
   assert.equal(result.orphan, 0, JSON.stringify(result));
   if (shadow) {
@@ -133,6 +144,7 @@ async function prepareDensity(percent) {
   await tx(c,async()=>{
     await beginGrouped(c);
     await c.query("update campaign_batch_members cbm set processing_status=case when t.payment_status in ('paid','agreed','excluded') then 'completed' when f.n%100< $2 then 'pending' when f.n%100>=95 then 'retrying' else 'completed' end, processing_attempts=0, next_check_at=null,next_retry_at=null,updated_at='2026-01-01T00:00:00Z' from bench050_fixture f, member_target_installments t where cbm.id=f.id and cbm.batch_id=$1 and t.id=cbm.target_installment_ref_id",[batch,percent]);
+    await collectStressBatch(c);
     await flush(c,true);
   });
   await c.query("analyze campaign_batch_members");
@@ -249,6 +261,7 @@ async function trial(mode,density,round){
         assert.equal(r.rowCount,1,"Ownership lost");
         persisted.push(item.id);
       }
+      await collectStressBatch(writer);
       await flush(writer,true);
     });
     groupSizes.push(items.length);persistTimes.push(performance.now()-start);
@@ -280,6 +293,7 @@ async function trial(mode,density,round){
   await tx(c,async()=>{
     await beginGrouped(c);
     await c.query("update campaign_batch_members m set processing_status=q.processing_status,processing_attempts=q.processing_attempts,next_retry_at=q.next_retry_at,next_check_at=q.next_check_at,updated_at=q.updated_at from bench050_queue q where m.id=q.id and m.id=any($1::uuid[])",[claimed]);
+    await collectStressBatch(c);
     await flush(c,true);
   });
   await auditAll();
