@@ -69,7 +69,7 @@ primary_pred="processing_status in ('pending','queued','aguardando')"
 retry_pred="processing_status in ('retrying','error')"
 index_sql() {
   local name="$1" table="$2" pred="$3"
-  printf 'CREATE INDEX %s ON %s (batch_id,(coalesce(next_retry_at,next_check_at,updated_at,created_at)),created_at,id) WHERE deleted_at IS NULL AND (payment_status IS NULL OR payment_status NOT IN ('"'"'paid'"'"','"'"'agreed'"'"','"'"'excluded'"'"')) AND processing_attempts < max_attempts AND %s;\n' "$name" "$table" "$pred"
+  printf "CREATE INDEX %s ON %s (batch_id,(coalesce(next_retry_at,next_check_at,updated_at,created_at)),created_at,id) WHERE deleted_at IS NULL AND (payment_status IS NULL OR payment_status NOT IN ('"'"'paid'"'"','"'"'agreed'"'"','"'"'excluded'"'"')) AND processing_attempts < max_attempts AND %s;\n" "$name" "$table" "$pred"
 }
 if [[ "$mode" == activate ]]; then
 cat <<'SQL'
