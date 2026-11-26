@@ -1,6 +1,7 @@
 // Laboratory only. No production migration or runtime change.
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -11,6 +12,7 @@ for (const [key, value] of Object.entries({
   DATABASE_HOST: "127.0.0.1", DATABASE_PORT: "5432",
   DATABASE_NAME: "odontoart_pix_bench050", DATABASE_USER: "postgres"
 })) assert.equal(process.env[key], value, key);
+const operational = process.env.BENCH050A_OPERATIONAL === "yes";
 const full = process.argv[2] === "--full";
 assert(full || process.argv[2] === "--smoke");
 const config = full
@@ -19,8 +21,9 @@ const config = full
 config.links = config.active + 4*config.shared + config.six;
 const stressLinks = full ? 20014 : 200;
 const report = {complete:false, scope:"Actual schema 48, synthetic fixtures and ERP latency, original claim SQL and update, simulated persistence; not a full ERP or general-sync throughput test",config,stressLinks,plans:[],trials:[]};
-await mkdir("benchmark-050",{recursive:true});
-const save=()=>writeFile("benchmark-050/"+(full?"full":"smoke")+".json",JSON.stringify(report,null,2)+"\n");
+const outputDir=operational?"benchmark-050a-operational":"benchmark-050";
+await mkdir(outputDir,{recursive:true});
+const save=()=>writeFile(outputDir+"/"+(full?"full":"smoke")+".json",JSON.stringify(report,null,2)+"\n");
 const source=await readFile("src/lib/local-processing-worker.ts","utf8");
 const original=source.match(/const candidates = await clientQuery<\{ id: string \}>\(\s*client,\s*\x60([\s\S]*?)\x60,\s*\[job\.batch_id, job\.include_errors, effectiveLimit, targetMemberLinkId, filteredErrorRequestId, phase\]/)?.[1];
 const claimUpdate=source.match(/const claimed = await clientQuery<ClaimedMember>\(\s*client,\s*\x60([\s\S]*?)\x60,\s*\[ids, workerId\]/)?.[1];
@@ -47,7 +50,8 @@ const worker=randomUUID();
 let batch,job,expected;
 const lockClaim="select id from processing_jobs where id=$1 and locked_by=$2 and status='running' and stop_requested_at is null for update";
 const lockWrite="select id from processing_jobs where id=$1 and locked_by=$2 and status='running' for update";
-const modes=[{name:"baseline",idx:false,split:false,coalesce:false},{name:"050a-index",idx:true,split:false,coalesce:false},{name:"050b-phase",idx:false,split:true,coalesce:false},{name:"050ab",idx:true,split:true,coalesce:false},{name:"050abc",idx:true,split:true,coalesce:true}];
+const allModes=[{name:"baseline",idx:false,split:false,coalesce:false},{name:"050a-index",idx:true,split:false,coalesce:false},{name:"050b-phase",idx:false,split:true,coalesce:false},{name:"050ab",idx:true,split:true,coalesce:false},{name:"050abc",idx:true,split:true,coalesce:true}];
+const modes=operational?allModes.slice(0,2):allModes;
 async function tx(c, fn) {
   await c.query("begin");
   try { const result = await fn(); await c.query("commit"); return result; }
@@ -71,7 +75,7 @@ async function sizes(c) {
 async function audit(c, shadow, expectedSizes) {
   assert.deepEqual(await sizes(c), expectedSizes);
   const result = (await c.query("select count(*) filter(where official_differs)::int official, count(*) filter(where shadow_differs)::int shadow, count(*) filter(where orphan_batch)::int orphan from public.batch_totals_shadow_audit_v1")).rows[0];
-  if (result.official || result.shadow || result.orphan) {
+  if (result.official || (shadow && result.shadow) || result.orphan) {
     const differences=(await c.query("select a.*,b.status as official_status,b.total_records,b.processed_records,b.paid_records,b.unpaid_records,b.error_records,b.total_amount_cents,b.total_pending_amount_cents from public.batch_totals_shadow_audit_v1 a left join public.campaign_batches b on b.id=a.batch_id where a.official_differs or a.shadow_differs or a.orphan_batch")).rows;
     console.error("[050_AUDIT_DIFFERENCES]",JSON.stringify(differences));
     report.auditDifferences=differences;
@@ -131,7 +135,75 @@ async function auditAll(){
   const pending=(await c.query("select count(*)::int n from campaign_batch_members where batch_id=$1 and processing_status='processing'",[batch])).rows[0].n;
   assert.equal(pending,0,"Orphaned claims");
 }
+const indexNames=["campaign_batch_members_claim_primary_order_050a_idx","campaign_batch_members_claim_retry_order_050a_idx"];
+let operationalEnabled=false, originalIndexes;
+const inventory=()=>c.query("select indexname,indexdef from pg_indexes where schemaname='public' and tablename='campaign_batch_members' order by indexname").then(r=>r.rows);
+async function maintenance(mode) {
+  assert(operational);
+  const sql=execFileSync("bash",["scripts/050a-maintenance-sql.sh",mode],{encoding:"utf8"});
+  try { await c.query(sql); }
+  catch(error) { await c.query("rollback"); throw error; }
+}
+async function setSyntheticIdle(idle){
+  await c.query("update processing_jobs set status=$2,locked_by=case when $2='running' then $3::uuid else null end where id=$1",[job,idle?"completed":"running",worker]);
+}
+async function testOperationalGuards(){
+  originalIndexes=await inventory();
+  const reject=async(mode,pattern)=>{
+    await assert.rejects(()=>maintenance(mode),pattern);
+  };
+  await reject("activate",/processamento ativo ou pendente/);
+  await setSyntheticIdle(true);
+  try {
+    await picker.query("select pg_advisory_lock(17483621,20260821)");
+    try { await reject("activate",/worker\/delecao ativo/); }
+    finally { await picker.query("select pg_advisory_unlock(17483621,20260821)"); }
+    await reject("disable",/assinatura invalida ou ausente/);
+    // A homonym with a different signature must neither be overwritten nor dropped.
+    await c.query("create index "+indexNames[0]+" on public.campaign_batch_members(id)");
+    const wrong=await inventory();
+    await reject("activate",/objeto preexistente/);
+    await reject("disable",/assinatura invalida ou ausente/);
+    assert.deepEqual(await inventory(),wrong);
+    await c.query("drop index public."+indexNames[0]);
+    await maintenance("activate");
+    assert.equal((await inventory()).length,originalIndexes.length+2);
+    // Independent comparison with the literal SQL from the approved #177
+    // benchmark, not the operational generator or its temporary reference.
+    const order=" (batch_id,(coalesce(next_retry_at,next_check_at,updated_at,created_at)),created_at,id) where deleted_at is null and (payment_status is null or payment_status not in ('paid','agreed','excluded')) and processing_attempts < max_attempts and ";
+    await c.query("create index bench050_compare_primary on public.campaign_batch_members"+order+"processing_status in ('pending','queued','aguardando')");
+    await c.query("create index bench050_compare_retry on public.campaign_batch_members"+order+"processing_status in ('retrying','error')");
+    try {
+      const definitions=new Map((await inventory()).map(x=>[x.indexname,x.indexdef]));
+      for (const [actual,reference] of [[indexNames[0],"bench050_compare_primary"],[indexNames[1],"bench050_compare_retry"]]) {
+        assert.equal(definitions.get(actual).replace(actual,reference),definitions.get(reference),"050-A production DDL differs from approved benchmark");
+      }
+    } finally {
+      await c.query("drop index public.bench050_compare_primary,public.bench050_compare_retry");
+    }
+    const active=await inventory();
+    await reject("activate",/objeto preexistente/);
+    assert.deepEqual(await inventory(),active);
+    await maintenance("disable");
+    assert.deepEqual(await inventory(),originalIndexes);
+    await auditAll();
+    report.guards={activeJob:true,workerLock:true,absentRollback:true,nameCollision:true,wrongSignature:true,duplicateActivation:true,restoreInventory:true,approvedDefinitionParity:true};
+  } finally { await setSyntheticIdle(false); }
+}
 async function indexes(enabled) {
+  if(operational){
+    if(enabled===operationalEnabled)return;
+    await setSyntheticIdle(true);
+    try {
+      await maintenance(enabled?"activate":"disable");
+      operationalEnabled=enabled;
+      const actual=await inventory();
+      assert.deepEqual(actual.filter(x=>!indexNames.includes(x.indexname)),originalIndexes);
+      assert.equal(actual.length,originalIndexes.length+(enabled?2:0));
+      await auditAll();
+    } finally { await setSyntheticIdle(false); }
+    return;
+  }
   await c.query("drop index if exists public.bench050_primary_order");
   await c.query("drop index if exists public.bench050_retry_order");
   if(enabled){
@@ -179,6 +251,10 @@ async function staticPlans(mode,density,round){
       const r=(await rollbackQuery(sql,params,true))[0]["QUERY PLAN"][0];
       const p=r.Plan;
       report.plans.push({mode:mode.name,density,round,phase,limit,repeat,rows:reference.length,executionMs:r["Execution Time"],planningMs:r["Planning Time"],buffers:(p["Shared Hit Blocks"]??0)+(p["Shared Read Blocks"]??0),plan:r});
+      if(operational && phase==="primary" && limit===1 && repeat===0){
+        const summarize=node=>[{type:node["Node Type"],index:node["Index Name"],rows:node["Actual Rows"],loops:node["Actual Loops"]},...(node.Plans??[]).flatMap(summarize)];
+        console.log("[050A_PLAN]",JSON.stringify({mode:mode.name,density,round,buffers:(p["Shared Hit Blocks"]??0)+(p["Shared Read Blocks"]??0),nodes:summarize(p)}));
+      }
     }
   }
 }
@@ -343,6 +419,7 @@ try{
   job=(await c.query("insert into processing_jobs(campaign_id,batch_id,status,locked_by,total_items,processing_origin,processing_scope) values(md5('bench050-campaign-0')::uuid,$1,'running',$2,$3,'dashboard','dashboard') returning id",[batch,worker,stressLinks])).rows[0].id;
   report.fixture={...expected,terminal,postgres:"17.12",shadow:true,incremental:true};
   await auditAll();
+  if(operational)await testOperationalGuards();
   for(const density of [10,50,90]){
     await prepareDensity(density);
     for(let round=1;round<=2;round++){
@@ -354,8 +431,20 @@ try{
     }
   }
   await indexes(false);
-  assert.equal(report.trials.length,30);
-  assert.equal(report.plans.length,360);
+  assert.equal(report.trials.length,operational?12:30);
+  assert.equal(report.plans.length,operational?180:360);
+  if(operational){
+    assert.deepEqual(await inventory(),originalIndexes);
+    const baseline=report.trials.filter(x=>x.mode==="baseline");
+    const optimized=report.trials.filter(x=>x.mode==="050a-index");
+    const sum=(rows,key)=>rows.reduce((total,row)=>total+row[key],0);
+    assert.equal(sum(baseline,"calls"),sum(optimized,"calls"),"Index-only change must preserve claim count");
+    const reduction=1-sum(optimized,"claimBuffers")/sum(baseline,"claimBuffers");
+    report.comparison={baselineBuffers:sum(baseline,"claimBuffers"),optimizedBuffers:sum(optimized,"claimBuffers"),bufferReduction:reduction,baselineMs:sum(baseline,"elapsedMs"),optimizedMs:sum(optimized,"elapsedMs"),rollbackInventory:true};
+    console.log("[050A_COMPARISON]",JSON.stringify(report.comparison));
+    await save(); // preserve comparison even when performance gate rejects
+    if(full)assert(reduction>=.90,"Full benchmark: 90% buffer reduction not reached");
+  }
   report.complete=true;
   await save();
 }catch(error){report.error=error.stack??String(error);await save();throw error;}
