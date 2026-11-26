@@ -1,0 +1,99 @@
+name: Homologacao operacional 049-A
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: operational-049a-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  operational:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'perf/worker-finalization-incremental-049a'
+    strategy:
+      fail-fast: false
+      matrix:
+        jit_off: ["false", "true"]
+        incremental_final: ["false", "true"]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: odontoart_pix_ops048
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d odontoart_pix_ops048"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_HOST: 127.0.0.1
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: odontoart_pix_ops048
+      DATABASE_USER: postgres
+      DATABASE_PASSWORD: postgres
+      DATABASE_SSL: "false"
+      PROCESSING_ALLOW_SCHEDULED_SYNC: "false"
+      OPERATIONAL048_ISOLATED: "yes"
+      PROCESSING_WORKER_FINALIZATION_JIT_OFF: ${{ matrix.jit_off }}
+      PROCESSING_WORKER_FINALIZATION_INCREMENTAL_TOTALS_ENABLED: ${{ matrix.incremental_final }}
+    steps:
+      - name: Checkout PR revision
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Create restricted app role before migrations
+        env:
+          CI_PG_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          docker exec "$CI_PG_CONTAINER" psql -X -v ON_ERROR_STOP=1 -U postgres -d odontoart_pix_ops048 -c "create role odontoart_pix_app login password 'ci-ops048-app' nosuperuser nocreatedb nocreaterole noinherit noreplication"
+      - name: Apply migrations as administrator
+        run: npm run db:migrate
+      - name: Inventory potential writers for 049-A
+        shell: bash
+        run: |
+          mkdir -p operational-048
+          git grep -n -i -E 'campaign_batches|campaign_batch_members|member_target_installments|processing_jobs|recalculateBatch|recalculate_batch_totals|flush_grouped_batch_totals|collect_or_recalculate_batch_totals' -- src scripts db/migrations > operational-048/source-writer-candidates.txt
+      - name: Real API and worker with mock ERP, shared installments, retry, interruption and concurrent operations
+        run: node scripts/ci-048-operational-smoke.mjs
+      - name: Verify complete operational evidence
+        run: |
+          node --input-type=module -e "import fs from 'node:fs'; import assert from 'node:assert/strict'; const r=JSON.parse(fs.readFileSync('operational-048/general-sync-grouped-smoke-report.json','utf8')); assert.equal(r.complete,true); assert.ok(r.scenarios.length>0);"
+      - name: Verify actual worker selected the expected final refresh path
+        shell: bash
+        run: |
+          set -euo pipefail
+          LOG=operational-048/general-sync-grouped-normal.log
+          grep -F '[LOCAL_WORKER_FINALIZATION_METRICS]' "$LOG"
+          if [[ "$PROCESSING_WORKER_FINALIZATION_INCREMENTAL_TOTALS_ENABLED" = true ]]; then
+            grep -F "totalsPath: 'grouped-flush-v2'" "$LOG"
+            ! grep -F '[LOCAL_WORKER_FINALIZATION_INCREMENTAL_FALLBACK]' "$LOG"
+          else
+            grep -F "totalsPath: 'full-044'" "$LOG"
+            ! grep -F "totalsPath: 'grouped-flush-v2'" "$LOG"
+          fi
+      - name: Publish operational evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: operational-049a-jit-off-${{ matrix.jit_off }}-incremental-${{ matrix.incremental_final }}
+          path: operational-048/
+          if-no-files-found: error
+          retention-days: 14
