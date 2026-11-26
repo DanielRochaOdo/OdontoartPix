@@ -52,3 +52,29 @@ mais. Nenhum merge/deploy automático. 051-A.2/A.3 (coalescência de
 requisições e notificações) são escopos posteriores, com teste de
 atualidade, filtros, troca de run, falhas e SSE/polling. 050-C, 051-B,
 052 continuam independentes.
+
+## Revisão complementar — PR #179
+Primeira execução (commit 2942bbfbc3a85e271995259c5ddfe435c776974d, workflow 45869097298):
+CI, smoke/full verdes; 432 planos por escala. B global full -87,87%,
+todos escopos -84,50%, P95 107,368 ms vs 151,158 ms, sem regressão
+de mediana de buffers full. Nenhuma variante atingiu a meta de 90%.
+Smoke interseção/200 registros: A 59 vs B 115 buffers, 26 unpaid/7
+checked; B fez 26 probes do registro em vez de leitura em conjunto.
+Full: A/B 108/108 planos com seq scan canônico executado; C 60,
+D 48. Global 38k round 0: A 143087 vs B 16595 buffers; ERP
+126905 vs 413; canônico 3678 em ambos. Não confundir redução de
+buffers com eliminação de varreduras sequenciais.
+Complemento: E materializa somente IDs do registro do run; F usa
+SQL B com índice parcial de id WHERE payment_status='unpaid'.
+Índice candidato exclusivo do CI, não é migration; criado uma vez
+e mantido durante transições financeiras, removido em transação
+revertida durante os testes sem índice. F executa fase separada,
+ordem alternada por estágio, mesma carga comprometida e paridade
+de IDs e resultados; índice removido ao final e inventário validado.
+Sem desabilitar seq scan nem forçar join. Registra planos com seq
+scan realmente executado, loops, uso e tamanho do índice, piores
+cenários. 648 planos/escala (6 variantes), 216 comparações.
+DDL e custo adicional de escrita não medidos; se F for promissor,
+exigir teste de churn/concorrência/WAL e autorização específica
+antes de propor índice em produção. Comparação não é execução
+integral do ERP. Sem mudança de código funcional.

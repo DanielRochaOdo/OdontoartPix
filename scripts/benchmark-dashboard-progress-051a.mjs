@@ -35,13 +35,21 @@ const links="campaign_batch_members cbm join campaign_batches cb on cb.id=cbm.ba
 const cteC="with unpaid_targets as (select canonical.id from member_target_installments canonical where canonical.payment_status='unpaid' and exists(select 1 from "+links+" where "+scope+" and cbm.target_installment_ref_id=canonical.id)) ";
 const cteD="with unpaid_targets as (select distinct canonical.id from "+links+" join member_target_installments canonical on canonical.id=cbm.target_installment_ref_id where "+scope+" and canonical.payment_status='unpaid') ";
 const membership="select u.id,checked.target_installment_ref_id is not null as processed from unpaid_targets u"+joinChecked+" order by u.id";
+const checkedCte=common.trimEnd()+", checked_run as materialized (select target_installment_ref_id from general_sync_run_installments where run_id=$1::uuid) ";
+const checkedJoin=" left join checked_run checked on checked.target_installment_ref_id=u.id";
+const checkedAggregate="select count(*)::int as total,count(checked.target_installment_ref_id)::int as processed from unpaid_targets u"+checkedJoin;
+const checkedMembership="select u.id,checked.target_installment_ref_id is not null as processed from unpaid_targets u"+checkedJoin+" order by u.id";
+const labIndex="bench051_canonical_unpaid_id_idx";
 const modes=[
  {name:"A-original",sql:original,rows:common+"select u.id,exists(select 1 from general_sync_run_installments checked where checked.run_id=$1::uuid and checked.target_installment_ref_id=u.id) as processed from unpaid_targets u order by u.id"},
  {name:"B-left-join",sql:common+aggregate,rows:common+membership},
  {name:"C-semijoin",sql:cteC+aggregate,rows:cteC+membership},
- {name:"D-unpaid-first",sql:cteD+aggregate,rows:cteD+membership}
+ {name:"D-unpaid-first",sql:cteD+aggregate,rows:cteD+membership},
+ {name:"E-materialized-registry",sql:checkedCte+checkedAggregate,rows:checkedCte+checkedMembership},
+ {name:"F-left-join-partial-index",sql:common+aggregate,rows:common+membership,requiresIndex:true}
 ];
-report.sql=modes.map(({name,sql,rows})=>({name,sql,rows}));
+report.sql=modes.map(({name,sql,rows,requiresIndex})=>({name,sql,rows,requiresIndex:!!requiresIndex}));
+report.indexExperiment={name:labIndex,definition:"CREATE INDEX "+labIndex+" ON public.member_target_installments(id) WHERE payment_status = 'unpaid'",stages:[],note:"Index maintained through stage transitions. No-index phase drops it transactionally and rolls back. Index phase order alternates; no forced planner settings. DDL and write amplification not timed."};
 const c=new pg.Client({host:"127.0.0.1",port:5432,user:"postgres",password:"postgres",database:"odontoart_pix_bench051",ssl:false});
 async function tx(c,fn){await c.query("begin");try{const r=await fn();await c.query("commit");return r}catch(e){await c.query("rollback");throw e}}
 async function beginGrouped(c){await c.query("select set_config('odontoart.grouped_batch_totals','on',true)")}
@@ -125,12 +133,12 @@ async function registry(run,lo,hi){
   if(hi<=lo)return;
   await c.query("insert into general_sync_run_installments(run_id,target_installment_ref_id,source_batch_id) select $1,id,source_batch_id from bench051_registry where n>$2 and n<=$3",[run,lo,hi]);
 }
-async function parity(params) {
+async function parity(params,variants=modes) {
   // Compare complete ordered canonical IDs and checked flags, not merely sums.
   const expected=(await c.query(modes[0].rows,params)).rows;
   const expectedCount={total:expected.length,processed:expected.filter(r=>r.processed).length};
   assert.equal(new Set(expected.map(r=>r.id)).size,expected.length);
-  for(const mode of modes){
+  for(const mode of variants){
     const actual=await one(mode.sql,params);
     assert.deepEqual(actual,expectedCount,mode.name+" aggregate");
     if(mode!==modes[0])assert.deepEqual((await c.query(mode.rows,params)).rows,expected,mode.name+" canonical membership");
@@ -164,6 +172,8 @@ try{
   await audit(c,true,expected);
   await c.query(execFileSync("bash",["scripts/050a-maintenance-sql.sh","activate"],{encoding:"utf8"}));
   const indexes=await inventory();
+  assert(!indexes.some(x=>x.indexname===labIndex),"candidate already exists");
+  await c.query(report.indexExperiment.definition);
   for(const table of ["campaign_batch_members","member_target_installments","campaign_batches","campaigns","general_sync_run_installments"])await c.query("vacuum (analyze) "+table);
   const statuses=(await c.query("select payment_status,count(*)::int n from member_target_installments group by 1 order by 1")).rows;
   for(const s of ["unpaid","paid","agreed","excluded"])assert(statuses.some(r=>r.payment_status===s&&r.n>0),s);
@@ -200,17 +210,26 @@ try{
     assert.equal((await one("select count(*)::int n from general_sync_run_installments where run_id=$1",[run])).n,n);
     await audit(c,true,expected);
     const before=await digest();
-    await c.query("begin isolation level repeatable read read only");
+    const stageIndex=await one("select pg_relation_size($1::regclass)::int bytes",["public."+labIndex]);
+    report.indexExperiment.stages.push({registry:n,...stageIndex});
+    const referenceCounters=new Map();
+    for(const indexed of (stageSizes.indexOf(n)%2===0?[false,true]:[true,false])){
+    const phaseModes=modes.filter(m=>!!m.requiresIndex===indexed);
+    await c.query(indexed?"begin isolation level repeatable read read only":"begin isolation level repeatable read");
     try{
+      if(!indexed)await c.query("drop index public."+labIndex);
+      assert.equal((await one("select to_regclass($1) is not null present",["public."+labIndex])).present,indexed);
       for(const [scopeName,campaigns,batches] of scopes){
         const params=[run,campaigns,batches];
-        const counters=await parity(params);
+        const counters=await parity(params,phaseModes);
+        if(referenceCounters.has(scopeName))assert.deepEqual(counters,referenceCounters.get(scopeName));
+        else referenceCounters.set(scopeName,counters);
         if(n===0)assert.equal(counters.processed,0);
         if(["incompatible","unknown"].includes(scopeName))assert.deepEqual(counters,{total:0,processed:0});
         // Three rotated rounds to reduce systematic warm-cache order bias.
         for(let round=0;round<3;round++){
-          const offset=(round+stageSizes.indexOf(n)+scopes.findIndex(s=>s[0]===scopeName))%modes.length;
-          for(const mode of [...modes.slice(offset),...modes.slice(0,offset)]){
+          const offset=(round+stageSizes.indexOf(n)+scopes.findIndex(s=>s[0]===scopeName))%phaseModes.length;
+          for(const mode of [...phaseModes.slice(offset),...phaseModes.slice(0,offset)]){
             const explain=(await c.query("explain(analyze,buffers,settings,timing off,format json) "+mode.sql,params)).rows[0]["QUERY PLAN"][0];
             const p=explain.Plan;
             report.trials.push({registry:n,scope:scopeName,round,mode:mode.name,counters,buffers:(p["Shared Hit Blocks"]??0)+(p["Shared Read Blocks"]??0),hit:p["Shared Hit Blocks"]??0,read:p["Shared Read Blocks"]??0,tempRead:p["Temp Read Blocks"]??0,tempWritten:p["Temp Written Blocks"]??0,executionMs:explain["Execution Time"],planningMs:explain["Planning Time"],nodes:nodes(p),plan:explain});
@@ -218,6 +237,8 @@ try{
         }
       }
     }finally{await c.query("rollback")}
+    assert.equal((await one("select to_regclass($1) is not null present",["public."+labIndex])).present,true);
+    }
     assert.deepEqual(await digest(),before);
     await audit(c,true,expected);
     await save();
@@ -248,9 +269,11 @@ try{
     report.edges.push({case:"unknown run",...noRun});
   }finally{await c.query("rollback")}
   assert.deepEqual(await digest(),beforeEdges);
+  await c.query("drop index public."+labIndex);
   assert.deepEqual(await inventory(),indexes);
+  report.indexExperiment.rollbackInventory=true;
   await audit(c,true,expected);
-  assert.equal(report.trials.length,4*9*3*4);
+  assert.equal(report.trials.length,4*9*3*modes.length);
   // Scope/stage medians and overall weighted-by-case (not production traffic) totals.
   for(const n of stageSizes)for(const [scopeName] of scopes){
     const rows=report.trials.filter(t=>t.registry===n&&t.scope===scopeName);
@@ -268,6 +291,11 @@ try{
     const sum=a=>a.reduce((s,t)=>s+t.buffers,0);
     return {mode:name,activeGlobalBuffers:sum(global),activeGlobalReductionPct:100*(1-sum(global)/Math.max(1,sum(baseGlobal))),activeAllScopesBuffers:sum(active),activeP95Ms:percentile(active.map(t=>t.executionMs),.95),maxScopeRegressionPct:Math.max(0,...report.comparison.filter(t=>t.mode===name&&t.reductionPct!==null).map(t=>-t.reductionPct))};
   });
+  report.planAudit=modes.map(({name})=>{const trials=report.trials.filter(t=>t.mode===name);const scans=trials.flatMap(t=>t.nodes.filter(n=>n.relation==="member_target_installments"&&n.type==="Seq Scan"&&n.loops>0));return {mode:name,plans:trials.length,plansWithCanonicalSeqScan:trials.filter(t=>t.nodes.some(n=>n.relation==="member_target_installments"&&n.type==="Seq Scan"&&n.loops>0)).length,canonicalSeqScanLoops:scans.reduce((a,n)=>a+n.loops,0),plansWithCandidateIndex:trials.filter(t=>t.nodes.some(n=>n.index===labIndex&&n.loops>0)).length};});
+  report.worstCases=modes.slice(1).map(({name})=>report.comparison.filter(t=>t.mode===name&&t.reductionPct!==null).sort((a,b)=>a.reductionPct-b.reductionPct)[0]);
+  console.log("[051_PLAN_AUDIT]",JSON.stringify(report.planAudit));
+  console.log("[051_WORST_CASES]",JSON.stringify(report.worstCases));
+  console.log("[051_INDEX_EXPERIMENT]",JSON.stringify(report.indexExperiment));
   report.goal={targetReductionPct:90,metBy:report.summary.filter(s=>s.activeGlobalReductionPct>=90).map(s=>s.mode),note:"Diagnostic PR: no performance winner is deployed. Target miss is reported, not hidden as a CI correctness failure."};
   report.complete=true;
   await save();
