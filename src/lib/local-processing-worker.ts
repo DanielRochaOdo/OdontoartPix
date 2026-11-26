@@ -1,3 +1,4 @@
+import { tryRefreshGroupedWorkerBatch } from "@/lib/worker-finalization-totals";
 import { configureWorkerFinalizationJit } from "@/lib/worker-finalization-jit";
 import { recalculateBatch } from "@/lib/batch-totals";
 import type { PoolClient } from "pg";
@@ -1325,14 +1326,29 @@ export async function runLocalWorkerOnce(options?: {
       });
     }
 
-    await recalculateBatch(job.batch_id);
+    const finalTotalsStartedAt = performance.now();
+    const groupedRefresh = await tryRefreshGroupedWorkerBatch(job.batch_id, groupedPersistenceEnabled);
+    if (!groupedRefresh) {
+      await recalculateBatch(job.batch_id);
+    }
+    const finalTotalsMs = performance.now() - finalTotalsStartedAt;
     // Only the exact clean first wave of 160 can arm stage two. This is
     // persisted in the SAME transaction that releases the job as queued.
     const firstTwoWaveSucceededCompletely = twoWavePilotStage === 1 &&
       claimedCount === 160 && succeeded === 160 && failed === 0 && retried === 0;
+    const releaseStartedAt = performance.now();
     const jobStatus = await releaseAndFinalizeJob(
       job, workerId, firstTwoWaveSucceededCompletely
     );
+    console.info("[LOCAL_WORKER_FINALIZATION_METRICS]", {
+      jobId: job.id,
+      batchId: job.batch_id,
+      totalsPath: groupedRefresh ? "grouped-flush-v2" : "full-044",
+      totalsMs: Math.round(finalTotalsMs),
+      releaseMs: Math.round(performance.now() - releaseStartedAt),
+      cycleElapsedMs: Math.round(performance.now() - cycleStartedAt),
+      jobStatus
+    });
 
     return {
       workerId,
