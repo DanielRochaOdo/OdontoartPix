@@ -1,0 +1,82 @@
+name: Homologacao operacional 050-A (PG17)
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+permissions:
+  contents: read
+concurrency:
+  group: operational-050a-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  benchmark:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'perf/claim-order-indexes-050a'
+    strategy:
+      fail-fast: false
+      matrix:
+        scale: [smoke, full]
+    runs-on: ubuntu-latest
+    timeout-minutes: 170
+    services:
+      postgres:
+        image: postgres:17.12-alpine
+        env:
+          POSTGRES_DB: odontoart_pix_bench050
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d odontoart_pix_bench050"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_HOST: 127.0.0.1
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: odontoart_pix_bench050
+      DATABASE_USER: postgres
+      DATABASE_PASSWORD: postgres
+      DATABASE_SSL: "false"
+      BENCH050_ISOLATED: "yes"
+      BENCH050A_OPERATIONAL: "yes"
+      PROCESSING_ALLOW_SCHEDULED_SYNC: "false"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Enable SQL metrics in ephemeral service only
+        env:
+          SERVICE_ID: ${{ job.services.postgres.id }}
+        run: |
+          set -euo pipefail
+          docker exec -u postgres "$SERVICE_ID" sh -eu -c 'printf "\nshared_preload_libraries = '\''pg_stat_statements'\''\npg_stat_statements.track = '\''all'\''\npg_stat_statements.track_planning = off\npg_stat_statements.max = 10000\n" >> "$PGDATA/postgresql.conf"'
+          docker restart "$SERVICE_ID"
+          for i in $(seq 1 60); do
+            if docker exec "$SERVICE_ID" pg_isready -U postgres -d odontoart_pix_bench050; then
+              docker exec "$SERVICE_ID" psql -X -v ON_ERROR_STOP=1 -U postgres -d odontoart_pix_bench050 -c 'SHOW shared_preload_libraries;'
+              exit 0
+            fi
+            sleep 2
+          done
+          exit 1
+      - run: npm ci
+      - run: npm run db:migrate
+      - run: bash -n scripts/050a-maintenance-sql.sh && node --check scripts/benchmark-claim-050.mjs
+      - name: Validate activation, guards, claims and rollback
+        run: npx --no-install tsx scripts/benchmark-claim-050.mjs --${{ matrix.scale }}
+      - name: Verify report completion
+        run: |
+          node --input-type=module -e "import fs from 'node:fs';import assert from 'node:assert/strict';const r=JSON.parse(fs.readFileSync('benchmark-050a-operational/${{ matrix.scale }}.json','utf8'));assert.equal(r.complete,true);assert.equal(r.trials.length,12);assert.equal(r.plans.length,180);assert.equal(r.fixture.postgres,'17.12');assert.equal(Object.values(r.guards).every(Boolean),true);assert.equal(r.comparison.rollbackInventory,true);if('${{ matrix.scale }}'==='full'){assert.equal(r.fixture.canonical,79794);assert.equal(r.fixture.links,222609);assert.equal(r.fixture.batches,42)}"
+      - name: Preserve evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: operational-050a-${{ matrix.scale }}
+          path: benchmark-050a-operational/
+          if-no-files-found: warn
+          retention-days: 14
