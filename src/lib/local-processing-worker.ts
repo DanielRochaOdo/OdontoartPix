@@ -1,3 +1,4 @@
+import { configureWorkerFinalizationJit } from "@/lib/worker-finalization-jit";
 import { recalculateBatch } from "@/lib/batch-totals";
 import type { PoolClient } from "pg";
 import { canUseGroupedPersistence, createGroupedPersistence } from "@/lib/processing-grouped-persistence";
@@ -735,6 +736,7 @@ async function releaseAndFinalizeJob(
 
     const targetMemberLinkId = String(job.target_member_link_id ?? "").trim() || null;
     const filteredErrorRequestId = String(job.filtered_error_request_id ?? "").trim() || null;
+    await configureWorkerFinalizationJit(client);
     const queue = await clientQuery<{
       immediate_count: number;
       processing_count: number;
