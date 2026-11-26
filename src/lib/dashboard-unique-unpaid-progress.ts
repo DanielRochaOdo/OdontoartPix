@@ -8,6 +8,9 @@ import { dbQuery } from "@/lib/db/pool";
  * The numerator is the number of currently unpaid canonical installments
  * successfully checked by this general-sync run. The per-run registry also
  * credits a consultation made through another batch in the same run.
+ * Materialize only the current run's registry and join it as a set. Its
+ * primary key (run_id, target_installment_ref_id) guarantees one match per target.
+ * 051-A.1: same statement snapshot; no cache or new index.
  */
 export const DASHBOARD_UNIQUE_UNPAID_PROGRESS_SQL = `with selected_targets as materialized (
        select distinct cbm.target_installment_ref_id as target_id
@@ -25,17 +28,7 @@ export const DASHBOARD_UNIQUE_UNPAID_PROGRESS_SQL = `with selected_targets as ma
          from selected_targets selected
          join member_target_installments canonical on canonical.id = selected.target_id
         where canonical.payment_status = 'unpaid'
-     )
-     select count(*)::int as total,
-            count(*) filter (
-              where exists (
-                select 1
-                  from general_sync_run_installments checked
-                 where checked.run_id = $1::uuid
-                   and checked.target_installment_ref_id = unpaid_targets.id
-              )
-            )::int as processed
-       from unpaid_targets`;
+     ), checked_run as materialized (select target_installment_ref_id from general_sync_run_installments where run_id=$1::uuid) select count(*)::int as total,count(checked.target_installment_ref_id)::int as processed from unpaid_targets u left join checked_run checked on checked.target_installment_ref_id=u.id`;
 
 export async function getDashboardUniqueUnpaidProgress(input: {
   runId: string;

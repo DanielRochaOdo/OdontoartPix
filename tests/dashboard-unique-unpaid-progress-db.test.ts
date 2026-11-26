@@ -1,7 +1,10 @@
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { Pool, type PoolClient } from "pg";
 import { describe, expect, it } from "vitest";
 import { DASHBOARD_UNIQUE_UNPAID_PROGRESS_SQL } from "@/lib/dashboard-unique-unpaid-progress";
+
+const ORIGINAL_SQL = readFileSync(new URL("./fixtures/dashboard-unique-unpaid-progress-original.sql", import.meta.url), "utf8").trimEnd();
 
 const describeDb = process.env.CI === "true" ? describe.sequential : describe.skip;
 
@@ -82,6 +85,11 @@ async function readCounters(
     DASHBOARD_UNIQUE_UNPAID_PROGRESS_SQL,
     [runId, campaignIds, batchIds]
   );
+  const original = await client.query<{ processed: number; total: number }>(
+    ORIGINAL_SQL,
+    [runId, campaignIds, batchIds]
+  );
+  expect(result.rows).toEqual(original.rows);
   return result.rows[0]!;
 }
 
@@ -141,6 +149,75 @@ describeDb("Dashboard: parcelas unpaid unicas nos filtros (PostgreSQL rollback)"
       expect(await readCounters(client, randomUUID(), [], [lotB])).toEqual({
         total: 2, processed: 0
       });
+    });
+  });
+
+  it("preserva status atual, consultas de outro run, filtros e exclusoes logicas", async () => {
+    await inRollback(async (client) => {
+      const campaignA = await createCampaign(client, "051A A");
+      const campaignB = await createCampaign(client, "051A B");
+      const lotA = await createBatch(client, campaignA);
+      const lotB = await createBatch(client, campaignB);
+      const lotC = await createBatch(client, campaignA);
+      const member = await createMember(client);
+      const shared = await addLink(client, campaignA, lotA, member, "05101");
+      expect(await addLink(client, campaignB, lotB, member, "05101")).toBe(shared);
+      const pending = await addLink(client, campaignB, lotB, member, "05102");
+      const onlyC = await addLink(client, campaignA, lotC, member, "05103");
+      const agreed = await addLink(client, campaignB, lotB, member, "05104");
+      const excluded = await addLink(client, campaignB, lotB, member, "05105");
+      const unknown = await addLink(client, campaignB, lotB, member, "05106");
+      await client.query("update member_target_installments set payment_status='unpaid' where id=any($1::uuid[])", [[shared,pending,onlyC]]);
+      for (const [id,status] of [[agreed,"agreed"],[excluded,"excluded"],[unknown,null]]) {
+        await client.query("update member_target_installments set payment_status=$2 where id=$1", [id,status]);
+      }
+
+      async function newRun() {
+        const r = await client.query<{ id: string }>(
+          "insert into general_sync_runs(request_key,status,trigger_source,sync_mode,batch_count,record_count) values ($1,'completed','scheduled','scheduled_recheck',3,6) returning id",
+          ["051a-"+randomUUID()]
+        );
+        return r.rows[0]!.id;
+      }
+      const run = await newRun();
+      const other = await newRun();
+      async function checked(runId: string, targetId: string, batchId: string) {
+        await client.query(
+          "insert into general_sync_run_installments(run_id,target_installment_ref_id,source_batch_id) values($1,$2,$3)",
+          [runId,targetId,batchId]
+        );
+      }
+
+      expect(await readCounters(client,run,[campaignB],[lotB])).toEqual({total:2,processed:0});
+      await checked(other,pending,lotB);
+      await checked(run,shared,lotA);
+      await checked(run,agreed,lotB);
+      await checked(run,excluded,lotB);
+      await checked(run,unknown,lotB);
+      expect(await readCounters(client,run,[campaignB],[lotB])).toEqual({total:2,processed:1});
+      expect(await readCounters(client,run,[campaignA,campaignB,campaignA],[lotB,lotA,lotB])).toEqual({total:2,processed:1});
+      expect(await readCounters(client,run,[campaignA],[lotB])).toEqual({total:0,processed:0});
+      expect(await readCounters(client,other,[campaignB],[lotB])).toEqual({total:2,processed:1});
+      expect(await readCounters(client,run,[],[lotA,lotC])).toEqual({total:2,processed:1});
+
+      // Deleting the consulted source link must not erase membership in another selected lot.
+      await client.query("update campaign_batch_members set deleted_at=now() where batch_id=$1 and target_installment_ref_id=$2", [lotA,shared]);
+      expect(await readCounters(client,run,[],[lotA])).toEqual({total:0,processed:0});
+      expect(await readCounters(client,run,[],[lotB])).toEqual({total:2,processed:1});
+
+      // A checked target becoming paid (even with remaining balance) leaves both counters.
+      await client.query("update member_target_installments set payment_status='paid',amount_cents=10000,paid_amount_cents=3000,pending_amount_cents=7000 where id=$1", [shared]);
+      expect(await readCounters(client,run,[],[lotB])).toEqual({total:1,processed:0});
+      await checked(run,pending,lotB);
+      expect(await readCounters(client,run,[],[lotB])).toEqual({total:1,processed:1});
+      await client.query("delete from general_sync_run_installments where run_id=$1", [run]);
+      expect(await readCounters(client,run,[],[lotB])).toEqual({total:1,processed:0});
+      expect(await readCounters(client,other,[],[lotB])).toEqual({total:1,processed:1});
+
+      await client.query("update campaign_batches set deleted_at=now() where id=$1",[lotC]);
+      expect(await readCounters(client,run,[],[lotC])).toEqual({total:0,processed:0});
+      await client.query("update campaigns set deleted_at=now() where id=$1",[campaignB]);
+      expect(await readCounters(client,other,[campaignB],[])).toEqual({total:0,processed:0});
     });
   });
 });

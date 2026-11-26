@@ -78,3 +78,36 @@ DDL e custo adicional de escrita não medidos; se F for promissor,
 exigir teste de churn/concorrência/WAL e autorização específica
 antes de propor índice em produção. Comparação não é execução
 integral do ERP. Sem mudança de código funcional.
+
+## Seleção e implementação funcional — 26/11/2026
+PR #179 merge 6e2dfc6659e45e9ee8cf1bfa0c458e1238c7d986; revisão 0cc2c4ab9cda, CI 45870143713,
+benchmark 45870143522, smoke 140083130935/full 140083130527 verdes.
+1.296 planos, zero divergências de paridade/auditoria. E Full:
+116877 vs 976365 buffers globais (-88,03%), 431724 vs 3085002
+todos escopos (-86,01%), P95 93,908 vs 132,302 ms. Smoke E:
+5532 vs 14058 todos escopos, zero regressões de mediana de buffers
+em ambas escalas. F eliminou seq scans canônicos mas regrediu
+65,27% Full/208,93% Smoke no pior cenário; rejeitado. E mantém
+108/108 seq scans Full. Meta 90% não atingida isoladamente; proposta
+de aceitar E pela estabilidade, custo e ausência de DDL, continuar
+com redução de chamadas em PR separado. Usuário realizou merge
+do benchmark e prosseguimos conforme estratégia acordada.
+
+PR funcional: altera somente SQL compartilhado em
+src/lib/dashboard-unique-unpaid-progress.ts, sem API/worker/cache/SSE/
+flags/migrations. CTE checked_run materializada, filtro run_id,
+LEFT JOIN pela PK composta existente; mantém selected_targets e
+unpaid_targets. Preserva snapshot de uma instrução. Baseline original
+congelado em fixture SQL, benchmark verifica igualdade textual da
+consulta funcional com E e usa essa consulta real no cenário E.
+Testes DB com resultados esperados e paridade original, estados
+financeiros e transições, exclusões, múltiplos runs. Workflow smoke/full
+reexecuta seis alternativas. CI ainda deve validar o novo commit.
+Sem ativação por flag: após autorização de deploy, reversão por imagem
+operacional anterior validada (sem rollback de dados ou índices).
+Homologação posterior: uma sincronização por baseline/final, coletor
+pré-armado, localizar nova queryid pelo texto checked_run, medir
+buffers/chamada e por parcela, tempos, seq scans, volume de chamadas,
+auditoria financeira e comportamento dos filtros. Não exigir a queryid
+antiga como identidade da nova consulta. Não iniciar deploy antes
+de autorização explícita e validação CI. 051-A.2/3 separadas.
