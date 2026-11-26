@@ -69,7 +69,7 @@ worker/migração/shadow, tabelas bloqueadas NOWAIT, schema 48, 047/048
 ativos, filas e pendências vazias, auditoria inicial limpa e ausência de
 objetos homônimos. A criação e validação ocorrem em uma transação. O
 script compara a assinatura dos índices com índices de referência em
-tabela temporária vazia. A auditoria final ocorre antes do commit.
+tabela temporária vazia, com DDL literal independente do gerador. A auditoria final ocorre antes do commit.
 Time limits por statement: lock 5s e statement 120s. Não repetir às cegas.
 
 ## Validação e retomada
@@ -115,3 +115,7 @@ uso dos dois índices e auditoria financeira. Comparar com as medições
 anteriores, registrando novos lotes/carga concorrente e efeitos de cache.
 A 050-A não pretende reduzir a quantidade de chamadas do Sliding Window
 V2: isso pertence à 050-C. Não zerar contadores globais.
+
+## Registro da revisão 2 do PR #178
+
+Primeiro Full reprovado na meta de desempenho (7.349.604 buffers baseline vs 7.349.797 com A; 486 chamadas por modo); Smoke e CI convencional passaram, auditorias e rollback do Full passaram. Os planos reais para limite 1 mostraram Sort e uso do índice processing_status preexistente, com 1.712/8.542/15.363 candidatos nas densidades 10/50/90%, respectivamente. Causa identificada: aspas incorretas do shell geravam literais diferentes de paid/agreed/excluded no predicado dos índices. A primeira validação de assinatura reutilizava o mesmo gerador defeituoso. Corrigido com heredoc, referência SQL independente e teste explícito de paridade com as definições literais aprovadas no #177; o CI registra também nós do plano real. A meta de redução >=90% permanece obrigatória no Full. A revisão ainda exige aprovação do CI; nenhum índice foi criado em produção.
