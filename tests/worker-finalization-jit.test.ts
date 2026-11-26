@@ -5,8 +5,9 @@ import { configureWorkerFinalizationJit } from "@/lib/worker-finalization-jit";
 
 const source = readFileSync(new URL("../src/lib/local-processing-worker.ts", import.meta.url), "utf8");
 // Use the actual parameterized SQL, not a simplified copy of the production query.
-const queueSql = source.match(/const queue = await clientQuery<\{[\s\S]*?\}>\(\s*client,\s*\x60([\s\S]*?)\x60,\s*\[job\.batch_id, job\.include_errors, targetMemberLinkId, filteredErrorRequestId\]/)?.[1];
-if (!queueSql) throw new Error("Finalization queue SQL not found");
+const rawQueueSql = source.match(/const queue = await clientQuery<\{[\s\S]*?\}>\(\s*client,\s*\x60([\s\S]*?)\x60,\s*\[job\.batch_id, job\.include_errors, targetMemberLinkId, filteredErrorRequestId\]/)?.[1];
+if (!rawQueueSql) throw new Error("Finalization queue SQL not found");
+const queueSql: string = rawQueueSql;
 
 it("049-B is opt-in and issues only a transaction-local setting", async () => {
   const query = vi.fn().mockResolvedValue({});
@@ -19,7 +20,8 @@ it("049-B is opt-in and issues only a transaction-local setting", async () => {
     expect(query).not.toHaveBeenCalled();
     vi.stubEnv("PROCESSING_WORKER_FINALIZATION_JIT_OFF", "true");
     await configureWorkerFinalizationJit(client);
-    expect(query).toHaveBeenCalledExactlyOnceWith("SET LOCAL jit = off", []);
+    expect(query).toHaveBeenCalledTimes(1);
+    expect(query).toHaveBeenCalledWith("SET LOCAL jit = off", []);
   } finally {
     vi.unstubAllEnvs();
   }
