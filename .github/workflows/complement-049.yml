@@ -1,0 +1,81 @@
+name: Revisao complementar 049
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: complement-049-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  complement:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'perf/worker-finalization-049'
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        scenario: [delete-after-lock, delete-before-lock-047, delete-before-lock-048, delete-campaign-before-lock-047, delete-campaign-before-lock-048, delete-legacy-before-lock-048, import, cancel]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: odontoart_pix_ops048
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d odontoart_pix_ops048"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_HOST: 127.0.0.1
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: odontoart_pix_ops048
+      DATABASE_USER: postgres
+      DATABASE_PASSWORD: postgres
+      DATABASE_SSL: "false"
+      PROCESSING_ALLOW_SCHEDULED_SYNC: "false"
+      OPERATIONAL048_ISOLATED: "yes"
+      PROCESSING_WORKER_FINALIZATION_JIT_OFF: "true"
+      CI048_COMPLEMENT: ${{ matrix.scenario }}
+    steps:
+      - name: Checkout PR revision
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Create restricted app role before migrations
+        env:
+          CI_PG_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          docker exec "$CI_PG_CONTAINER" psql -X -v ON_ERROR_STOP=1 -U postgres -d odontoart_pix_ops048 -c "create role odontoart_pix_app login password 'ci-ops048-app' nosuperuser nocreatedb nocreaterole noinherit noreplication"
+      - name: Apply migrations as administrator
+        run: npm run db:migrate
+      - name: Run independent concurrent API and worker regression scenario with 049-B enabled
+        run: node scripts/ci-048-operational-smoke.mjs
+      - name: Verify complete operational evidence
+        run: |
+          node --input-type=module -e "import fs from 'node:fs'; import assert from 'node:assert/strict'; const r=JSON.parse(fs.readFileSync('operational-048/general-sync-grouped-smoke-report.json','utf8')); assert.equal(r.complete,true); assert.ok(r.scenarios.length>0);"
+      - name: Publish complementary evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: complement-049-${{ matrix.scenario }}
+          path: operational-048/
+          if-no-files-found: error
+          retention-days: 14

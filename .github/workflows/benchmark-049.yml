@@ -1,0 +1,73 @@
+name: Benchmark 049 isolado
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: benchmark-049-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  benchmark:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'perf/worker-finalization-049'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: odontoart_pix_ci
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d odontoart_pix_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_HOST: 127.0.0.1
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: odontoart_pix_ci
+      DATABASE_USER: postgres
+      DATABASE_PASSWORD: postgres
+      DATABASE_SSL: "false"
+      PROCESSING_ALLOW_SCHEDULED_SYNC: "false"
+      CI: "true"
+      PROCESSING_WORKER_FINALIZATION_JIT_OFF: "false"
+    steps:
+      - name: Checkout PR revision
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Apply migrations to isolated database
+        run: npm run db:migrate
+      - name: Execute actual parameterized query parity and repeated JIT benchmark
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p benchmark-049
+          NO_COLOR=1 npm run test -- tests/worker-finalization-jit.test.ts 2>&1 | tee benchmark-049/test.log
+      - name: Extract evidence and medians
+        run: node scripts/ci-049-benchmark-report.mjs
+      - name: Publish benchmark evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-049-evidence
+          path: benchmark-049/
+          if-no-files-found: error
+          retention-days: 14
