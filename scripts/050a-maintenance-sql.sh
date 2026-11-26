@@ -64,12 +64,16 @@ BEGIN
 END;
 $gate$;
 SQL
-# Single source for both physical DDL and reference signatures.
+# Emit via heredoc: SQL single quotes are literal, not shell quoting.
 primary_pred="processing_status in ('pending','queued','aguardando')"
 retry_pred="processing_status in ('retrying','error')"
 index_sql() {
   local name="$1" table="$2" pred="$3"
-  printf "CREATE INDEX %s ON %s (batch_id,(coalesce(next_retry_at,next_check_at,updated_at,created_at)),created_at,id) WHERE deleted_at IS NULL AND (payment_status IS NULL OR payment_status NOT IN ('"'"'paid'"'"','"'"'agreed'"'"','"'"'excluded'"'"')) AND processing_attempts < max_attempts AND %s;\n" "$name" "$table" "$pred"
+  cat <<SQL
+CREATE INDEX $name ON $table (batch_id,(coalesce(next_retry_at,next_check_at,updated_at,created_at)),created_at,id)
+WHERE deleted_at IS NULL AND (payment_status IS NULL OR payment_status NOT IN ('paid','agreed','excluded'))
+AND processing_attempts < max_attempts AND $pred;
+SQL
 }
 if [[ "$mode" == activate ]]; then
 cat <<'SQL'
@@ -85,14 +89,22 @@ SQL
 index_sql campaign_batch_members_claim_primary_order_050a_idx public.campaign_batch_members "$primary_pred"
 index_sql campaign_batch_members_claim_retry_order_050a_idx public.campaign_batch_members "$retry_pred"
 fi
-# Compare with empty temporary reference indexes generated from exactly the
-# same DDL. No dependence on hard-coded PostgreSQL deparser formatting.
+# Independent literal reference DDL: do not reuse index_sql here.
+# A generator/quoting bug must fail the signature guard, not validate itself.
 cat <<'SQL'
 CREATE TEMP TABLE bench050a_signature (LIKE public.campaign_batch_members) ON COMMIT DROP;
-SQL
-index_sql ref050a_primary pg_temp.bench050a_signature "$primary_pred"
-index_sql ref050a_retry pg_temp.bench050a_signature "$retry_pred"
-cat <<'SQL'
+CREATE INDEX ref050a_primary ON pg_temp.bench050a_signature
+  (batch_id,(coalesce(next_retry_at,next_check_at,updated_at,created_at)),created_at,id)
+  WHERE deleted_at IS NULL
+    AND (payment_status IS NULL OR payment_status NOT IN ('paid','agreed','excluded'))
+    AND processing_attempts < max_attempts
+    AND processing_status IN ('pending','queued','aguardando');
+CREATE INDEX ref050a_retry ON pg_temp.bench050a_signature
+  (batch_id,(coalesce(next_retry_at,next_check_at,updated_at,created_at)),created_at,id)
+  WHERE deleted_at IS NULL
+    AND (payment_status IS NULL OR payment_status NOT IN ('paid','agreed','excluded'))
+    AND processing_attempts < max_attempts
+    AND processing_status IN ('retrying','error');
 DO $signature$
 DECLARE
   pair record;
