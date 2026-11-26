@@ -23,8 +23,9 @@ await mkdir(out,{recursive:true});
 const report={complete:false,scope:"Schema 48; synthetic distributions and registry growth; no ERP, frontend, concurrent writer or full sync throughput. No result cache.",config,stressLinks,stages:[],trials:[],edges:[],comparison:[]};
 const save=()=>writeFile(out+"/"+(full?"full":"smoke")+".json",JSON.stringify(report,null,2)+"\n");
 const source=await readFile("src/lib/dashboard-unique-unpaid-progress.ts","utf8");
-const original=source.match(/export const DASHBOARD_UNIQUE_UNPAID_PROGRESS_SQL = \x60([\s\S]*?)\x60;/)?.[1];
-assert(original,"production SQL not found");
+const applicationSQL=source.match(/export const DASHBOARD_UNIQUE_UNPAID_PROGRESS_SQL = \x60([\s\S]*?)\x60;/)?.[1];
+const original=(await readFile("tests/fixtures/dashboard-unique-unpaid-progress-original.sql","utf8")).trimEnd();
+assert(applicationSQL && original,"application SQL or frozen original not found");
 const pivot=original.lastIndexOf("select count(*)::int as total");
 assert(pivot>0 && original.includes("from unpaid_targets"));
 const common=original.slice(0,pivot);
@@ -39,13 +40,15 @@ const checkedCte=common.trimEnd()+", checked_run as materialized (select target_
 const checkedJoin=" left join checked_run checked on checked.target_installment_ref_id=u.id";
 const checkedAggregate="select count(*)::int as total,count(checked.target_installment_ref_id)::int as processed from unpaid_targets u"+checkedJoin;
 const checkedMembership="select u.id,checked.target_installment_ref_id is not null as processed from unpaid_targets u"+checkedJoin+" order by u.id";
+assert.equal(applicationSQL,checkedCte+checkedAggregate,"Application SQL must be exact benchmarked alternative E");
+report.applicationVariant="E-materialized-registry";
 const labIndex="bench051_canonical_unpaid_id_idx";
 const modes=[
  {name:"A-original",sql:original,rows:common+"select u.id,exists(select 1 from general_sync_run_installments checked where checked.run_id=$1::uuid and checked.target_installment_ref_id=u.id) as processed from unpaid_targets u order by u.id"},
  {name:"B-left-join",sql:common+aggregate,rows:common+membership},
  {name:"C-semijoin",sql:cteC+aggregate,rows:cteC+membership},
  {name:"D-unpaid-first",sql:cteD+aggregate,rows:cteD+membership},
- {name:"E-materialized-registry",sql:checkedCte+checkedAggregate,rows:checkedCte+checkedMembership},
+ {name:"E-materialized-registry",sql:applicationSQL,rows:checkedCte+checkedMembership},
  {name:"F-left-join-partial-index",sql:common+aggregate,rows:common+membership,requiresIndex:true}
 ];
 report.sql=modes.map(({name,sql,rows,requiresIndex})=>({name,sql,rows,requiresIndex:!!requiresIndex}));

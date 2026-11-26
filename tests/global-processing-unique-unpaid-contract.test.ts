@@ -41,7 +41,10 @@ describe("indicador global da sincronizacao: parcelas unpaid unicas", () => {
     const sql = read("src/lib/dashboard-unique-unpaid-progress.ts");
     expect(sql).toContain("select distinct cbm.target_installment_ref_id as target_id");
     expect(sql).toContain("canonical.payment_status = 'unpaid'");
-    expect(sql).toContain("checked.target_installment_ref_id = unpaid_targets.id");
-    expect(sql).toContain("checked.run_id = $1::uuid");
+    // The registry is restricted to the current run before joining canonical IDs.
+    // Keep the contract independent of SQL whitespace while preserving semantics.
+    expect(sql).toMatch(/checked_run\s+as\s+materialized\s*\(\s*select\s+target_installment_ref_id\s+from\s+general_sync_run_installments\s+where\s+run_id\s*=\s*\$1::uuid\s*\)/i);
+    expect(sql).toMatch(/from\s+unpaid_targets\s+u\s+left\s+join\s+checked_run\s+checked\s+on\s+checked\.target_installment_ref_id\s*=\s*u\.id\b/i);
+    expect(sql).toMatch(/count\s*\(\s*\*\s*\)::int\s+as\s+total\s*,\s*count\s*\(\s*checked\.target_installment_ref_id\s*\)::int\s+as\s+processed/i);
   });
 });
