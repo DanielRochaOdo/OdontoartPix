@@ -1,0 +1,65 @@
+name: Benchmark 051-A Dashboard (PG17)
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+permissions:
+  contents: read
+concurrency:
+  group: benchmark-051a-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  benchmark:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'perf/benchmark-dashboard-progress-051a'
+    strategy:
+      fail-fast: false
+      matrix:
+        scale: [smoke, full]
+    runs-on: ubuntu-latest
+    timeout-minutes: 170
+    services:
+      postgres:
+        image: postgres:17.12-alpine
+        env:
+          POSTGRES_DB: odontoart_pix_bench051
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d odontoart_pix_bench051"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_HOST: 127.0.0.1
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: odontoart_pix_bench051
+      DATABASE_USER: postgres
+      DATABASE_PASSWORD: postgres
+      DATABASE_SSL: "false"
+      BENCH051_ISOLATED: "yes"
+      PROCESSING_ALLOW_SCHEDULED_SYNC: "false"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run db:migrate
+      - run: node --check scripts/benchmark-dashboard-progress-051a.mjs
+      - name: Compare actual SQL and variants
+        run: node scripts/benchmark-dashboard-progress-051a.mjs --${{ matrix.scale }}
+      - name: Verify report
+        run: |
+          node --input-type=module -e "import fs from 'node:fs';import assert from 'node:assert/strict';const r=JSON.parse(fs.readFileSync('benchmark-051a/${{ matrix.scale }}.json','utf8'));assert.equal(r.complete,true);assert.equal(r.trials.length,432);assert.equal(r.comparison.length,144);assert.equal(r.edges.length,4);assert.equal(r.fixture.postgres,'17.12');if('${{ matrix.scale }}'==='full'){assert.equal(r.fixture.canonical,79794);assert.equal(r.fixture.links,222609);assert.equal(r.fixture.batches,42)}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: benchmark-051a-${{ matrix.scale }}
+          path: benchmark-051a/
+          if-no-files-found: warn
+          retention-days: 14
