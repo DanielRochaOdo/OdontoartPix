@@ -75,7 +75,7 @@ async function sizes(c) {
 async function audit(c, shadow, expectedSizes) {
   assert.deepEqual(await sizes(c), expectedSizes);
   const result = (await c.query("select count(*) filter(where official_differs)::int official, count(*) filter(where shadow_differs)::int shadow, count(*) filter(where orphan_batch)::int orphan from public.batch_totals_shadow_audit_v1")).rows[0];
-  if (result.official || result.shadow || result.orphan) {
+  if (result.official || (shadow && result.shadow) || result.orphan) {
     const differences=(await c.query("select a.*,b.status as official_status,b.total_records,b.processed_records,b.paid_records,b.unpaid_records,b.error_records,b.total_amount_cents,b.total_pending_amount_cents from public.batch_totals_shadow_audit_v1 a left join public.campaign_batches b on b.id=a.batch_id where a.official_differs or a.shadow_differs or a.orphan_batch")).rows;
     console.error("[050_AUDIT_DIFFERENCES]",JSON.stringify(differences));
     report.auditDifferences=differences;
@@ -168,13 +168,26 @@ async function testOperationalGuards(){
     await c.query("drop index public."+indexNames[0]);
     await maintenance("activate");
     assert.equal((await inventory()).length,originalIndexes.length+2);
+    // Independent comparison with the literal SQL from the approved #177
+    // benchmark, not the operational generator or its temporary reference.
+    const order=" (batch_id,(coalesce(next_retry_at,next_check_at,updated_at,created_at)),created_at,id) where deleted_at is null and (payment_status is null or payment_status not in ('paid','agreed','excluded')) and processing_attempts < max_attempts and ";
+    await c.query("create index bench050_compare_primary on public.campaign_batch_members"+order+"processing_status in ('pending','queued','aguardando')");
+    await c.query("create index bench050_compare_retry on public.campaign_batch_members"+order+"processing_status in ('retrying','error')");
+    try {
+      const definitions=new Map((await inventory()).map(x=>[x.indexname,x.indexdef]));
+      for (const [actual,reference] of [[indexNames[0],"bench050_compare_primary"],[indexNames[1],"bench050_compare_retry"]]) {
+        assert.equal(definitions.get(actual).replace(actual,reference),definitions.get(reference),"050-A production DDL differs from approved benchmark");
+      }
+    } finally {
+      await c.query("drop index public.bench050_compare_primary,public.bench050_compare_retry");
+    }
     const active=await inventory();
     await reject("activate",/objeto preexistente/);
     assert.deepEqual(await inventory(),active);
     await maintenance("disable");
     assert.deepEqual(await inventory(),originalIndexes);
     await auditAll();
-    report.guards={activeJob:true,workerLock:true,absentRollback:true,nameCollision:true,wrongSignature:true,duplicateActivation:true,restoreInventory:true};
+    report.guards={activeJob:true,workerLock:true,absentRollback:true,nameCollision:true,wrongSignature:true,duplicateActivation:true,restoreInventory:true,approvedDefinitionParity:true};
   } finally { await setSyntheticIdle(false); }
 }
 async function indexes(enabled) {
@@ -238,6 +251,10 @@ async function staticPlans(mode,density,round){
       const r=(await rollbackQuery(sql,params,true))[0]["QUERY PLAN"][0];
       const p=r.Plan;
       report.plans.push({mode:mode.name,density,round,phase,limit,repeat,rows:reference.length,executionMs:r["Execution Time"],planningMs:r["Planning Time"],buffers:(p["Shared Hit Blocks"]??0)+(p["Shared Read Blocks"]??0),plan:r});
+      if(operational && phase==="primary" && limit===1 && repeat===0){
+        const summarize=node=>[{type:node["Node Type"],index:node["Index Name"],rows:node["Actual Rows"],loops:node["Actual Loops"]},...(node.Plans??[]).flatMap(summarize)];
+        console.log("[050A_PLAN]",JSON.stringify({mode:mode.name,density,round,buffers:(p["Shared Hit Blocks"]??0)+(p["Shared Read Blocks"]??0),nodes:summarize(p)}));
+      }
     }
   }
 }
@@ -425,6 +442,7 @@ try{
     const reduction=1-sum(optimized,"claimBuffers")/sum(baseline,"claimBuffers");
     report.comparison={baselineBuffers:sum(baseline,"claimBuffers"),optimizedBuffers:sum(optimized,"claimBuffers"),bufferReduction:reduction,baselineMs:sum(baseline,"elapsedMs"),optimizedMs:sum(optimized,"elapsedMs"),rollbackInventory:true};
     console.log("[050A_COMPARISON]",JSON.stringify(report.comparison));
+    await save(); // preserve comparison even when performance gate rejects
     if(full)assert(reduction>=.90,"Full benchmark: 90% buffer reduction not reached");
   }
   report.complete=true;
