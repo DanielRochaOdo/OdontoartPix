@@ -1,0 +1,71 @@
+name: Benchmark 049-A isolado
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: benchmark-049a-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  benchmark:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'perf/worker-finalization-incremental-049a'
+    strategy:
+      fail-fast: false
+      matrix:
+        scale: [smoke, full]
+    runs-on: ubuntu-latest
+    timeout-minutes: 170
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: odontoart_pix_bench049a
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d odontoart_pix_bench049a"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_HOST: 127.0.0.1
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: odontoart_pix_bench049a
+      DATABASE_USER: postgres
+      DATABASE_PASSWORD: postgres
+      DATABASE_SSL: "false"
+      BENCH049A_ISOLATED: "yes"
+      PROCESSING_ALLOW_SCHEDULED_SYNC: "false"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run db:migrate
+      - name: Validate harness syntax
+        run: node --check scripts/benchmark-finalization-049a.mjs
+      - name: Compare four A/B modes on identical data
+        run: node scripts/benchmark-finalization-049a.mjs --${{ matrix.scale }}
+      - name: Verify report completion
+        run: |
+          node --input-type=module -e "import fs from 'node:fs'; import assert from 'node:assert/strict'; const r=JSON.parse(fs.readFileSync('benchmark-049a/${{ matrix.scale }}.json','utf8')); assert.equal(r.complete,true); assert.equal(r.results.length,8)"
+      - name: Publish benchmark evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-049a-${{ matrix.scale }}
+          path: benchmark-049a/
+          if-no-files-found: error
+          retention-days: 14
