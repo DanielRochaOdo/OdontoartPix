@@ -9,7 +9,7 @@ describe("processing-presets", () => {
     expect(config.claimBatchSize).toBe(80);
     expect(config.perWorkerConcurrency).toBe(80);
     expect(config.erpConcurrency).toBe(80);
-    expect(config.persistenceConcurrency).toBe(1);
+    expect(config.persistenceConcurrency).toBe(3);
     expect(config.persistenceBatchSize).toBe(15);
     expect(config.maxBufferedResults).toBe(80);
     expect(config.productiveDelayMs).toBe(0);
@@ -25,6 +25,7 @@ describe("processing-presets", () => {
     expect(config.claimBatchSize).toBe(120);
     expect(config.perWorkerConcurrency).toBe(12);
     expect(config.erpConcurrency).toBe(12);
+    expect(config.persistenceConcurrency).toBe(1);
     expect(config.maxBufferedResults).toBe(12);
     expect(config.productiveDelayMs).toBe(10);
     expect(matchProcessingPreset(config)).toBe("mediano");

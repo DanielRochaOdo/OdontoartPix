@@ -47,14 +47,15 @@ export const PROCESSING_PRESETS: Record<ProcessingPresetKey, ProcessingConfig> =
     maxPagesPerOperation: 1000
   },
   // Perfil Agressivo atualizado para bloco 80, concorrencia ERP 80 e buffer 80.
-  // Preserva persistencia serial, lote de persistencia 15 e delay produtivo zero.
+  // Persistencia individual com concorrencia 3; agrupada conserva um gravador.
+  // Lote de persistencia 15 e delay produtivo zero.
   // Os demais limites acompanham o perfil versionado no .env.example.
   agressivo: {
     workerCount: 10,
     claimBatchSize: 80,
     perWorkerConcurrency: 80,
     erpConcurrency: 80,
-    persistenceConcurrency: 1,
+    persistenceConcurrency: 3,
     persistenceBatchSize: 15,
     maxBufferedResults: 80,
     httpConnectTimeoutMs: 30000,
