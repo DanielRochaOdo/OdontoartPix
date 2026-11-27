@@ -1,0 +1,35 @@
+name: Benchmark 051-A.2 SingleFlight
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+permissions:
+  contents: read
+jobs:
+  concurrency:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'perf/dashboard-progress-051a2-singleflight'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Targeted unit and endpoint tests
+        run: npx vitest run tests/dashboard-progress-singleflight.test.ts tests/dashboard-progress-singleflight-routes.test.ts
+      - name: Controlled concurrency benchmark
+        shell: bash
+        run: |
+          set -o pipefail
+          npx tsx scripts/benchmark-dashboard-progress-051a2.ts | tee benchmark-051a2.jsonl
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: benchmark-051a2
+          path: benchmark-051a2.jsonl
+          if-no-files-found: warn
+          retention-days: 14
