@@ -1,4 +1,5 @@
 import { dbQuery } from "@/lib/db/pool";
+import { getProgressSingleFlight } from "@/lib/dashboard-progress-singleflight";
 
 /**
  * Dashboard-only counter. Resolve the selected campaign/batch scope first,
@@ -35,13 +36,15 @@ export async function getDashboardUniqueUnpaidProgress(input: {
   campaignIds: string[];
   batchIds: string[];
 }): Promise<{ processed: number; total: number }> {
-  const result = await dbQuery<{ processed: number; total: number }>(
-    DASHBOARD_UNIQUE_UNPAID_PROGRESS_SQL,
-    [input.runId, input.campaignIds, input.batchIds]
-  );
+  return getProgressSingleFlight().run(input, async (scope) => {
+    const result = await dbQuery<{ processed: number; total: number }>(
+      DASHBOARD_UNIQUE_UNPAID_PROGRESS_SQL,
+      [scope.runId, scope.campaignIds, scope.batchIds]
+    );
 
-  return {
-    processed: Number(result.rows[0]?.processed ?? 0),
-    total: Number(result.rows[0]?.total ?? 0)
-  };
+    return {
+      processed: Number(result.rows[0]?.processed ?? 0),
+      total: Number(result.rows[0]?.total ?? 0)
+    };
+  });
 }
