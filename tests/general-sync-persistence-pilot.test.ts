@@ -50,6 +50,7 @@ describe("piloto de persistencia da sincronizacao geral (primeira onda)", () => 
     expect(allowed({ splitPipelineEnabled: false })).toBe(false);
     expect(allowed({ slidingWindowV2Enabled: false })).toBe(false);
     expect(allowed({ configuredConcurrency: 2 })).toBe(false);
+    expect(allowed({ configuredConcurrency: 3 })).toBe(false);
     expect(allowed({ cycleClaimLimit: 161 })).toBe(false);
     expect(allowed({ cycleClaimLimit: 0 })).toBe(false);
   });
@@ -94,7 +95,7 @@ describe("piloto de persistencia da sincronizacao geral (primeira onda)", () => 
     expect(worker).toContain("recordSuccessfulGeneralSyncTarget(client");
     expect(worker).toContain("claim_token = $3::uuid");
     expect(config).toContain('readInteger("PROCESSING_PERSISTENCE_CONCURRENCY", 1, 1, 20)');
-    expect(env).toContain("PROCESSING_PERSISTENCE_CONCURRENCY=1");
+    expect(env).toMatch(/^PROCESSING_PERSISTENCE_CONCURRENCY=3$/m);
     expect(env).toContain("PROCESSING_GENERAL_SYNC_PERSISTENCE_PILOT_ENABLED=false");
   });
 });

@@ -77,10 +77,10 @@ describe("piloto de duas persistencias simultaneas", () => {
     expect(active).toBe(0);
   });
 
-  it("nao aumenta concorrencia ERP, muda transacoes financeiras ou defaults globais", () => {
+  it("preserva concorrencia ERP, transacoes financeiras e fallback generico", () => {
     const worker = readFileSync("src/lib/local-processing-worker.ts", "utf8");
     const env = readFileSync(".env.example", "utf8");
-    const preset = readFileSync("src/lib/processing-presets.ts", "utf8");
+    const config = readFileSync("src/lib/processing-config.ts", "utf8");
     expect(worker).toContain("createAsyncLimiter(persistenceMode.concurrency)");
     expect(worker).toContain("persistenceConcurrency: persistenceMode.concurrency");
     expect(worker).toContain("consultationConcurrency: effectiveConcurrency");
@@ -90,8 +90,8 @@ describe("piloto de duas persistencias simultaneas", () => {
     expect(worker).toContain("status in (\'queued\', \'running\', \'paused\', \'cancelling\')");
     expect(worker).toContain("recordSuccessfulGeneralSyncTarget(client");
     expect(worker).toContain("claim_token = $3::uuid");
-    expect(env).toContain("PROCESSING_PERSISTENCE_CONCURRENCY=1");
+    expect(env).toMatch(/^PROCESSING_PERSISTENCE_CONCURRENCY=3$/m);
     expect(env).toContain("PROCESSING_PERSISTENCE_PILOT_ENABLED=false");
-    expect(preset).toContain("persistenceConcurrency: 1");
+    expect(config).toContain('readInteger("PROCESSING_PERSISTENCE_CONCURRENCY", 1, 1, 20)');
   });
 });

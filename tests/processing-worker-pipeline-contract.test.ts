@@ -32,7 +32,10 @@ describe("local processing pipeline safety contracts", () => {
     expect(localWorker).toContain("maxConcurrentItems: effectiveConcurrency");
     expect(localWorker).toContain("maxItems: effectiveClaimLimit * 2");
     expect(localWorker).toContain("await persistenceLimiter(writeResult)");
-    expect(preset).toMatch(/agressivo:\s*\{[\s\S]*?claimBatchSize: 80,[\s\S]*?perWorkerConcurrency: 80,[\s\S]*?erpConcurrency: 80,[\s\S]*?persistenceConcurrency: 1,[\s\S]*?maxBufferedResults: 80,/);
+    expect(localWorker).toMatch(/const persistenceLimiter = groupedPersistenceEnabled\s*\? createAsyncLimiter\(1\)\s*:\s*createAsyncLimiter\(persistenceMode\.concurrency\)/);
+    expect(localWorker).toContain("persistenceConcurrency: groupedPersistenceEnabled ? 1 : persistenceMode.concurrency");
+    expect(localWorker).toContain("Math.min(20, config.persistenceBatchSize, effectiveConcurrency)");
+    expect(preset).toMatch(/agressivo:\s*\{[\s\S]*?claimBatchSize: 80,[\s\S]*?perWorkerConcurrency: 80,[\s\S]*?erpConcurrency: 80,[\s\S]*?persistenceConcurrency: 3,[\s\S]*?maxBufferedResults: 80,/);
   });
 
   it("preserva transacoes financeiras, politica de retries e finalizacao", () => {
