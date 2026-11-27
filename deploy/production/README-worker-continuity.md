@@ -4,6 +4,13 @@ Aplicavel somente a VPS atual: checkout em /opt/odontopix/app,
 Compose em /opt/odontopix/compose.yaml, Docker app odontopix-app-1
 e db odontopix-db-1; systemd odontopix-worker.timer e .service.
 
+## Perfil oficial de produção
+
+Para o servidor físico Docker com perfil Agressivo homologado, consulte
+[consolidação das configurações](../../docs/production-processing-profile.md).
+O ambiente versionado e o drop-in permanente são instalados em janela
+controlada; não reutilize overrides experimentais de /run após a consolidação.
+
 ## Deploy seguro
 
 Execute APENAS quando nao houver sincronizacao geral ativa:
